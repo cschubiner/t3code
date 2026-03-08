@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
@@ -33,6 +35,14 @@ export default defineConfig({
     "import.meta.env.APP_VERSION": JSON.stringify(version),
   },
   resolve: {
+    alias: {
+      "@t3tools/contracts": path.resolve(__dirname, "../../packages/contracts/src/index.ts"),
+      "@t3tools/shared/model": path.resolve(__dirname, "../../packages/shared/src/model.ts"),
+      "@t3tools/shared/git": path.resolve(__dirname, "../../packages/shared/src/git.ts"),
+      "@t3tools/shared/logging": path.resolve(__dirname, "../../packages/shared/src/logging.ts"),
+      "@t3tools/shared/shell": path.resolve(__dirname, "../../packages/shared/src/shell.ts"),
+      "@t3tools/shared/Net": path.resolve(__dirname, "../../packages/shared/src/Net.ts"),
+    },
     tsconfigPaths: true,
   },
   server: {

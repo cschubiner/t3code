@@ -43,6 +43,7 @@ import {
   reduceDesktopUpdateStateOnUpdateAvailable,
 } from "./updateMachine";
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch";
+import { setupPrivateTailscaleServe } from "./tailscale";
 
 fixPath();
 
@@ -1291,15 +1292,31 @@ configureAppIdentity();
 
 async function bootstrap(): Promise<void> {
   writeDesktopLogHeader("bootstrap start");
-  backendPort = await Effect.service(NetService).pipe(
-    Effect.flatMap((net) => net.reserveLoopbackPort()),
-    Effect.provide(NetService.layer),
-    Effect.runPromise,
-  );
+  backendPort = await Effect.gen(function* () {
+    const net = yield* NetService;
+    return yield* net.reserveLoopbackPort();
+  }).pipe(Effect.provide(NetService.layer), Effect.runPromise);
   writeDesktopLogHeader(`reserved backend port via NetService port=${backendPort}`);
   backendAuthToken = Crypto.randomBytes(24).toString("hex");
   backendWsUrl = `ws://127.0.0.1:${backendPort}/?token=${encodeURIComponent(backendAuthToken)}`;
   process.env.T3CODE_DESKTOP_WS_URL = backendWsUrl;
+  try {
+    const tailscaleRemoteAccess = await setupPrivateTailscaleServe(backendPort);
+    if (tailscaleRemoteAccess) {
+      process.env.T3CODE_REMOTE_ACCESS_ORIGIN = tailscaleRemoteAccess.preferredOrigin;
+      writeDesktopLogHeader(
+        `private tailscale remote access ready origin=${tailscaleRemoteAccess.preferredOrigin}`,
+      );
+    } else {
+      delete process.env.T3CODE_REMOTE_ACCESS_ORIGIN;
+      writeDesktopLogHeader("private tailscale remote access unavailable");
+    }
+  } catch (error) {
+    delete process.env.T3CODE_REMOTE_ACCESS_ORIGIN;
+    writeDesktopLogHeader(
+      `private tailscale remote access setup failed error=${formatErrorMessage(error)}`,
+    );
+  }
   writeDesktopLogHeader(`bootstrap resolved websocket url=${backendWsUrl}`);
 
   registerIpcHandlers();

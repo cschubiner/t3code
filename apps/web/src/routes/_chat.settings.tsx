@@ -1,19 +1,22 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
-import { type ProviderKind } from "@t3tools/contracts";
+import { type ProviderKind, type ServerGenerateSecretUrlResult } from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
+import { CopyIcon, LinkIcon } from "lucide-react";
 
 import { MAX_CUSTOM_MODEL_LENGTH, useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { ensureNativeApi } from "../nativeApi";
+import { getServerHttpOrigin } from "../serverOrigin";
 import { preferredTerminalEditor } from "../terminal-links";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Switch } from "../components/ui/switch";
 import { APP_VERSION } from "../branding";
+import { toastManager } from "~/components/ui/toast";
 import { SidebarInset } from "~/components/ui/sidebar";
 
 const THEME_OPTIONS = [
@@ -86,6 +89,10 @@ function SettingsRouteView() {
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const [isOpeningKeybindings, setIsOpeningKeybindings] = useState(false);
   const [openKeybindingsError, setOpenKeybindingsError] = useState<string | null>(null);
+  const [secretOrigin, setSecretOrigin] = useState("");
+  const [secretUrl, setSecretUrl] = useState<ServerGenerateSecretUrlResult | null>(null);
+  const [secretUrlError, setSecretUrlError] = useState<string | null>(null);
+  const [isGeneratingSecretUrl, setIsGeneratingSecretUrl] = useState(false);
   const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
     Record<ProviderKind, string>
   >({
@@ -98,6 +105,8 @@ function SettingsRouteView() {
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
+  const suggestedRemoteOrigin =
+    serverConfigQuery.data?.remoteAccessOrigin ?? getServerHttpOrigin();
 
   const openKeybindingsFile = useCallback(() => {
     if (!keybindingsConfigPath) return;
@@ -116,52 +125,102 @@ function SettingsRouteView() {
       });
   }, [keybindingsConfigPath]);
 
-  const addCustomModel = useCallback(
-    (provider: ProviderKind) => {
-      const customModelInput = customModelInputByProvider[provider];
-      const customModels = getCustomModelsForProvider(settings, provider);
-      const normalized = normalizeModelSlug(customModelInput, provider);
-      if (!normalized) {
-        setCustomModelErrorByProvider((existing) => ({
-          ...existing,
-          [provider]: "Enter a model slug.",
-        }));
-        return;
-      }
-      if (getModelOptions(provider).some((option) => option.slug === normalized)) {
-        setCustomModelErrorByProvider((existing) => ({
-          ...existing,
-          [provider]: "That model is already built in.",
-        }));
-        return;
-      }
-      if (normalized.length > MAX_CUSTOM_MODEL_LENGTH) {
-        setCustomModelErrorByProvider((existing) => ({
-          ...existing,
-          [provider]: `Model slugs must be ${MAX_CUSTOM_MODEL_LENGTH} characters or less.`,
-        }));
-        return;
-      }
-      if (customModels.includes(normalized)) {
-        setCustomModelErrorByProvider((existing) => ({
-          ...existing,
-          [provider]: "That custom model is already saved.",
-        }));
-        return;
-      }
+  const generateSecretUrl = useCallback(() => {
+    const api = ensureNativeApi();
+    setIsGeneratingSecretUrl(true);
+    setSecretUrlError(null);
+    setSecretUrl(null);
+    const origin = secretOrigin.trim();
+    void api.server
+      .generateSecretUrl(origin.length > 0 ? { origin } : {})
+      .then((result) => {
+        setSecretUrl(result);
+      })
+      .catch((error) => {
+        setSecretUrlError(
+          error instanceof Error ? error.message : "Unable to generate a mobile secret URL.",
+        );
+      })
+      .finally(() => {
+        setIsGeneratingSecretUrl(false);
+      });
+  }, [secretOrigin]);
 
-      updateSettings(patchCustomModels(provider, [...customModels, normalized]));
-      setCustomModelInputByProvider((existing) => ({
-        ...existing,
-        [provider]: "",
-      }));
+  const copySecretUrl = useCallback(() => {
+    if (!secretUrl) {
+      return;
+    }
+
+    if (typeof navigator === "undefined" || navigator.clipboard?.writeText === undefined) {
+      toastManager.add({
+        type: "error",
+        title: "Clipboard unavailable",
+        description: "Copy the generated link manually from the field below.",
+      });
+      return;
+    }
+
+    void navigator.clipboard
+      .writeText(secretUrl.url)
+      .then(() => {
+        toastManager.add({
+          type: "success",
+          title: "Secret link copied",
+          description: `Redeem it by ${new Date(secretUrl.expiresAt).toLocaleString()}.`,
+        });
+      })
+      .catch((error) => {
+        toastManager.add({
+          type: "error",
+          title: "Unable to copy secret link",
+          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+        });
+      });
+  }, [secretUrl]);
+
+  const addCustomModel = useCallback((provider: ProviderKind) => {
+    const customModelInput = customModelInputByProvider[provider];
+    const customModels = getCustomModelsForProvider(settings, provider);
+    const normalized = normalizeModelSlug(customModelInput, provider);
+    if (!normalized) {
       setCustomModelErrorByProvider((existing) => ({
         ...existing,
-        [provider]: null,
+        [provider]: "Enter a model slug.",
       }));
-    },
-    [customModelInputByProvider, settings, updateSettings],
-  );
+      return;
+    }
+    if (getModelOptions(provider).some((option) => option.slug === normalized)) {
+      setCustomModelErrorByProvider((existing) => ({
+        ...existing,
+        [provider]: "That model is already built in.",
+      }));
+      return;
+    }
+    if (normalized.length > MAX_CUSTOM_MODEL_LENGTH) {
+      setCustomModelErrorByProvider((existing) => ({
+        ...existing,
+        [provider]: `Model slugs must be ${MAX_CUSTOM_MODEL_LENGTH} characters or less.`,
+      }));
+      return;
+    }
+    if (customModels.includes(normalized)) {
+      setCustomModelErrorByProvider((existing) => ({
+        ...existing,
+        [provider]: "That custom model is already saved.",
+      }));
+      return;
+    }
+
+    updateSettings(patchCustomModels(provider, [...customModels, normalized]));
+    setCustomModelInputByProvider((existing) => ({
+      ...existing,
+      [provider]: "",
+    }));
+    setCustomModelErrorByProvider((existing) => ({
+      ...existing,
+      [provider]: null,
+    }));
+  }, [customModelInputByProvider, settings, updateSettings]);
 
   const removeCustomModel = useCallback(
     (provider: ProviderKind, slug: string) => {
@@ -199,6 +258,86 @@ function SettingsRouteView() {
                 Configure app-level preferences for this device.
               </p>
             </header>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4 flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-medium text-foreground">Private Mobile Access</h2>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Generate a one-time link that opens this desktop app&apos;s live sessions on your
+                    phone.
+                  </p>
+                </div>
+                <div className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-1 text-[10px] font-semibold tracking-wide text-sky-700 uppercase">
+                  Tailscale
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <label htmlFor="secret-origin" className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">Remote origin override</span>
+                  <Input
+                    id="secret-origin"
+                    value={secretOrigin}
+                    onChange={(event) => setSecretOrigin(event.target.value)}
+                    placeholder={suggestedRemoteOrigin || "https://your-device.tailnet.ts.net:8444"}
+                    spellCheck={false}
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    Leave blank to use the detected origin.
+                    {suggestedRemoteOrigin ? ` Current: ${suggestedRemoteOrigin}` : ""}
+                  </span>
+                </label>
+
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={generateSecretUrl}
+                    disabled={isGeneratingSecretUrl}
+                  >
+                    <LinkIcon className="size-4" />
+                    {isGeneratingSecretUrl ? "Generating..." : "Generate URL"}
+                  </Button>
+                  {secretUrl ? (
+                    <Button size="sm" variant="ghost" onClick={copySecretUrl}>
+                      <CopyIcon className="size-4" />
+                      Copy
+                    </Button>
+                  ) : null}
+                </div>
+
+                {secretUrl ? (
+                  <div className="rounded-xl border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
+                    <div className="font-medium text-foreground">Generated link</div>
+                    <div className="mt-1 break-all">{secretUrl.url}</div>
+                    <div className="mt-2">
+                      Redeem by {new Date(secretUrl.expiresAt).toLocaleString()}.
+                    </div>
+                    <div className="mt-1">
+                      Browser session expires {new Date(secretUrl.sessionExpiresAt).toLocaleString()}.
+                    </div>
+                    {!secretUrl.remoteReachable ? (
+                      <div className="mt-1 text-amber-600">
+                        This origin still looks local-only. Use your Tailscale URL if you want the
+                        phone to connect over cellular.
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {secretUrlError ? (
+                  <p className="text-xs text-red-500">{secretUrlError}</p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    Links are one-time and short-lived. Open them directly on your phone instead of
+                    sending them through an app that might consume the preview.
+                  </p>
+                )}
+              </div>
+            </section>
 
             <section className="rounded-2xl border border-border bg-card p-5">
               <div className="mb-4">
