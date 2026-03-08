@@ -24,7 +24,11 @@ import type {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project";
-import type { ServerConfig } from "./server";
+import type {
+  ServerConfig,
+  ServerGenerateSecretUrlInput,
+  ServerGenerateSecretUrlResult,
+} from "./server";
 import type {
   TerminalClearInput,
   TerminalCloseInput,
@@ -158,6 +162,9 @@ export interface NativeApi {
   };
   server: {
     getConfig: () => Promise<ServerConfig>;
+    generateSecretUrl: (
+      input: ServerGenerateSecretUrlInput,
+    ) => Promise<ServerGenerateSecretUrlResult>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
   };
   orchestration: {
