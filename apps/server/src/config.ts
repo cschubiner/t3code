@@ -26,6 +26,8 @@ export interface ServerConfigShape {
   readonly devUrl: URL | undefined;
   readonly noBrowser: boolean;
   readonly authToken: string | undefined;
+  readonly remoteAccessOrigin?: string | undefined;
+  readonly upstreamWsUrl?: string | undefined;
   readonly autoBootstrapProjectFromCwd: boolean;
   readonly logWebSocketEvents: boolean;
 }
@@ -50,6 +52,8 @@ export class ServerConfig extends ServiceMap.Service<ServerConfig, ServerConfigS
           port: 0,
           host: undefined,
           authToken: undefined,
+          remoteAccessOrigin: undefined,
+          upstreamWsUrl: undefined,
           keybindingsConfigPath: path.join(statedir, "keybindings.json"),
           staticDir: undefined,
           devUrl: undefined,
