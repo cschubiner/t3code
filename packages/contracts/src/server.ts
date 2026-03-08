@@ -52,8 +52,23 @@ export const ServerConfig = Schema.Struct({
   issues: ServerConfigIssues,
   providers: ServerProviderStatuses,
   availableEditors: Schema.Array(EditorId),
+  remoteAccessOrigin: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerConfig = typeof ServerConfig.Type;
+
+export const ServerGenerateSecretUrlInput = Schema.Struct({
+  origin: Schema.optional(TrimmedNonEmptyString),
+});
+export type ServerGenerateSecretUrlInput = typeof ServerGenerateSecretUrlInput.Type;
+
+export const ServerGenerateSecretUrlResult = Schema.Struct({
+  url: TrimmedNonEmptyString,
+  expiresAt: IsoDateTime,
+  sessionExpiresAt: IsoDateTime,
+  oneTime: Schema.Boolean,
+  remoteReachable: Schema.Boolean,
+});
+export type ServerGenerateSecretUrlResult = typeof ServerGenerateSecretUrlResult.Type;
 
 export const ServerUpsertKeybindingInput = KeybindingRule;
 export type ServerUpsertKeybindingInput = typeof ServerUpsertKeybindingInput.Type;

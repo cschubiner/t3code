@@ -44,8 +44,45 @@ export class WsTransport {
         ? bridgeUrl
         : envUrl && envUrl.length > 0
           ? envUrl
-          : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.hostname}:${window.location.port}`);
+          : `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`);
+    this.url = this.normalizeUrl(this.url);
+    this.url = this.appendLocationToken(this.url);
     this.connect();
+  }
+
+  private normalizeUrl(url: string): string {
+    if (typeof window === "undefined") return url;
+
+    try {
+      const wsUrl = new URL(url, window.location.href);
+      if (wsUrl.protocol === "http:") {
+        wsUrl.protocol = "ws:";
+      } else if (wsUrl.protocol === "https:") {
+        wsUrl.protocol = "wss:";
+      }
+      return wsUrl.toString();
+    } catch {
+      return url;
+    }
+  }
+
+  private appendLocationToken(url: string): string {
+    if (typeof window === "undefined") return url;
+    const pageUrl = new URL(window.location.href);
+    const token = pageUrl.searchParams.get("token");
+    if (!token || token.length === 0) {
+      return url;
+    }
+
+    try {
+      const wsUrl = new URL(url, window.location.href);
+      if (!wsUrl.searchParams.has("token")) {
+        wsUrl.searchParams.set("token", token);
+      }
+      return wsUrl.toString();
+    } catch {
+      return url;
+    }
   }
 
   async request<T = unknown>(method: string, params?: unknown): Promise<T> {
