@@ -131,6 +131,7 @@ import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
   type PersistedComposerImageAttachment,
+  type QueuedComposerTurn,
   useComposerDraftStore,
   useEffectiveComposerModelState,
   useComposerThreadDraft,
@@ -206,6 +207,7 @@ function formatOutgoingPrompt(params: {
   }
   return params.text;
 }
+const EMPTY_QUEUED_COMPOSER_TURNS: QueuedComposerTurn[] = [];
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
@@ -237,6 +239,23 @@ const terminalContextIdListsEqual = (
   ids: ReadonlyArray<string>,
 ): boolean =>
   contexts.length === ids.length && contexts.every((context, index) => context.id === ids[index]);
+
+function summarizeQueuedTurn(turn: QueuedComposerTurn): string {
+  const trimmed = turn.text.trim();
+  if (trimmed.length > 0) {
+    return trimmed;
+  }
+  if (turn.images.length > 0 && turn.terminalContexts.length > 0) {
+    return `${turn.images.length} image${turn.images.length === 1 ? "" : "s"} and ${turn.terminalContexts.length} terminal context${turn.terminalContexts.length === 1 ? "" : "s"}`;
+  }
+  if (turn.images.length > 0) {
+    return `${turn.images.length} image${turn.images.length === 1 ? "" : "s"}`;
+  }
+  if (turn.terminalContexts.length > 0) {
+    return `${turn.terminalContexts.length} terminal context${turn.terminalContexts.length === 1 ? "" : "s"}`;
+  }
+  return "Queued follow-up";
+}
 
 interface ChatViewProps {
   threadId: ThreadId;
@@ -303,6 +322,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const syncComposerDraftPersistedAttachments = useComposerDraftStore(
     (store) => store.syncPersistedAttachments,
   );
+  const queuedTurns = useComposerDraftStore(
+    (store) => store.queuedTurnsByThreadId[threadId] ?? EMPTY_QUEUED_COMPOSER_TURNS,
+  );
+  const enqueueQueuedTurn = useComposerDraftStore((store) => store.enqueueQueuedTurn);
+  const prependQueuedTurn = useComposerDraftStore((store) => store.prependQueuedTurn);
+  const consumeQueuedTurn = useComposerDraftStore((store) => store.consumeQueuedTurn);
+  const removeQueuedTurn = useComposerDraftStore((store) => store.removeQueuedTurn);
+  const clearQueuedTurns = useComposerDraftStore((store) => store.clearQueuedTurns);
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const getDraftThreadByProjectId = useComposerDraftStore(
@@ -391,6 +418,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewHandoffTimeoutByMessageIdRef = useRef<Record<string, number>>({});
   const sendInFlightRef = useRef(false);
+  const queuedTurnFlushIdRef = useRef<string | null>(null);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
   const setMessagesScrollContainerRef = useCallback((element: HTMLDivElement | null) => {
@@ -484,6 +512,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     composerDraft.runtimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const interactionMode =
     composerDraft.interactionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
+  const composerHasContent = composerSendState.hasSendableContent;
   const isServerThread = serverThread !== undefined;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
@@ -2110,6 +2139,200 @@ export default function ChatView({ threadId }: ChatViewProps) {
     sendPhase,
   ]);
 
+  const dispatchExistingThreadTurn = useCallback(
+    async (input: {
+      text: string;
+      images: ComposerImageAttachment[];
+      terminalContexts: TerminalContextDraft[];
+      runtimeMode: RuntimeMode;
+      interactionMode: ProviderInteractionMode;
+      provider: ProviderKind;
+      model: string | null;
+      serviceTier: ReturnType<typeof resolveAppServiceTier>;
+      optimisticErrorMessage: string;
+      failureMessage: string;
+      modelOptions: typeof selectedModelOptionsForDispatch | null;
+      promptEffort: string | null;
+    }) => {
+      const api = readNativeApi();
+      if (
+        !api ||
+        !activeThread ||
+        !isServerThread ||
+        isSendBusy ||
+        isConnecting ||
+        sendInFlightRef.current
+      ) {
+        return false;
+      }
+
+      const messageTextForSend = appendTerminalContextsToPrompt(input.text, input.terminalContexts);
+      const outgoingMessageText = formatOutgoingPrompt({
+        provider: input.provider,
+        effort: input.promptEffort,
+        text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
+      });
+      if (!messageTextForSend.trim() && input.images.length === 0) {
+        return false;
+      }
+
+      const threadIdForSend = activeThread.id;
+      const messageIdForSend = newMessageId();
+      const messageCreatedAt = new Date().toISOString();
+      const optimisticAttachments = input.images.map((image) => ({
+        type: "image" as const,
+        id: image.id,
+        name: image.name,
+        mimeType: image.mimeType,
+        sizeBytes: image.sizeBytes,
+        previewUrl: image.previewUrl,
+      }));
+
+      sendInFlightRef.current = true;
+      beginSendPhase("sending-turn");
+      setThreadError(threadIdForSend, null);
+      setOptimisticUserMessages((existing) => [
+        ...existing,
+        {
+          id: messageIdForSend,
+          role: "user",
+          text: outgoingMessageText,
+          ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
+          createdAt: messageCreatedAt,
+          streaming: false,
+        },
+      ]);
+      shouldAutoScrollRef.current = true;
+      forceStickToBottom();
+
+      try {
+        await persistThreadSettingsForNextTurn({
+          threadId: threadIdForSend,
+          createdAt: messageCreatedAt,
+          ...(input.model ? { model: input.model } : {}),
+          runtimeMode: input.runtimeMode,
+          interactionMode: input.interactionMode,
+        });
+
+        const turnAttachments = await Promise.all(
+          input.images.map(async (image) => ({
+            type: "image" as const,
+            name: image.name,
+            mimeType: image.mimeType,
+            sizeBytes: image.sizeBytes,
+            dataUrl: await readFileAsDataUrl(image.file),
+          })),
+        );
+
+        await api.orchestration.dispatchCommand({
+          type: "thread.turn.start",
+          commandId: newCommandId(),
+          threadId: threadIdForSend,
+          message: {
+            messageId: messageIdForSend,
+            role: "user",
+            text: outgoingMessageText,
+            attachments: turnAttachments,
+          },
+          provider: input.provider,
+          model: input.model || undefined,
+          serviceTier: input.serviceTier,
+          ...(input.modelOptions ? { modelOptions: input.modelOptions } : {}),
+          assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
+          runtimeMode: input.runtimeMode,
+          interactionMode: input.interactionMode,
+          createdAt: messageCreatedAt,
+        });
+        sendInFlightRef.current = false;
+        return true;
+      } catch (err) {
+        setOptimisticUserMessages((existing) =>
+          existing.filter((message) => message.id !== messageIdForSend),
+        );
+        setThreadError(
+          threadIdForSend,
+          err instanceof Error ? err.message : input.optimisticErrorMessage,
+        );
+        sendInFlightRef.current = false;
+        resetSendPhase();
+        throw err instanceof Error
+          ? new Error(err.message, { cause: err })
+          : new Error(input.failureMessage);
+      }
+    },
+    [
+      activeThread,
+      beginSendPhase,
+      forceStickToBottom,
+      isConnecting,
+      isSendBusy,
+      isServerThread,
+      persistThreadSettingsForNextTurn,
+      resetSendPhase,
+      setThreadError,
+      settings.enableAssistantStreaming,
+    ],
+  );
+
+  const queueComposerTurn = useCallback(
+    async (input?: {
+      text: string;
+      interactionMode: ProviderInteractionMode;
+      terminalContexts?: TerminalContextDraft[];
+    }) => {
+      if (!activeThread || !isServerThread) {
+        return false;
+      }
+
+      const trimmed = (input?.text ?? prompt).trim();
+      const queuedImages = [...composerImages];
+      const queuedTerminalContexts = [...(input?.terminalContexts ?? [])];
+      if (!trimmed && queuedImages.length === 0 && queuedTerminalContexts.length === 0) {
+        return false;
+      }
+
+      const queuedTurn: QueuedComposerTurn = {
+        id: crypto.randomUUID(),
+        queuedAt: new Date().toISOString(),
+        text: trimmed,
+        images: queuedImages,
+        terminalContexts: queuedTerminalContexts,
+        provider: selectedProvider,
+        model: selectedModel ?? null,
+        runtimeMode,
+        interactionMode: input?.interactionMode ?? interactionMode,
+        serviceTier: selectedServiceTier,
+        modelOptions: selectedModelOptionsForDispatch ?? null,
+        promptEffort: selectedPromptEffort,
+      };
+
+      enqueueQueuedTurn(activeThread.id, queuedTurn);
+      setThreadError(activeThread.id, null);
+      promptRef.current = "";
+      clearComposerDraftContent(activeThread.id);
+      setComposerHighlightedItemId(null);
+      setComposerCursor(0);
+      setComposerTrigger(null);
+      return true;
+    },
+    [
+      activeThread,
+      clearComposerDraftContent,
+      composerImages,
+      enqueueQueuedTurn,
+      interactionMode,
+      isServerThread,
+      prompt,
+      runtimeMode,
+      selectedModel,
+      selectedModelOptionsForDispatch,
+      selectedPromptEffort,
+      selectedProvider,
+      selectedServiceTier,
+      setThreadError,
+    ],
+  );
+
   useEffect(() => {
     if (!activeThreadId) return;
     const previous = terminalOpenByThreadRef.current[activeThreadId] ?? false;
@@ -2364,7 +2587,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [activeThread, isConnecting, isRevertingCheckpoint, isSendBusy, phase, setThreadError],
   );
 
-  const onSend = async (e?: { preventDefault: () => void }) => {
+  const onSend = async (
+    e?: { preventDefault: () => void },
+    disposition: ComposerSubmissionDisposition = "steer",
+  ) => {
     e?.preventDefault();
     const api = readNativeApi();
     if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
@@ -2388,6 +2614,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
         draftText: trimmed,
         planMarkdown: activeProposedPlan.planMarkdown,
       });
+      if (phase === "running" && disposition === "queue") {
+        await queueComposerTurn(followUp);
+        return;
+      }
       promptRef.current = "";
       clearComposerDraftContent(activeThread.id);
       setComposerHighlightedItemId(null);
@@ -2424,6 +2654,25 @@ export default function ChatView({ threadId }: ChatViewProps) {
           description: toastCopy.description,
         });
       }
+      return;
+    }
+    if (phase === "running" && disposition === "queue") {
+      if (expiredTerminalContextCount > 0) {
+        const toastCopy = buildExpiredTerminalContextToastCopy(
+          expiredTerminalContextCount,
+          "omitted",
+        );
+        toastManager.add({
+          type: "warning",
+          title: toastCopy.title,
+          description: toastCopy.description,
+        });
+      }
+      await queueComposerTurn({
+        text: trimmed,
+        interactionMode,
+        terminalContexts: sendableComposerTerminalContexts,
+      });
       return;
     }
     if (!activeProject) return;
@@ -2693,6 +2942,59 @@ export default function ChatView({ threadId }: ChatViewProps) {
       resetSendPhase();
     }
   };
+
+  useEffect(() => {
+    const nextQueuedTurn = queuedTurns[0];
+    if (!nextQueuedTurn) {
+      return;
+    }
+    if (
+      phase === "running" ||
+      isSendBusy ||
+      isConnecting ||
+      sendInFlightRef.current ||
+      !activeThread ||
+      !isServerThread ||
+      queuedTurnFlushIdRef.current !== null
+    ) {
+      return;
+    }
+
+    queuedTurnFlushIdRef.current = nextQueuedTurn.id;
+    consumeQueuedTurn(threadId, nextQueuedTurn.id);
+
+    void dispatchExistingThreadTurn({
+      text: nextQueuedTurn.text,
+      images: nextQueuedTurn.images,
+      terminalContexts: nextQueuedTurn.terminalContexts,
+      runtimeMode: nextQueuedTurn.runtimeMode,
+      interactionMode: nextQueuedTurn.interactionMode,
+      provider: nextQueuedTurn.provider,
+      model: nextQueuedTurn.model,
+      serviceTier: nextQueuedTurn.serviceTier,
+      modelOptions: nextQueuedTurn.modelOptions,
+      promptEffort: nextQueuedTurn.promptEffort,
+      optimisticErrorMessage: "Failed to send queued follow-up.",
+      failureMessage: "Failed to send queued follow-up.",
+    })
+      .catch(() => {
+        prependQueuedTurn(threadId, nextQueuedTurn);
+      })
+      .finally(() => {
+        queuedTurnFlushIdRef.current = null;
+      });
+  }, [
+    activeThread,
+    consumeQueuedTurn,
+    dispatchExistingThreadTurn,
+    isConnecting,
+    isSendBusy,
+    isServerThread,
+    phase,
+    prependQueuedTurn,
+    queuedTurns,
+    threadId,
+  ]);
 
   const onInterrupt = async () => {
     const api = readNativeApi();
@@ -3415,6 +3717,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
     }
 
+    if (key === "Tab" && !event.shiftKey && phase === "running" && composerHasContent) {
+      void onSend(undefined, "queue");
+      return true;
+    }
+
     if (key === "Enter" && !event.shiftKey) {
       void onSend();
       return true;
@@ -3593,6 +3900,48 @@ export default function ChatView({ threadId }: ChatViewProps) {
               onSubmit={onSend}
               className="mx-auto w-full min-w-0 max-w-3xl"
               data-chat-composer-form="true"
+            >
+              {queuedTurns.length > 0 && (
+                <div className="border-b border-border/65 bg-muted/15 px-3 py-2 sm:px-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="secondary" className="rounded-full">
+                      {queuedTurns.length === 1
+                        ? "1 queued follow-up"
+                        : `${queuedTurns.length} queued follow-ups`}
+                    </Badge>
+                    <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground/80">
+                      Next: {summarizeQueuedTurn(queuedTurns[0]!)}
+                    </p>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 rounded-full px-3 text-xs"
+                      onClick={() => removeQueuedTurn(threadId, queuedTurns[0]!.id)}
+                    >
+                      Remove next
+                    </Button>
+                    {queuedTurns.length > 1 ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 rounded-full px-3 text-xs"
+                        onClick={() => clearQueuedTurns(threadId)}
+                      >
+                        Clear all
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+              )}
+
+              <div
+                className={cn(
+                  "relative px-3 pb-2 sm:px-4",
+                  hasComposerHeader ? "pt-2.5 sm:pt-3" : "pt-3.5 sm:pt-4",
+                )}
+              >
             >
               <div
                 className={cn(
@@ -3958,22 +4307,46 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             </Button>
                           </div>
                         ) : phase === "running" ? (
-                          <button
-                            type="button"
-                            className="flex size-8 cursor-pointer items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105 sm:h-8 sm:w-8"
-                            onClick={() => void onInterrupt()}
-                            aria-label="Stop generation"
-                          >
-                            <svg
-                              width="12"
-                              height="12"
-                              viewBox="0 0 12 12"
-                              fill="currentColor"
-                              aria-hidden="true"
+                          <div className="flex items-center gap-2">
+                            {composerHasContent ? (
+                              <>
+                                <Button
+                                  type="submit"
+                                  size="sm"
+                                  className="h-9 rounded-full px-4 sm:h-8"
+                                  disabled={isSendBusy || isConnecting}
+                                >
+                                  Steer
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-9 rounded-full px-4 sm:h-8"
+                                  disabled={isSendBusy || isConnecting}
+                                  onClick={() => void onSend(undefined, "queue")}
+                                >
+                                  Queue
+                                </Button>
+                              </>
+                            ) : null}
+                            <button
+                              type="button"
+                              className="flex size-8 cursor-pointer items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105 sm:h-8 sm:w-8"
+                              onClick={() => void onInterrupt()}
+                              aria-label="Stop generation"
                             >
-                              <rect x="2" y="2" width="8" height="8" rx="1.5" />
-                            </svg>
-                          </button>
+                              <svg
+                                width="12"
+                                height="12"
+                                viewBox="0 0 12 12"
+                                fill="currentColor"
+                                aria-hidden="true"
+                              >
+                                <rect x="2" y="2" width="8" height="8" rx="1.5" />
+                              </svg>
+                            </button>
+                          </div>
                         ) : pendingUserInputs.length === 0 ? (
                           showPlanFollowUpPrompt ? (
                             prompt.trim().length > 0 ? (

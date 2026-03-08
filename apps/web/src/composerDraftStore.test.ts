@@ -74,6 +74,7 @@ function resetComposerDraftStore() {
     projectDraftThreadIdByProjectId: {},
     stickyModelSelectionByProvider: {},
     stickyActiveProvider: null,
+    queuedTurnsByThreadId: {},
   });
 }
 
@@ -220,6 +221,7 @@ describe("composerDraftStore syncPersistedAttachments", () => {
       projectDraftThreadIdByProjectId: {},
       stickyModelSelectionByProvider: {},
       stickyActiveProvider: null,
+      queuedTurnsByThreadId: {},
     });
   });
 
@@ -268,6 +270,82 @@ describe("composerDraftStore syncPersistedAttachments", () => {
   });
 });
 
+describe("composerDraftStore queued turns", () => {
+  const threadId = ThreadId.makeUnsafe("thread-queued");
+  let originalRevokeObjectUrl: typeof URL.revokeObjectURL;
+  let revokeSpy: ReturnType<typeof vi.fn<(url: string) => void>>;
+
+  beforeEach(() => {
+    useComposerDraftStore.setState({
+      draftsByThreadId: {},
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
+      queuedTurnsByThreadId: {},
+    });
+    originalRevokeObjectUrl = URL.revokeObjectURL;
+    revokeSpy = vi.fn();
+    URL.revokeObjectURL = revokeSpy;
+  });
+
+  afterEach(() => {
+    URL.revokeObjectURL = originalRevokeObjectUrl;
+  });
+
+  it("removes queued turns without revoking previews when they are consumed for sending", () => {
+    const image = makeImage({
+      id: "img-queued-consume",
+      previewUrl: "blob:queued-consume",
+    });
+    const store = useComposerDraftStore.getState();
+    store.enqueueQueuedTurn(threadId, {
+      id: "queued-1",
+      queuedAt: "2026-03-08T12:00:00.000Z",
+      text: "Follow up",
+      images: [image],
+      terminalContexts: [],
+      provider: "codex",
+      model: "gpt-5.4",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      serviceTier: null,
+      modelOptions: null,
+      promptEffort: null,
+    });
+
+    store.consumeQueuedTurn(threadId, "queued-1");
+
+    expect(useComposerDraftStore.getState().queuedTurnsByThreadId[threadId]).toBeUndefined();
+    expect(revokeSpy).not.toHaveBeenCalledWith("blob:queued-consume");
+  });
+
+  it("revokes queued image previews when a queued turn is removed", () => {
+    const image = makeImage({
+      id: "img-queued-remove",
+      previewUrl: "blob:queued-remove",
+    });
+    const store = useComposerDraftStore.getState();
+    store.enqueueQueuedTurn(threadId, {
+      id: "queued-2",
+      queuedAt: "2026-03-08T12:00:00.000Z",
+      text: "Remove me",
+      images: [image],
+      terminalContexts: [],
+      provider: "codex",
+      model: "gpt-5.4",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      serviceTier: null,
+      modelOptions: null,
+      promptEffort: null,
+    });
+
+    store.removeQueuedTurn(threadId, "queued-2");
+
+    expect(useComposerDraftStore.getState().queuedTurnsByThreadId[threadId]).toBeUndefined();
+    expect(revokeSpy).toHaveBeenCalledWith("blob:queued-remove");
+  });
+});
+
 describe("composerDraftStore terminal contexts", () => {
   const threadId = ThreadId.makeUnsafe("thread-dedupe");
 
@@ -278,6 +356,7 @@ describe("composerDraftStore terminal contexts", () => {
       projectDraftThreadIdByProjectId: {},
       stickyModelSelectionByProvider: {},
       stickyActiveProvider: null,
+      queuedTurnsByThreadId: {},
     });
   });
 
