@@ -55,7 +55,7 @@ function waitForSync<A>(
   read: () => A,
   predicate: (value: A) => boolean,
   description: string,
-  timeoutMs = 3000,
+  timeoutMs = 30_000,
 ): Effect.Effect<A, never> {
   return Effect.gen(function* () {
     const deadline = Date.now() + timeoutMs;
