@@ -877,6 +877,59 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           availableEditors,
         };
 
+      case WS_METHODS.serverGenerateSecretUrl: {
+        const body = stripRequestTag(request.body);
+        if (!authToken) {
+          return yield* new RouteRequestError({
+            message: "Secret URLs require T3CODE_AUTH_TOKEN to be configured.",
+          });
+        }
+
+        pruneExpiredAuthEntries();
+
+        const suggestedOrigins = collectPublicOrigins(port, host, remoteAccessOrigin);
+        const preferredSuggestedOrigin =
+          suggestedOrigins.find((candidate) => !isLoopbackHostname(new URL(candidate).hostname)) ??
+          suggestedOrigins[0] ??
+          `http://localhost:${port}`;
+
+        const publicOrigin = yield* Effect.try({
+          try: () => {
+            const requestedOrigin = body.origin
+              ? new URL(body.origin)
+              : new URL(preferredSuggestedOrigin);
+            if (requestedOrigin.protocol !== "http:" && requestedOrigin.protocol !== "https:") {
+              throw new Error("Secret URL origin must use http or https.");
+            }
+            return requestedOrigin.origin;
+          },
+          catch: (error) =>
+            new RouteRequestError({
+              message:
+                error instanceof Error && error.message.trim().length > 0
+                  ? error.message
+                  : "Invalid secret URL origin.",
+            }),
+        });
+
+        const code = crypto.randomUUID();
+        const expiresAt = new Date(Date.now() + SECRET_LINK_TTL_MS).toISOString();
+        const sessionExpiresAt = new Date(Date.now() + AUTH_SESSION_TTL_MS).toISOString();
+        secretAccessGrants.set(code, {
+          expiresAt: Date.parse(expiresAt),
+          redirectTo: resolveRedirectTarget("/"),
+        });
+
+        const publicUrl = new URL(SECRET_LINK_PATH, publicOrigin);
+        publicUrl.searchParams.set(SECRET_LINK_QUERY_PARAM, code);
+        return {
+          url: publicUrl.toString(),
+          expiresAt,
+          sessionExpiresAt,
+          oneTime: true,
+          remoteReachable: !isLoopbackHostname(publicUrl.hostname),
+        };
+      }
       case WS_METHODS.serverUpsertKeybinding: {
         const body = stripRequestTag(request.body);
         const keybindingsConfig = yield* keybindingsManager.upsertKeybindingRule(body);
