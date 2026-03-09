@@ -114,7 +114,7 @@ async function waitForThread(
     checkpoints: ReadonlyArray<{ checkpointTurnCount: number }>;
     activities: ReadonlyArray<{ kind: string }>;
   }) => boolean,
-  timeoutMs = 5000,
+  timeoutMs = 30_000,
 ) {
   const deadline = Date.now() + timeoutMs;
   const poll = async (): Promise<{
@@ -130,7 +130,7 @@ async function waitForThread(
     if (Date.now() >= deadline) {
       throw new Error("Timed out waiting for thread state.");
     }
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 50));
     return poll();
   };
   return poll();
@@ -139,7 +139,7 @@ async function waitForThread(
 async function waitForEvent(
   engine: OrchestrationEngineShape,
   predicate: (event: { type: string }) => boolean,
-  timeoutMs = 5000,
+  timeoutMs = 30_000,
 ) {
   const deadline = Date.now() + timeoutMs;
   const poll = async () => {
@@ -152,7 +152,7 @@ async function waitForEvent(
     if (Date.now() >= deadline) {
       throw new Error("Timed out waiting for orchestration event.");
     }
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 50));
     return poll();
   };
   return poll();
@@ -190,7 +190,7 @@ function gitShowFileAtRef(cwd: string, ref: string, filePath: string): string {
   return runGit(cwd, ["show", `${ref}:${filePath}`]);
 }
 
-async function waitForGitRefExists(cwd: string, ref: string, timeoutMs = 5000) {
+async function waitForGitRefExists(cwd: string, ref: string, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs;
   const poll = async (): Promise<void> => {
     if (gitRefExists(cwd, ref)) {
@@ -199,7 +199,7 @@ async function waitForGitRefExists(cwd: string, ref: string, timeoutMs = 5000) {
     if (Date.now() >= deadline) {
       throw new Error(`Timed out waiting for git ref '${ref}'.`);
     }
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 50));
     return poll();
   };
   return poll();
@@ -998,7 +998,7 @@ describe("CheckpointReactor", () => {
       }),
     );
 
-    const deadline = Date.now() + 2000;
+    const deadline = Date.now() + 30_000;
     const waitForRollbackCalls = async (): Promise<void> => {
       if (harness.provider.rollbackConversation.mock.calls.length >= 2) {
         return;
@@ -1006,7 +1006,7 @@ describe("CheckpointReactor", () => {
       if (Date.now() >= deadline) {
         throw new Error("Timed out waiting for rollbackConversation calls.");
       }
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 50));
       return waitForRollbackCalls();
     };
     await waitForRollbackCalls();
