@@ -92,7 +92,12 @@ export class WsTransport {
 
   private appendLocationToken(url: string): string {
     if (typeof window === "undefined") return url;
-    const pageUrl = new URL(window.location.href);
+    let pageUrl: URL;
+    try {
+      pageUrl = new URL(window.location.href);
+    } catch {
+      return url;
+    }
     const token = pageUrl.searchParams.get("token");
     if (!token || token.length === 0) {
       return url;

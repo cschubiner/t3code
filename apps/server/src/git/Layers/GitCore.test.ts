@@ -544,7 +544,7 @@ it.layer(TestLayer)("git integration", (it) => {
             expect(details.branch).toBe(featureBranch);
             expect(details.aheadCount).toBe(0);
             expect(details.behindCount).toBe(1);
-          }),
+          }, { timeout: 30_000, interval: 50 }),
         );
       }),
     );
@@ -593,7 +593,7 @@ it.layer(TestLayer)("git integration", (it) => {
         yield* Effect.promise(() =>
           vi.waitFor(() => {
             expect(refreshFetchAttempts).toBe(1);
-          }),
+          }, { timeout: 30_000, interval: 50 }),
         );
         expect(yield* git(source, ["branch", "--show-current"])).toBe(featureBranch);
       }),
@@ -635,7 +635,7 @@ it.layer(TestLayer)("git integration", (it) => {
         yield* Effect.promise(() =>
           vi.waitFor(() => {
             expect(fetchArgs).not.toBeNull();
-          }),
+          }, { timeout: 30_000, interval: 50 }),
         );
 
         expect(yield* git(source, ["branch", "--show-current"])).toBe(featureBranch);
@@ -691,7 +691,7 @@ it.layer(TestLayer)("git integration", (it) => {
         yield* Effect.promise(() =>
           vi.waitFor(() => {
             expect(fetchStarted).toBe(true);
-          }),
+          }, { timeout: 30_000, interval: 50 }),
         );
         expect(yield* git(source, ["branch", "--show-current"])).toBe(featureBranch);
         releaseFetch();

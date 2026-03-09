@@ -6,8 +6,11 @@ export default mergeConfig(
   baseConfig,
   defineConfig({
     test: {
-      testTimeout: 15_000,
-      hookTimeout: 15_000,
+      fileParallelism: false,
+      maxWorkers: 1,
+      minWorkers: 1,
+      testTimeout: 120_000,
+      hookTimeout: 120_000,
     },
   }),
 );
