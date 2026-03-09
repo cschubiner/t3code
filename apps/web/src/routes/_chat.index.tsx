@@ -1,9 +1,20 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useEffect } from "react";
 
 import { isElectron } from "../env";
-import { SidebarTrigger } from "../components/ui/sidebar";
+import { SidebarTrigger, useSidebar } from "../components/ui/sidebar";
 
 function ChatIndexRouteView() {
+  const { isMobile, openMobile, setOpenMobile } = useSidebar();
+
+  useEffect(() => {
+    if (isElectron || !isMobile || openMobile) {
+      return;
+    }
+
+    setOpenMobile(true);
+  }, [isMobile, openMobile, setOpenMobile]);
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-muted-foreground/40">
       {!isElectron && (

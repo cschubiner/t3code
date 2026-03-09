@@ -19,8 +19,8 @@ import type { MenuItemConstructorOptions } from "electron";
 import * as Effect from "effect/Effect";
 import type {
   DesktopTheme,
+  DesktopRemoteAccessStatus,
   DesktopUpdateActionResult,
-  DesktopUpdateCheckResult,
   DesktopUpdateState,
 } from "@t3tools/contracts";
 import { autoUpdater } from "electron-updater";
@@ -29,7 +29,12 @@ import type { ContextMenuItem } from "@t3tools/contracts";
 import { NetService } from "@t3tools/shared/Net";
 import { RotatingFileSink } from "@t3tools/shared/logging";
 import { showDesktopConfirmDialog } from "./confirmDialog";
-import { syncShellEnvironment } from "./syncShellEnvironment";
+import {
+  loadDesktopPreferences,
+  saveDesktopPreferences,
+  type DesktopPreferences,
+} from "./desktopPreferences";
+import { fixPath } from "./fixPath";
 import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "./updateState";
 import {
   createInitialDesktopUpdateState,
@@ -44,8 +49,9 @@ import {
   reduceDesktopUpdateStateOnUpdateAvailable,
 } from "./updateMachine";
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch";
+import { clearPrivateTailscaleServe, setupPrivateTailscaleServe } from "./tailscale";
 
-syncShellEnvironment();
+fixPath();
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const CONFIRM_CHANNEL = "desktop:confirm";
@@ -57,10 +63,14 @@ const UPDATE_STATE_CHANNEL = "desktop:update-state";
 const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
 const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
-const UPDATE_CHECK_CHANNEL = "desktop:update-check";
 const GET_WS_URL_CHANNEL = "desktop:get-ws-url";
 const BASE_DIR = process.env.T3CODE_HOME?.trim() || Path.join(OS.homedir(), ".t3");
 const STATE_DIR = Path.join(BASE_DIR, "userdata");
+const REMOTE_ACCESS_STATUS_CHANNEL = "desktop:remote-access-status";
+const REMOTE_ACCESS_GET_STATUS_CHANNEL = "desktop:remote-access-get-status";
+const REMOTE_ACCESS_SET_ENABLED_CHANNEL = "desktop:remote-access-set-enabled";
+const STATE_DIR = process.env.T3CODE_STATE_DIR?.trim() || Path.join(BASE_DIR, "userdata");
+const DESKTOP_PREFERENCES_PATH = Path.join(STATE_DIR, "desktop-preferences.json");
 const DESKTOP_SCHEME = "t3";
 const ROOT_DIR = Path.resolve(__dirname, "../../..");
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
@@ -80,6 +90,8 @@ const AUTO_UPDATE_STARTUP_DELAY_MS = 15_000;
 const AUTO_UPDATE_POLL_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const DESKTOP_UPDATE_CHANNEL = "latest";
 const DESKTOP_UPDATE_ALLOW_PRERELEASE = false;
+const REMOTE_ACCESS_RETRY_DELAY_MS = 2_000;
+const REMOTE_ACCESS_GATEWAY_HOST = "127.0.0.1";
 
 type DesktopUpdateErrorContext = DesktopUpdateState["errorContext"];
 type LinuxDesktopNamedApp = Electron.App & {
@@ -88,17 +100,37 @@ type LinuxDesktopNamedApp = Electron.App & {
 
 let mainWindow: BrowserWindow | null = null;
 let backendProcess: ChildProcess.ChildProcess | null = null;
+let remoteGatewayProcess: ChildProcess.ChildProcess | null = null;
 let backendPort = 0;
+let remoteGatewayPort = 0;
 let backendAuthToken = "";
 let backendWsUrl = "";
 let restartAttempt = 0;
 let restartTimer: ReturnType<typeof setTimeout> | null = null;
+let remoteGatewayRestartTimer: ReturnType<typeof setTimeout> | null = null;
 let isQuitting = false;
 let desktopProtocolRegistered = false;
 let aboutCommitHashCache: string | null | undefined;
 let desktopLogSink: RotatingFileSink | null = null;
 let backendLogSink: RotatingFileSink | null = null;
 let restoreStdIoCapture: (() => void) | null = null;
+let desktopPreferences: DesktopPreferences = loadDesktopPreferences(DESKTOP_PREFERENCES_PATH);
+let remoteAccessOperation: Promise<DesktopRemoteAccessStatus> = Promise.resolve({
+  enabled: desktopPreferences.remoteAccess.enabled,
+  state: desktopPreferences.remoteAccess.enabled ? "starting" : "disabled",
+  provider: "tailscale",
+  preferredUrl: null,
+  urls: [],
+  message: null,
+});
+let remoteAccessStatus: DesktopRemoteAccessStatus = {
+  enabled: desktopPreferences.remoteAccess.enabled,
+  state: desktopPreferences.remoteAccess.enabled ? "starting" : "disabled",
+  provider: "tailscale",
+  preferredUrl: null,
+  urls: [],
+  message: null,
+};
 
 let destructiveMenuIconCache: Electron.NativeImage | null | undefined;
 const desktopRuntimeInfo = resolveDesktopRuntimeInfo({
@@ -298,12 +330,10 @@ let updatePollTimer: ReturnType<typeof setInterval> | null = null;
 let updateStartupTimer: ReturnType<typeof setTimeout> | null = null;
 let updateCheckInFlight = false;
 let updateDownloadInFlight = false;
-let updateInstallInFlight = false;
 let updaterConfigured = false;
 let updateState: DesktopUpdateState = initialUpdateState();
 
 function resolveUpdaterErrorContext(): DesktopUpdateErrorContext {
-  if (updateInstallInFlight) return "install";
   if (updateDownloadInFlight) return "download";
   if (updateCheckInFlight) return "check";
   return updateState.errorContext;
@@ -759,6 +789,77 @@ function setUpdateState(patch: Partial<DesktopUpdateState>): void {
   emitUpdateState();
 }
 
+function emitRemoteAccessStatus(): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (window.isDestroyed()) continue;
+    window.webContents.send(REMOTE_ACCESS_STATUS_CHANNEL, remoteAccessStatus);
+  }
+}
+
+function setRemoteAccessStatus(
+  patch: Partial<DesktopRemoteAccessStatus>,
+): DesktopRemoteAccessStatus {
+  remoteAccessStatus = {
+    ...remoteAccessStatus,
+    ...patch,
+  };
+  emitRemoteAccessStatus();
+  return remoteAccessStatus;
+}
+
+function persistDesktopPreferences(next: DesktopPreferences): DesktopPreferences {
+  desktopPreferences = saveDesktopPreferences(DESKTOP_PREFERENCES_PATH, next);
+  return desktopPreferences;
+}
+
+function persistRemoteAccessEnabled(enabled: boolean): DesktopPreferences {
+  return persistDesktopPreferences({
+    ...desktopPreferences,
+    remoteAccess: {
+      enabled,
+    },
+  });
+}
+
+function backendChildEnv(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    T3CODE_MODE: "desktop",
+    T3CODE_NO_BROWSER: "1",
+    T3CODE_PORT: String(backendPort),
+    T3CODE_STATE_DIR: STATE_DIR,
+    T3CODE_AUTH_TOKEN: backendAuthToken,
+  };
+}
+
+function remoteGatewayEnv(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    T3CODE_MODE: "desktop",
+    T3CODE_NO_BROWSER: "1",
+    T3CODE_PORT: String(remoteGatewayPort),
+    T3CODE_HOST: REMOTE_ACCESS_GATEWAY_HOST,
+    T3CODE_STATE_DIR: STATE_DIR,
+    T3CODE_UPSTREAM_WS_URL: backendWsUrl,
+    T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "0",
+  };
+}
+
+function clearRemoteGatewayRestartTimer(): void {
+  if (remoteGatewayRestartTimer) {
+    clearTimeout(remoteGatewayRestartTimer);
+    remoteGatewayRestartTimer = null;
+  }
+}
+
+function enqueueRemoteAccessOperation(
+  task: () => Promise<DesktopRemoteAccessStatus>,
+): Promise<DesktopRemoteAccessStatus> {
+  const next = remoteAccessOperation.then(task, task);
+  remoteAccessOperation = next.catch(() => remoteAccessStatus);
+  return next;
+}
+
 function shouldEnableAutoUpdates(): boolean {
   return (
     getAutoUpdateDisabledReason({
@@ -771,13 +872,13 @@ function shouldEnableAutoUpdates(): boolean {
   );
 }
 
-async function checkForUpdates(reason: string): Promise<boolean> {
-  if (isQuitting || !updaterConfigured || updateCheckInFlight) return false;
+async function checkForUpdates(reason: string): Promise<void> {
+  if (isQuitting || !updaterConfigured || updateCheckInFlight) return;
   if (updateState.status === "downloading" || updateState.status === "downloaded") {
     console.info(
       `[desktop-updater] Skipping update check (${reason}) while status=${updateState.status}.`,
     );
-    return false;
+    return;
   }
   updateCheckInFlight = true;
   setUpdateState(reduceDesktopUpdateStateOnCheckStart(updateState, new Date().toISOString()));
@@ -785,14 +886,12 @@ async function checkForUpdates(reason: string): Promise<boolean> {
 
   try {
     await autoUpdater.checkForUpdates();
-    return true;
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     setUpdateState(
       reduceDesktopUpdateStateOnCheckFailure(updateState, message, new Date().toISOString()),
     );
     console.error(`[desktop-updater] Failed to check for updates: ${message}`);
-    return true;
   } finally {
     updateCheckInFlight = false;
   }
@@ -826,22 +925,13 @@ async function installDownloadedUpdate(): Promise<{ accepted: boolean; completed
   }
 
   isQuitting = true;
-  updateInstallInFlight = true;
   clearUpdatePollTimer();
   try {
     await stopBackendAndWaitForExit();
-    // Destroy all windows before launching the NSIS installer to avoid the installer finding live windows it needs to close.
-    for (const win of BrowserWindow.getAllWindows()) {
-      win.destroy();
-    }
-    // `quitAndInstall()` only starts the handoff to the updater. The actual
-    // install may still fail asynchronously, so keep the action incomplete
-    // until we either quit or receive an updater error.
-    autoUpdater.quitAndInstall(true, true);
-    return { accepted: true, completed: false };
+    autoUpdater.quitAndInstall();
+    return { accepted: true, completed: true };
   } catch (error: unknown) {
     const message = formatErrorMessage(error);
-    updateInstallInFlight = false;
     isQuitting = false;
     setUpdateState(reduceDesktopUpdateStateOnInstallFailure(updateState, message));
     console.error(`[desktop-updater] Failed to install update: ${message}`);
@@ -876,13 +966,6 @@ function configureAutoUpdater(): void {
         token: githubToken,
       });
     }
-  }
-
-  if (process.env.T3CODE_DESKTOP_MOCK_UPDATES) {
-    autoUpdater.setFeedURL({
-      provider: "generic",
-      url: `http://localhost:${process.env.T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT ?? 3000}`,
-    });
   }
 
   autoUpdater.autoDownload = false;
@@ -921,13 +1004,6 @@ function configureAutoUpdater(): void {
   });
   autoUpdater.on("error", (error) => {
     const message = formatErrorMessage(error);
-    if (updateInstallInFlight) {
-      updateInstallInFlight = false;
-      isQuitting = false;
-      setUpdateState(reduceDesktopUpdateStateOnInstallFailure(updateState, message));
-      console.error(`[desktop-updater] Updater error: ${message}`);
-      return;
-    }
     if (!updateCheckInFlight && !updateDownloadInFlight) {
       setUpdateState({
         status: "error",
@@ -1062,6 +1138,74 @@ function startBackend(): void {
   });
 }
 
+function scheduleRemoteGatewayRestart(reason: string): void {
+  if (
+    isQuitting ||
+    remoteGatewayRestartTimer ||
+    !desktopPreferences.remoteAccess.enabled
+  ) {
+    return;
+  }
+
+  writeDesktopLogHeader(`remote access gateway exited unexpectedly reason=${sanitizeLogValue(reason)}`);
+  setRemoteAccessStatus({
+    enabled: true,
+    state: "starting",
+    message: "Reconnecting private Tailscale access...",
+    preferredUrl: null,
+    urls: [],
+  });
+
+  remoteGatewayRestartTimer = setTimeout(() => {
+    remoteGatewayRestartTimer = null;
+    void syncRemoteAccessFromPreference();
+  }, REMOTE_ACCESS_RETRY_DELAY_MS);
+  remoteGatewayRestartTimer.unref();
+}
+
+function startRemoteGateway(): void {
+  if (isQuitting || remoteGatewayProcess) return;
+
+  const backendEntry = resolveBackendEntry();
+  if (!FS.existsSync(backendEntry)) {
+    throw new Error(`missing server entry at ${backendEntry}`);
+  }
+
+  const captureBackendLogs = app.isPackaged && backendLogSink !== null;
+  const child = ChildProcess.spawn(process.execPath, [backendEntry], {
+    cwd: resolveBackendCwd(),
+    env: {
+      ...remoteGatewayEnv(),
+      ELECTRON_RUN_AS_NODE: "1",
+    },
+    stdio: captureBackendLogs ? ["ignore", "pipe", "pipe"] : "inherit",
+  });
+
+  remoteGatewayProcess = child;
+  captureBackendOutput(child);
+  writeDesktopLogHeader(
+    `remote access gateway start requested pid=${child.pid ?? "unknown"} port=${remoteGatewayPort}`,
+  );
+
+  child.once("spawn", () => {
+  });
+
+  child.on("error", (error) => {
+    if (remoteGatewayProcess === child) {
+      remoteGatewayProcess = null;
+    }
+    scheduleRemoteGatewayRestart(error.message);
+  });
+
+  child.on("exit", (code, signal) => {
+    if (remoteGatewayProcess === child) {
+      remoteGatewayProcess = null;
+    }
+    if (isQuitting) return;
+    scheduleRemoteGatewayRestart(`code=${code ?? "null"} signal=${signal ?? "null"}`);
+  });
+}
+
 function stopBackend(): void {
   if (restartTimer) {
     clearTimeout(restartTimer);
@@ -1070,6 +1214,23 @@ function stopBackend(): void {
 
   const child = backendProcess;
   backendProcess = null;
+  if (!child) return;
+
+  if (child.exitCode === null && child.signalCode === null) {
+    child.kill("SIGTERM");
+    setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGKILL");
+      }
+    }, 2_000).unref();
+  }
+}
+
+function stopRemoteGateway(): void {
+  clearRemoteGatewayRestartTimer();
+
+  const child = remoteGatewayProcess;
+  remoteGatewayProcess = null;
   if (!child) return;
 
   if (child.exitCode === null && child.signalCode === null) {
@@ -1133,6 +1294,131 @@ async function stopBackendAndWaitForExit(timeoutMs = 5_000): Promise<void> {
   });
 }
 
+async function stopRemoteGatewayAndWaitForExit(timeoutMs = 5_000): Promise<void> {
+  clearRemoteGatewayRestartTimer();
+
+  const child = remoteGatewayProcess;
+  remoteGatewayProcess = null;
+  if (!child) return;
+  const gatewayChild = child;
+  if (gatewayChild.exitCode !== null || gatewayChild.signalCode !== null) return;
+
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
+    let exitTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+
+    function settle(): void {
+      if (settled) return;
+      settled = true;
+      gatewayChild.off("exit", onExit);
+      if (forceKillTimer) {
+        clearTimeout(forceKillTimer);
+      }
+      if (exitTimeoutTimer) {
+        clearTimeout(exitTimeoutTimer);
+      }
+      resolve();
+    }
+
+    function onExit(): void {
+      settle();
+    }
+
+    gatewayChild.once("exit", onExit);
+    gatewayChild.kill("SIGTERM");
+
+    forceKillTimer = setTimeout(() => {
+      if (gatewayChild.exitCode === null && gatewayChild.signalCode === null) {
+        gatewayChild.kill("SIGKILL");
+      }
+    }, 2_000);
+    forceKillTimer.unref();
+
+    exitTimeoutTimer = setTimeout(() => {
+      settle();
+    }, timeoutMs);
+    exitTimeoutTimer.unref();
+  });
+}
+
+async function applyRemoteAccessEnabled(enabled: boolean, persistPreference = true) {
+  if (persistPreference) {
+    persistRemoteAccessEnabled(enabled);
+  }
+
+  if (!enabled) {
+    await stopRemoteGatewayAndWaitForExit();
+    await clearPrivateTailscaleServe();
+    return setRemoteAccessStatus({
+      enabled: false,
+      state: "disabled",
+      message: null,
+      preferredUrl: null,
+      urls: [],
+    });
+  }
+
+  setRemoteAccessStatus({
+    enabled: true,
+    state: "starting",
+    message: "Configuring private Tailscale access...",
+    preferredUrl: null,
+    urls: [],
+  });
+
+  try {
+    await stopRemoteGatewayAndWaitForExit();
+    await clearPrivateTailscaleServe();
+    remoteGatewayPort = await Effect.gen(function* () {
+      const net = yield* NetService;
+      return yield* net.reserveLoopbackPort(REMOTE_ACCESS_GATEWAY_HOST);
+    }).pipe(Effect.provide(NetService.layer), Effect.runPromise);
+
+    startRemoteGateway();
+
+    const tailscaleResult = await setupPrivateTailscaleServe(remoteGatewayPort);
+    if (tailscaleResult.kind === "unavailable") {
+      await stopRemoteGatewayAndWaitForExit();
+      return setRemoteAccessStatus({
+        enabled: true,
+        state: "unavailable",
+        message: tailscaleResult.message,
+        preferredUrl: null,
+        urls: [],
+      });
+    }
+
+    writeDesktopLogHeader(
+      `private tailscale remote access ready origin=${tailscaleResult.preferredOrigin}`,
+    );
+    return setRemoteAccessStatus({
+      enabled: true,
+      state: "ready",
+      message: null,
+      preferredUrl: tailscaleResult.preferredOrigin,
+      urls: [...tailscaleResult.origins],
+    });
+  } catch (error) {
+    await stopRemoteGatewayAndWaitForExit();
+    const message = formatErrorMessage(error);
+    writeDesktopLogHeader(`private tailscale remote access setup failed error=${message}`);
+    return setRemoteAccessStatus({
+      enabled: true,
+      state: "error",
+      message,
+      preferredUrl: null,
+      urls: [],
+    });
+  }
+}
+
+function syncRemoteAccessFromPreference(): Promise<DesktopRemoteAccessStatus> {
+  return enqueueRemoteAccessOperation(() =>
+    applyRemoteAccessEnabled(desktopPreferences.remoteAccess.enabled, false),
+  );
+}
+
 function registerIpcHandlers(): void {
   ipcMain.removeAllListeners(GET_WS_URL_CHANNEL);
   ipcMain.on(GET_WS_URL_CHANNEL, (event) => {
@@ -1183,7 +1469,6 @@ function registerIpcHandlers(): void {
           id: item.id,
           label: item.label,
           destructive: item.destructive === true,
-          disabled: item.disabled === true,
         }));
       if (normalizedItems.length === 0) {
         return null;
@@ -1214,7 +1499,6 @@ function registerIpcHandlers(): void {
           }
           const itemOption: MenuItemConstructorOptions = {
             label: item.label,
-            enabled: !item.disabled,
             click: () => resolve(item.id),
           };
           if (item.destructive) {
@@ -1281,19 +1565,15 @@ function registerIpcHandlers(): void {
     } satisfies DesktopUpdateActionResult;
   });
 
-  ipcMain.removeHandler(UPDATE_CHECK_CHANNEL);
-  ipcMain.handle(UPDATE_CHECK_CHANNEL, async () => {
-    if (!updaterConfigured) {
-      return {
-        checked: false,
-        state: updateState,
-      } satisfies DesktopUpdateCheckResult;
+  ipcMain.removeHandler(REMOTE_ACCESS_GET_STATUS_CHANNEL);
+  ipcMain.handle(REMOTE_ACCESS_GET_STATUS_CHANNEL, async () => remoteAccessStatus);
+
+  ipcMain.removeHandler(REMOTE_ACCESS_SET_ENABLED_CHANNEL);
+  ipcMain.handle(REMOTE_ACCESS_SET_ENABLED_CHANNEL, async (_event, enabled: unknown) => {
+    if (typeof enabled !== "boolean") {
+      return remoteAccessStatus;
     }
-    const checked = await checkForUpdates("web-ui");
-    return {
-      checked,
-      state: updateState,
-    } satisfies DesktopUpdateCheckResult;
+    return enqueueRemoteAccessOperation(() => applyRemoteAccessEnabled(enabled));
   });
 }
 
@@ -1367,6 +1647,7 @@ function createWindow(): BrowserWindow {
   window.webContents.on("did-finish-load", () => {
     window.setTitle(APP_DISPLAY_NAME);
     emitUpdateState();
+    emitRemoteAccessStatus();
   });
   window.once("ready-to-show", () => {
     window.show();
@@ -1414,14 +1695,16 @@ async function bootstrap(): Promise<void> {
   writeDesktopLogHeader("bootstrap backend start requested");
   mainWindow = createWindow();
   writeDesktopLogHeader("bootstrap main window created");
+  await syncRemoteAccessFromPreference();
 }
 
 app.on("before-quit", () => {
   isQuitting = true;
-  updateInstallInFlight = false;
   writeDesktopLogHeader("before-quit received");
   clearUpdatePollTimer();
+  stopRemoteGateway();
   stopBackend();
+  void clearPrivateTailscaleServe();
   restoreStdIoCapture?.();
 });
 
@@ -1448,7 +1731,7 @@ app
   });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin" && !isQuitting) {
+  if (process.platform !== "darwin") {
     app.quit();
   }
 });
