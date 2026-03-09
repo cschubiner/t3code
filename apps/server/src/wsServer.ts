@@ -1171,7 +1171,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         const sessionExpiresAt = new Date(Date.now() + AUTH_SESSION_TTL_MS).toISOString();
         secretAccessGrants.set(code, {
           expiresAt: Date.parse(expiresAt),
-          redirectTo: resolveRedirectTarget("/mobile"),
+          redirectTo: resolveRedirectTarget("/"),
         });
 
         const publicUrl = new URL(SECRET_LINK_PATH, publicOrigin);

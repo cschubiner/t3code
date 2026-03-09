@@ -1,16 +1,15 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useState } from "react";
-import { type ProviderKind, type ServerGenerateSecretUrlResult } from "@t3tools/contracts";
+import { useCallback, useEffect, useState } from "react";
+import { type DesktopRemoteAccessStatus, type ProviderKind } from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
-import { CopyIcon, LinkIcon } from "lucide-react";
+import { CopyIcon, ExternalLinkIcon, ShieldIcon } from "lucide-react";
 
 import { MAX_CUSTOM_MODEL_LENGTH, useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { ensureNativeApi } from "../nativeApi";
-import { getServerHttpOrigin } from "../serverOrigin";
 import { preferredTerminalEditor } from "../terminal-links";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -83,16 +82,32 @@ function patchCustomModels(provider: ProviderKind, models: string[]) {
   }
 }
 
+function remoteAccessStateLabel(status: DesktopRemoteAccessStatus | null): string {
+  switch (status?.state) {
+    case "ready":
+      return "Ready";
+    case "starting":
+      return "Starting";
+    case "unavailable":
+      return "Unavailable";
+    case "error":
+      return "Error";
+    case "disabled":
+    default:
+      return "Disabled";
+  }
+}
+
 function SettingsRouteView() {
   const { theme, setTheme, resolvedTheme } = useTheme();
   const { settings, defaults, updateSettings } = useAppSettings();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const [isOpeningKeybindings, setIsOpeningKeybindings] = useState(false);
   const [openKeybindingsError, setOpenKeybindingsError] = useState<string | null>(null);
-  const [secretOrigin, setSecretOrigin] = useState("");
-  const [secretUrl, setSecretUrl] = useState<ServerGenerateSecretUrlResult | null>(null);
-  const [secretUrlError, setSecretUrlError] = useState<string | null>(null);
-  const [isGeneratingSecretUrl, setIsGeneratingSecretUrl] = useState(false);
+  const [remoteAccessStatus, setRemoteAccessStatus] = useState<DesktopRemoteAccessStatus | null>(
+    null,
+  );
+  const [isTogglingRemoteAccess, setIsTogglingRemoteAccess] = useState(false);
   const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
     Record<ProviderKind, string>
   >({
@@ -105,8 +120,30 @@ function SettingsRouteView() {
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
-  const suggestedRemoteOrigin =
-    serverConfigQuery.data?.remoteAccessOrigin ?? getServerHttpOrigin();
+
+  useEffect(() => {
+    if (!window.desktopBridge) {
+      return;
+    }
+
+    let disposed = false;
+    void window.desktopBridge.getRemoteAccessStatus().then((status) => {
+      if (!disposed) {
+        setRemoteAccessStatus(status);
+      }
+    });
+
+    const unsubscribe = window.desktopBridge.onRemoteAccessStatus((status) => {
+      if (!disposed) {
+        setRemoteAccessStatus(status);
+      }
+    });
+
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, []);
 
   const openKeybindingsFile = useCallback(() => {
     if (!keybindingsConfigPath) return;
@@ -125,29 +162,8 @@ function SettingsRouteView() {
       });
   }, [keybindingsConfigPath]);
 
-  const generateSecretUrl = useCallback(() => {
-    const api = ensureNativeApi();
-    setIsGeneratingSecretUrl(true);
-    setSecretUrlError(null);
-    setSecretUrl(null);
-    const origin = secretOrigin.trim();
-    void api.server
-      .generateSecretUrl(origin.length > 0 ? { origin } : {})
-      .then((result) => {
-        setSecretUrl(result);
-      })
-      .catch((error) => {
-        setSecretUrlError(
-          error instanceof Error ? error.message : "Unable to generate a mobile secret URL.",
-        );
-      })
-      .finally(() => {
-        setIsGeneratingSecretUrl(false);
-      });
-  }, [secretOrigin]);
-
-  const copySecretUrl = useCallback(() => {
-    if (!secretUrl) {
+  const copyRemoteAccessUrl = useCallback(() => {
+    if (!remoteAccessStatus?.preferredUrl) {
       return;
     }
 
@@ -155,28 +171,61 @@ function SettingsRouteView() {
       toastManager.add({
         type: "error",
         title: "Clipboard unavailable",
-        description: "Copy the generated link manually from the field below.",
+        description: "Copy the Tailscale URL manually from the field below.",
       });
       return;
     }
 
     void navigator.clipboard
-      .writeText(secretUrl.url)
+      .writeText(remoteAccessStatus.preferredUrl)
       .then(() => {
         toastManager.add({
           type: "success",
-          title: "Secret link copied",
-          description: `Redeem it by ${new Date(secretUrl.expiresAt).toLocaleString()}.`,
+          title: "Remote URL copied",
+          description: "Open it on a phone connected to the same tailnet.",
         });
       })
       .catch((error) => {
         toastManager.add({
           type: "error",
-          title: "Unable to copy secret link",
+          title: "Unable to copy remote URL",
           description: error instanceof Error ? error.message : "An unexpected error occurred.",
         });
       });
-  }, [secretUrl]);
+  }, [remoteAccessStatus]);
+
+  const openRemoteAccessUrl = useCallback(() => {
+    if (!remoteAccessStatus?.preferredUrl) {
+      return;
+    }
+    const api = ensureNativeApi();
+    void api.shell.openExternal(remoteAccessStatus.preferredUrl).catch((error) => {
+      toastManager.add({
+        type: "error",
+        title: "Unable to open remote URL",
+        description: error instanceof Error ? error.message : "An unexpected error occurred.",
+      });
+    });
+  }, [remoteAccessStatus]);
+
+  const toggleRemoteAccess = useCallback(
+    (enabled: boolean) => {
+      if (!window.desktopBridge) {
+        return;
+      }
+
+      setIsTogglingRemoteAccess(true);
+      void window.desktopBridge
+        .setRemoteAccessEnabled(enabled)
+        .then((status) => {
+          setRemoteAccessStatus(status);
+        })
+        .finally(() => {
+          setIsTogglingRemoteAccess(false);
+        });
+    },
+    [],
+  );
 
   const addCustomModel = useCallback((provider: ProviderKind) => {
     const customModelInput = customModelInputByProvider[provider];
@@ -259,85 +308,100 @@ function SettingsRouteView() {
               </p>
             </header>
 
-            <section className="rounded-2xl border border-border bg-card p-5">
-              <div className="mb-4 flex items-start justify-between gap-3">
-                <div>
-                  <h2 className="text-sm font-medium text-foreground">Private Mobile Access</h2>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Generate a one-time link that opens this desktop app&apos;s live sessions on your
-                    phone.
-                  </p>
-                </div>
-                <div className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-1 text-[10px] font-semibold tracking-wide text-sky-700 uppercase">
-                  Tailscale
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                <label htmlFor="secret-origin" className="block space-y-1">
-                  <span className="text-xs font-medium text-foreground">Remote origin override</span>
-                  <Input
-                    id="secret-origin"
-                    value={secretOrigin}
-                    onChange={(event) => setSecretOrigin(event.target.value)}
-                    placeholder={suggestedRemoteOrigin || "https://your-device.tailnet.ts.net:8444"}
-                    spellCheck={false}
-                    autoCapitalize="off"
-                    autoCorrect="off"
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    Leave blank to use the detected origin.
-                    {suggestedRemoteOrigin ? ` Current: ${suggestedRemoteOrigin}` : ""}
-                  </span>
-                </label>
-
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={generateSecretUrl}
-                    disabled={isGeneratingSecretUrl}
-                  >
-                    <LinkIcon className="size-4" />
-                    {isGeneratingSecretUrl ? "Generating..." : "Generate URL"}
-                  </Button>
-                  {secretUrl ? (
-                    <Button size="sm" variant="ghost" onClick={copySecretUrl}>
-                      <CopyIcon className="size-4" />
-                      Copy
-                    </Button>
-                  ) : null}
+            {isElectron ? (
+              <section className="rounded-2xl border border-border bg-card p-5">
+                <div className="mb-4 flex items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-sm font-medium text-foreground">Private Remote Access</h2>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Expose the full app privately over Tailscale so your phone can control the
+                      same live desktop sessions.
+                    </p>
+                  </div>
+                  <div className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-1 text-[10px] font-semibold tracking-wide text-sky-700 uppercase">
+                    Tailscale
+                  </div>
                 </div>
 
-                {secretUrl ? (
-                  <div className="rounded-xl border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
-                    <div className="font-medium text-foreground">Generated link</div>
-                    <div className="mt-1 break-all">{secretUrl.url}</div>
-                    <div className="mt-2">
-                      Redeem by {new Date(secretUrl.expiresAt).toLocaleString()}.
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between gap-4 rounded-xl border border-border bg-background px-4 py-3">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                        <ShieldIcon className="size-4" />
+                        Private remote access
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Only devices connected to your tailnet can open the remote URL.
+                      </p>
                     </div>
-                    <div className="mt-1">
-                      Browser session expires {new Date(secretUrl.sessionExpiresAt).toLocaleString()}.
+                    <Switch
+                      checked={remoteAccessStatus?.enabled === true}
+                      disabled={isTogglingRemoteAccess}
+                      onCheckedChange={toggleRemoteAccess}
+                      aria-label="Toggle private remote access"
+                    />
+                  </div>
+
+                  <div className="rounded-xl border border-border bg-background px-4 py-3 text-xs text-muted-foreground">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium text-foreground">Status</span>
+                      <span className="rounded-full border border-border px-2 py-0.5 text-[11px]">
+                        {remoteAccessStateLabel(remoteAccessStatus)}
+                      </span>
                     </div>
-                    {!secretUrl.remoteReachable ? (
-                      <div className="mt-1 text-amber-600">
-                        This origin still looks local-only. Use your Tailscale URL if you want the
-                        phone to connect over cellular.
+                    {remoteAccessStatus?.preferredUrl ? (
+                      <div className="mt-3">
+                        <div className="font-medium text-foreground">Preferred URL</div>
+                        <div className="mt-1 break-all">{remoteAccessStatus.preferredUrl}</div>
                       </div>
                     ) : null}
+                    {remoteAccessStatus && remoteAccessStatus.urls.length > 1 ? (
+                      <div className="mt-3">
+                        <div className="font-medium text-foreground">Also available on</div>
+                        <div className="mt-1 space-y-1">
+                          {remoteAccessStatus.urls
+                            .filter((url) => url !== remoteAccessStatus.preferredUrl)
+                            .map((url) => (
+                              <div key={url} className="break-all">
+                                {url}
+                              </div>
+                            ))}
+                        </div>
+                      </div>
+                    ) : null}
+                    {remoteAccessStatus?.message ? (
+                      <div className="mt-3 text-amber-700">{remoteAccessStatus.message}</div>
+                    ) : (
+                      <div className="mt-3">
+                        Open the preferred URL on a phone connected to Tailscale over Wi-Fi or
+                        cellular.
+                      </div>
+                    )}
                   </div>
-                ) : null}
 
-                {secretUrlError ? (
-                  <p className="text-xs text-red-500">{secretUrlError}</p>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    Links are one-time and short-lived. Open them directly on your phone instead of
-                    sending them through an app that might consume the preview.
-                  </p>
-                )}
-              </div>
-            </section>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={copyRemoteAccessUrl}
+                      disabled={!remoteAccessStatus?.preferredUrl}
+                    >
+                      <CopyIcon className="size-4" />
+                      Copy URL
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={openRemoteAccessUrl}
+                      disabled={!remoteAccessStatus?.preferredUrl}
+                    >
+                      <ExternalLinkIcon className="size-4" />
+                      Open URL
+                    </Button>
+                  </div>
+                </div>
+              </section>
+            ) : null}
 
             <section className="rounded-2xl border border-border bg-card p-5">
               <div className="mb-4">
