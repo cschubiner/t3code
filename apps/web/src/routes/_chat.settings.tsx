@@ -1,8 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useState } from "react";
-import { type ProviderKind } from "@t3tools/contracts";
+import { useCallback, useEffect, useState } from "react";
+import { type DesktopRemoteAccessStatus, type ProviderKind } from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
+import { CopyIcon, ExternalLinkIcon, ShieldIcon } from "lucide-react";
 import { MAX_CUSTOM_MODEL_LENGTH, useAppSettings } from "../appSettings";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { isElectron } from "../env";
@@ -20,6 +21,7 @@ import {
 } from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
 import { APP_VERSION } from "../branding";
+import { toastManager } from "~/components/ui/toast";
 import { SidebarInset } from "~/components/ui/sidebar";
 
 const THEME_OPTIONS = [
@@ -92,12 +94,32 @@ function patchCustomModels(provider: ProviderKind, models: string[]) {
   }
 }
 
+function remoteAccessStateLabel(status: DesktopRemoteAccessStatus | null): string {
+  switch (status?.state) {
+    case "ready":
+      return "Ready";
+    case "starting":
+      return "Starting";
+    case "unavailable":
+      return "Unavailable";
+    case "error":
+      return "Error";
+    case "disabled":
+    default:
+      return "Disabled";
+  }
+}
+
 function SettingsRouteView() {
   const { theme, setTheme, resolvedTheme } = useTheme();
   const { settings, defaults, updateSettings } = useAppSettings();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const [isOpeningKeybindings, setIsOpeningKeybindings] = useState(false);
   const [openKeybindingsError, setOpenKeybindingsError] = useState<string | null>(null);
+  const [remoteAccessStatus, setRemoteAccessStatus] = useState<DesktopRemoteAccessStatus | null>(
+    null,
+  );
+  const [isTogglingRemoteAccess, setIsTogglingRemoteAccess] = useState(false);
   const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
     Record<ProviderKind, string>
   >({
@@ -111,6 +133,30 @@ function SettingsRouteView() {
   const codexHomePath = settings.codexHomePath;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
   const availableEditors = serverConfigQuery.data?.availableEditors;
+
+  useEffect(() => {
+    if (!window.desktopBridge) {
+      return;
+    }
+
+    let disposed = false;
+    void window.desktopBridge.getRemoteAccessStatus().then((status) => {
+      if (!disposed) {
+        setRemoteAccessStatus(status);
+      }
+    });
+
+    const unsubscribe = window.desktopBridge.onRemoteAccessStatus((status) => {
+      if (!disposed) {
+        setRemoteAccessStatus(status);
+      }
+    });
+
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, []);
 
   const openKeybindingsFile = useCallback(() => {
     if (!keybindingsConfigPath) return;
@@ -134,6 +180,68 @@ function SettingsRouteView() {
         setIsOpeningKeybindings(false);
       });
   }, [availableEditors, keybindingsConfigPath]);
+
+  const copyRemoteAccessUrl = useCallback(() => {
+    if (!remoteAccessStatus?.preferredUrl) {
+      return;
+    }
+
+    if (typeof navigator === "undefined" || navigator.clipboard?.writeText === undefined) {
+      toastManager.add({
+        type: "error",
+        title: "Clipboard unavailable",
+        description: "Copy the Tailscale URL manually from the field below.",
+      });
+      return;
+    }
+
+    void navigator.clipboard
+      .writeText(remoteAccessStatus.preferredUrl)
+      .then(() => {
+        toastManager.add({
+          type: "success",
+          title: "Remote URL copied",
+          description: "Open it on a phone connected to the same tailnet.",
+        });
+      })
+      .catch((error) => {
+        toastManager.add({
+          type: "error",
+          title: "Unable to copy remote URL",
+          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+        });
+      });
+  }, [remoteAccessStatus]);
+
+  const openRemoteAccessUrl = useCallback(() => {
+    if (!remoteAccessStatus?.preferredUrl) {
+      return;
+    }
+    const api = ensureNativeApi();
+    void api.shell.openExternal(remoteAccessStatus.preferredUrl).catch((error) => {
+      toastManager.add({
+        type: "error",
+        title: "Unable to open remote URL",
+        description: error instanceof Error ? error.message : "An unexpected error occurred.",
+      });
+    });
+  }, [remoteAccessStatus]);
+
+  const toggleRemoteAccess = useCallback((enabled: boolean) => {
+    if (!window.desktopBridge) {
+      return;
+    }
+
+    setIsTogglingRemoteAccess(true);
+    void window.desktopBridge
+      .setRemoteAccessEnabled(enabled)
+      .then((status) => {
+        setRemoteAccessStatus(status);
+      })
+      .finally(() => {
+        setIsTogglingRemoteAccess(false);
+      });
+  }, []);
 
   const addCustomModel = useCallback(
     (provider: ProviderKind) => {
@@ -176,11 +284,42 @@ function SettingsRouteView() {
       }));
       setCustomModelErrorByProvider((existing) => ({
         ...existing,
-        [provider]: null,
+        [provider]: "Enter a model slug.",
       }));
-    },
-    [customModelInputByProvider, settings, updateSettings],
-  );
+      return;
+    }
+    if (getModelOptions(provider).some((option) => option.slug === normalized)) {
+      setCustomModelErrorByProvider((existing) => ({
+        ...existing,
+        [provider]: "That model is already built in.",
+      }));
+      return;
+    }
+    if (normalized.length > MAX_CUSTOM_MODEL_LENGTH) {
+      setCustomModelErrorByProvider((existing) => ({
+        ...existing,
+        [provider]: `Model slugs must be ${MAX_CUSTOM_MODEL_LENGTH} characters or less.`,
+      }));
+      return;
+    }
+    if (customModels.includes(normalized)) {
+      setCustomModelErrorByProvider((existing) => ({
+        ...existing,
+        [provider]: "That custom model is already saved.",
+      }));
+      return;
+    }
+
+    updateSettings(patchCustomModels(provider, [...customModels, normalized]));
+    setCustomModelInputByProvider((existing) => ({
+      ...existing,
+      [provider]: "",
+    }));
+    setCustomModelErrorByProvider((existing) => ({
+      ...existing,
+      [provider]: null,
+    }));
+  }, [customModelInputByProvider, settings, updateSettings]);
 
   const removeCustomModel = useCallback(
     (provider: ProviderKind, slug: string) => {
@@ -219,6 +358,100 @@ function SettingsRouteView() {
               </p>
             </header>
 
+            {isElectron ? (
+              <section className="rounded-2xl border border-border bg-card p-5">
+                <div className="mb-4 flex items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-sm font-medium text-foreground">Private Remote Access</h2>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Expose the full app privately over Tailscale so your phone can control the
+                      same live desktop sessions.
+                    </p>
+                  </div>
+                  <div className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-1 text-[10px] font-semibold tracking-wide text-sky-700 uppercase">
+                    Tailscale
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between gap-4 rounded-xl border border-border bg-background px-4 py-3">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                        <ShieldIcon className="size-4" />
+                        Private remote access
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Only devices connected to your tailnet can open the remote URL.
+                      </p>
+                    </div>
+                    <Switch
+                      checked={remoteAccessStatus?.enabled === true}
+                      disabled={isTogglingRemoteAccess}
+                      onCheckedChange={toggleRemoteAccess}
+                      aria-label="Toggle private remote access"
+                    />
+                  </div>
+
+                  <div className="rounded-xl border border-border bg-background px-4 py-3 text-xs text-muted-foreground">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium text-foreground">Status</span>
+                      <span className="rounded-full border border-border px-2 py-0.5 text-[11px]">
+                        {remoteAccessStateLabel(remoteAccessStatus)}
+                      </span>
+                    </div>
+                    {remoteAccessStatus?.preferredUrl ? (
+                      <div className="mt-3">
+                        <div className="font-medium text-foreground">Preferred URL</div>
+                        <div className="mt-1 break-all">{remoteAccessStatus.preferredUrl}</div>
+                      </div>
+                    ) : null}
+                    {remoteAccessStatus && remoteAccessStatus.urls.length > 1 ? (
+                      <div className="mt-3">
+                        <div className="font-medium text-foreground">Also available on</div>
+                        <div className="mt-1 space-y-1">
+                          {remoteAccessStatus.urls
+                            .filter((url) => url !== remoteAccessStatus.preferredUrl)
+                            .map((url) => (
+                              <div key={url} className="break-all">
+                                {url}
+                              </div>
+                            ))}
+                        </div>
+                      </div>
+                    ) : null}
+                    {remoteAccessStatus?.message ? (
+                      <div className="mt-3 text-amber-700">{remoteAccessStatus.message}</div>
+                    ) : (
+                      <div className="mt-3">
+                        Open the preferred URL on a phone connected to Tailscale over Wi-Fi or
+                        cellular.
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={copyRemoteAccessUrl}
+                      disabled={!remoteAccessStatus?.preferredUrl}
+                    >
+                      <CopyIcon className="size-4" />
+                      Copy URL
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={openRemoteAccessUrl}
+                      disabled={!remoteAccessStatus?.preferredUrl}
+                    >
+                      <ExternalLinkIcon className="size-4" />
+                      Open URL
+                    </Button>
+                  </div>
+                </div>
+              </section>
+            ) : null}
             <section className="rounded-2xl border border-border bg-card p-5">
               <div className="mb-4">
                 <h2 className="text-sm font-medium text-foreground">Appearance</h2>
