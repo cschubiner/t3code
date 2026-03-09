@@ -10,6 +10,9 @@ const UPDATE_STATE_CHANNEL = "desktop:update-state";
 const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
 const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
+const REMOTE_ACCESS_STATUS_CHANNEL = "desktop:remote-access-status";
+const REMOTE_ACCESS_GET_STATUS_CHANNEL = "desktop:remote-access-get-status";
+const REMOTE_ACCESS_SET_ENABLED_CHANNEL = "desktop:remote-access-set-enabled";
 const wsUrl = process.env.T3CODE_DESKTOP_WS_URL ?? null;
 
 contextBridge.exposeInMainWorld("desktopBridge", {
@@ -41,6 +44,20 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.on(UPDATE_STATE_CHANNEL, wrappedListener);
     return () => {
       ipcRenderer.removeListener(UPDATE_STATE_CHANNEL, wrappedListener);
+    };
+  },
+  getRemoteAccessStatus: () => ipcRenderer.invoke(REMOTE_ACCESS_GET_STATUS_CHANNEL),
+  setRemoteAccessEnabled: (enabled: boolean) =>
+    ipcRenderer.invoke(REMOTE_ACCESS_SET_ENABLED_CHANNEL, enabled),
+  onRemoteAccessStatus: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, status: unknown) => {
+      if (typeof status !== "object" || status === null) return;
+      listener(status as Parameters<typeof listener>[0]);
+    };
+
+    ipcRenderer.on(REMOTE_ACCESS_STATUS_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(REMOTE_ACCESS_STATUS_CHANNEL, wrappedListener);
     };
   },
 } satisfies DesktopBridge);

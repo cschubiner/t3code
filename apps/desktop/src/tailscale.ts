@@ -19,6 +19,19 @@ export interface TailscaleRemoteAccessSetup {
   readonly origins: readonly string[];
 }
 
+export interface TailscaleRemoteAccessUnavailable {
+  readonly kind: "unavailable";
+  readonly message: string;
+}
+
+export interface TailscaleRemoteAccessReady extends TailscaleRemoteAccessSetup {
+  readonly kind: "ready";
+}
+
+export type TailscaleRemoteAccessResult =
+  | TailscaleRemoteAccessReady
+  | TailscaleRemoteAccessUnavailable;
+
 function normalizeDnsName(value: string | undefined): string | null {
   if (!value) return null;
   const trimmed = value.trim().replace(/\.$/, "");
@@ -32,48 +45,77 @@ async function runTailscale(args: readonly string[]): Promise<string> {
   return stdout;
 }
 
-export async function setupPrivateTailscaleServe(
-  backendPort: number,
-): Promise<TailscaleRemoteAccessSetup | null> {
-  let status: TailscaleStatusResponse;
-  try {
-    status = JSON.parse(await runTailscale(["status", "--json"])) as TailscaleStatusResponse;
-  } catch {
-    return null;
-  }
-
-  if (status.BackendState !== "Running") {
-    return null;
-  }
-
-  const dnsName = normalizeDnsName(status.Self?.DNSName);
-  if (!dnsName) {
-    return null;
-  }
-
-  for (const externalPort of REMOTE_ACCESS_PORTS) {
+export function createTailscaleRemoteAccessHelpers(
+  runCommand: (args: readonly string[]) => Promise<string> = runTailscale,
+) {
+  const setupPrivateTailscaleServe = async (
+    backendPort: number,
+  ): Promise<TailscaleRemoteAccessResult> => {
+    let status: TailscaleStatusResponse;
     try {
-      await runTailscale([
+      status = JSON.parse(await runCommand(["status", "--json"])) as TailscaleStatusResponse;
+    } catch {
+      return {
+        kind: "unavailable",
+        message: "Tailscale CLI is unavailable or not responding.",
+      };
+    }
+
+    if (status.BackendState !== "Running") {
+      return {
+        kind: "unavailable",
+        message: "Tailscale is installed but not connected.",
+      };
+    }
+
+    const dnsName = normalizeDnsName(status.Self?.DNSName);
+    if (!dnsName) {
+      return {
+        kind: "unavailable",
+        message: "Tailscale did not report a usable tailnet DNS name.",
+      };
+    }
+
+    for (const externalPort of REMOTE_ACCESS_PORTS) {
+      await runCommand([
         "serve",
         "--bg",
         `--https=${externalPort}`,
         `http://127.0.0.1:${backendPort}`,
       ]);
-    } catch {
-      return null;
     }
-  }
 
-  const origins = REMOTE_ACCESS_PORTS.map((externalPort) => `https://${dnsName}:${externalPort}`);
-  const preferredOrigin =
-    origins.find((origin) => origin.endsWith(`:${PREFERRED_REMOTE_ACCESS_PORT}`)) ?? origins[0];
+    const origins = REMOTE_ACCESS_PORTS.map(
+      (externalPort) => `https://${dnsName}:${externalPort}`,
+    );
+    const preferredOrigin =
+      origins.find((origin) => origin.endsWith(`:${PREFERRED_REMOTE_ACCESS_PORT}`)) ??
+      origins[0]!;
 
-  if (!preferredOrigin) {
-    return null;
-  }
+    return {
+      kind: "ready",
+      preferredOrigin,
+      origins,
+    };
+  };
+
+  const clearPrivateTailscaleServe = async (): Promise<void> => {
+    await Promise.all(
+      REMOTE_ACCESS_PORTS.map(async (externalPort) => {
+        try {
+          await runCommand(["serve", "clear", String(externalPort)]);
+        } catch {
+          // Clearing a missing port should be best-effort only.
+        }
+      }),
+    );
+  };
 
   return {
-    preferredOrigin,
-    origins,
+    setupPrivateTailscaleServe,
+    clearPrivateTailscaleServe,
   };
 }
+
+export const { setupPrivateTailscaleServe, clearPrivateTailscaleServe } =
+  createTailscaleRemoteAccessHelpers();

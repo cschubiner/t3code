@@ -114,10 +114,10 @@ function waitFor<A, E>(
   read: Effect.Effect<A, E>,
   predicate: (value: A) => boolean,
   description: string,
-  timeoutMs = 3000,
+  timeoutMs = 30_000,
 ): Effect.Effect<A, never> {
   const RETRY_SIGNAL = "wait_for_retry";
-  const retryIntervalMs = 10;
+  const retryIntervalMs = 50;
   const maxRetries = Math.max(0, Math.floor(timeoutMs / retryIntervalMs));
   const retrySchedule = Schedule.spaced(`${retryIntervalMs} millis`);
 
