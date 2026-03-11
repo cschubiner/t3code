@@ -24,7 +24,11 @@ import type {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project";
-import type { ServerConfig } from "./server";
+import type {
+  ServerConfig,
+  ServerGenerateSecretUrlInput,
+  ServerGenerateSecretUrlResult,
+} from "./server";
 import type {
   TerminalClearInput,
   TerminalCloseInput,
@@ -94,6 +98,22 @@ export interface DesktopUpdateActionResult {
   state: DesktopUpdateState;
 }
 
+export type DesktopRemoteAccessState =
+  | "disabled"
+  | "starting"
+  | "ready"
+  | "unavailable"
+  | "error";
+
+export interface DesktopRemoteAccessStatus {
+  enabled: boolean;
+  state: DesktopRemoteAccessState;
+  provider: "tailscale";
+  preferredUrl: string | null;
+  urls: readonly string[];
+  message: string | null;
+}
+
 export interface DesktopBridge {
   getWsUrl: () => string | null;
   pickFolder: () => Promise<string | null>;
@@ -109,6 +129,9 @@ export interface DesktopBridge {
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
+  getRemoteAccessStatus: () => Promise<DesktopRemoteAccessStatus>;
+  setRemoteAccessEnabled: (enabled: boolean) => Promise<DesktopRemoteAccessStatus>;
+  onRemoteAccessStatus: (listener: (status: DesktopRemoteAccessStatus) => void) => () => void;
 }
 
 export interface NativeApi {
@@ -158,6 +181,9 @@ export interface NativeApi {
   };
   server: {
     getConfig: () => Promise<ServerConfig>;
+    generateSecretUrl: (
+      input: ServerGenerateSecretUrlInput,
+    ) => Promise<ServerGenerateSecretUrlResult>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
   };
   orchestration: {

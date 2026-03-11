@@ -40,6 +40,8 @@ interface CliInput {
   readonly devUrl: Option.Option<URL>;
   readonly noBrowser: Option.Option<boolean>;
   readonly authToken: Option.Option<string>;
+  readonly remoteAccessOrigin: Option.Option<string>;
+  readonly upstreamWsUrl: Option.Option<string>;
   readonly autoBootstrapProjectFromCwd: Option.Option<boolean>;
   readonly logWebSocketEvents: Option.Option<boolean>;
 }
@@ -112,6 +114,14 @@ const CliEnvConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  remoteAccessOrigin: Config.string("T3CODE_REMOTE_ACCESS_ORIGIN").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  upstreamWsUrl: Config.string("T3CODE_UPSTREAM_WS_URL").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   autoBootstrapProjectFromCwd: Config.boolean("T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -158,6 +168,9 @@ const ServerConfigLive = (input: CliInput) =>
       const devUrl = Option.getOrElse(input.devUrl, () => env.devUrl);
       const noBrowser = resolveBooleanFlag(input.noBrowser, env.noBrowser ?? mode === "desktop");
       const authToken = Option.getOrUndefined(input.authToken) ?? env.authToken;
+      const remoteAccessOrigin =
+        Option.getOrUndefined(input.remoteAccessOrigin) ?? env.remoteAccessOrigin;
+      const upstreamWsUrl = Option.getOrUndefined(input.upstreamWsUrl) ?? env.upstreamWsUrl;
       const autoBootstrapProjectFromCwd = resolveBooleanFlag(
         input.autoBootstrapProjectFromCwd,
         env.autoBootstrapProjectFromCwd ?? mode === "web",
@@ -185,6 +198,8 @@ const ServerConfigLive = (input: CliInput) =>
         devUrl,
         noBrowser,
         authToken,
+        remoteAccessOrigin,
+        upstreamWsUrl,
         autoBootstrapProjectFromCwd,
         logWebSocketEvents,
       } satisfies ServerConfigShape;
@@ -317,6 +332,14 @@ const authTokenFlag = Flag.string("auth-token").pipe(
   Flag.withAlias("token"),
   Flag.optional,
 );
+const remoteAccessOriginFlag = Flag.string("remote-access-origin").pipe(
+  Flag.withDescription("Preferred remote origin for generated mobile links."),
+  Flag.optional,
+);
+const upstreamWsUrlFlag = Flag.string("upstream-ws-url").pipe(
+  Flag.withDescription("Proxy websocket traffic to an upstream desktop T3 backend."),
+  Flag.optional,
+);
 const autoBootstrapProjectFromCwdFlag = Flag.boolean("auto-bootstrap-project-from-cwd").pipe(
   Flag.withDescription(
     "Create a project for the current working directory on startup when missing.",
@@ -339,6 +362,8 @@ export const t3Cli = Command.make("t3", {
   devUrl: devUrlFlag,
   noBrowser: noBrowserFlag,
   authToken: authTokenFlag,
+  remoteAccessOrigin: remoteAccessOriginFlag,
+  upstreamWsUrl: upstreamWsUrlFlag,
   autoBootstrapProjectFromCwd: autoBootstrapProjectFromCwdFlag,
   logWebSocketEvents: logWebSocketEventsFlag,
 }).pipe(

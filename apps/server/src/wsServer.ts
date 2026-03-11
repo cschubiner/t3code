@@ -7,6 +7,7 @@
  * @module Server
  */
 import http from "node:http";
+import os from "node:os";
 import type { Duplex } from "node:stream";
 
 import Mime from "@effect/platform-node/Mime";
@@ -43,7 +44,7 @@ import {
   Stream,
   Struct,
 } from "effect";
-import { WebSocketServer, type WebSocket } from "ws";
+import { WebSocket as NodeWebSocket, WebSocketServer, type WebSocket } from "ws";
 
 import { createLogger } from "./logger";
 import { GitManager } from "./git/Services/GitManager.ts";
@@ -157,6 +158,138 @@ function toPosixRelativePath(input: string): string {
   return input.replaceAll("\\", "/");
 }
 
+function formatHostForUrl(host: string): string {
+  return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+}
+
+const SECRET_LINK_PATH = "/auth/exchange";
+const SECRET_LINK_QUERY_PARAM = "code";
+const AUTH_SESSION_COOKIE_NAME = "t3_access_session";
+const SECRET_LINK_TTL_MS = 15 * 60 * 1_000;
+const AUTH_SESSION_TTL_MS = 12 * 60 * 60 * 1_000;
+
+interface SecretAccessGrant {
+  readonly expiresAt: number;
+  readonly redirectTo: string;
+}
+
+interface AuthSession {
+  readonly expiresAt: number;
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = hostname.trim().toLowerCase();
+  return (
+    normalized === "localhost" ||
+    normalized === "127.0.0.1" ||
+    normalized === "::1" ||
+    normalized === "[::1]"
+  );
+}
+
+function isWildcardHost(host: string | undefined): boolean {
+  return host === undefined || host === "0.0.0.0" || host === "::" || host === "[::]";
+}
+
+function collectPublicOrigins(
+  port: number,
+  host: string | undefined,
+  remoteAccessOrigin: string | undefined,
+): string[] {
+  const origins = new Set<string>();
+
+  if (remoteAccessOrigin && remoteAccessOrigin.trim().length > 0) {
+    origins.add(remoteAccessOrigin.trim());
+  }
+
+  const addOrigin = (hostname: string) => {
+    const normalized = hostname.trim();
+    if (normalized.length === 0) return;
+    origins.add(`http://${formatHostForUrl(normalized)}:${port}`);
+  };
+
+  if (host && !isWildcardHost(host)) {
+    addOrigin(host);
+    if (isLoopbackHostname(host)) {
+      addOrigin("localhost");
+      addOrigin("127.0.0.1");
+    }
+  } else {
+    addOrigin("localhost");
+    addOrigin("127.0.0.1");
+
+    const interfaces = os.networkInterfaces();
+    for (const addresses of Object.values(interfaces)) {
+      for (const address of addresses ?? []) {
+        if (address.internal) continue;
+        if (address.family !== "IPv4") continue;
+        addOrigin(address.address);
+      }
+    }
+  }
+
+  return Array.from(origins);
+}
+
+function parseCookies(header: string | undefined): Map<string, string> {
+  const cookies = new Map<string, string>();
+  if (!header) {
+    return cookies;
+  }
+
+  for (const segment of header.split(";")) {
+    const separatorIndex = segment.indexOf("=");
+    if (separatorIndex <= 0) continue;
+    const key = segment.slice(0, separatorIndex).trim();
+    const value = segment.slice(separatorIndex + 1).trim();
+    if (key.length === 0 || value.length === 0) continue;
+    try {
+      cookies.set(key, decodeURIComponent(value));
+    } catch {
+      cookies.set(key, value);
+    }
+  }
+
+  return cookies;
+}
+
+function resolveRedirectTarget(raw: string | null): string {
+  if (!raw) {
+    return "/";
+  }
+
+  return raw.startsWith("/") && !raw.startsWith("//") ? raw : "/";
+}
+
+function encodeSessionCookie(params: {
+  token: string;
+  maxAgeSeconds: number;
+  secure: boolean;
+}): string {
+  const attributes = [
+    `${AUTH_SESSION_COOKIE_NAME}=${encodeURIComponent(params.token)}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Max-Age=${params.maxAgeSeconds}`,
+  ];
+  if (params.secure) {
+    attributes.push("Secure");
+  }
+  return attributes.join("; ");
+}
+
+function requestUsesSecureTransport(request: http.IncomingMessage): boolean {
+  const forwardedProto = request.headers["x-forwarded-proto"];
+  const normalizedForwardedProto = Array.isArray(forwardedProto)
+    ? forwardedProto[0]
+    : forwardedProto;
+  if (normalizedForwardedProto?.split(",")[0]?.trim().toLowerCase() === "https") {
+    return true;
+  }
+  return "encrypted" in request.socket && request.socket.encrypted === true;
+}
+
 function resolveWorkspaceWritePath(params: {
   workspaceRoot: string;
   relativePath: string;
@@ -244,6 +377,8 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     staticDir,
     devUrl,
     authToken,
+    remoteAccessOrigin,
+    upstreamWsUrl,
     host,
     logWebSocketEvents,
     autoBootstrapProjectFromCwd,
@@ -271,8 +406,65 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const providerStatuses = yield* providerHealth.getStatuses;
 
   const clients = yield* Ref.make(new Set<WebSocket>());
+  const secretAccessGrants = new Map<string, SecretAccessGrant>();
+  const authSessions = new Map<string, AuthSession>();
   const logger = createLogger("ws");
   const readiness = yield* makeServerReadiness;
+
+  const pruneExpiredAuthEntries = () => {
+    const now = Date.now();
+
+    for (const [code, grant] of secretAccessGrants) {
+      if (grant.expiresAt <= now) {
+        secretAccessGrants.delete(code);
+      }
+    }
+
+    for (const [token, session] of authSessions) {
+      if (session.expiresAt <= now) {
+        authSessions.delete(token);
+      }
+    }
+  };
+
+  const createAuthSession = (): { token: string; expiresAt: number } => {
+    const token = crypto.randomUUID();
+    const expiresAt = Date.now() + AUTH_SESSION_TTL_MS;
+    authSessions.set(token, { expiresAt });
+    return { token, expiresAt };
+  };
+
+  const hasDirectAuthToken = (requestUrl: URL): boolean =>
+    authToken !== undefined && requestUrl.searchParams.get("token") === authToken;
+
+  const hasActiveAuthSession = (request: http.IncomingMessage): boolean => {
+    const sessionToken = parseCookies(request.headers.cookie).get(AUTH_SESSION_COOKIE_NAME);
+    if (!sessionToken) {
+      return false;
+    }
+
+    const session = authSessions.get(sessionToken);
+    return session !== undefined && session.expiresAt > Date.now();
+  };
+
+  const isAuthorizedUpgrade = (request: http.IncomingMessage): boolean => {
+    if (!authToken) {
+      return true;
+    }
+
+    pruneExpiredAuthEntries();
+
+    try {
+      const url = new URL(request.url ?? "/", `http://localhost:${port}`);
+      if (hasDirectAuthToken(url)) {
+        return true;
+      }
+    } catch {
+      return false;
+    }
+
+    return hasActiveAuthSession(request);
+  };
 
   function logOutgoingPush(push: WsPushEnvelopeBase, recipients: number) {
     if (!logWebSocketEvents) return;
@@ -424,6 +616,65 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     void Effect.runPromise(
       Effect.gen(function* () {
         const url = new URL(req.url ?? "/", `http://localhost:${port}`);
+        if (url.pathname === SECRET_LINK_PATH) {
+          if (!authToken) {
+            respond(404, { "Content-Type": "text/plain" }, "Not Found");
+            return;
+          }
+
+          pruneExpiredAuthEntries();
+
+          const code = url.searchParams.get(SECRET_LINK_QUERY_PARAM);
+          if (!code) {
+            respond(400, { "Content-Type": "text/plain" }, "Missing access code");
+            return;
+          }
+
+          const grant = secretAccessGrants.get(code);
+          if (!grant || grant.expiresAt <= Date.now()) {
+            secretAccessGrants.delete(code);
+            respond(401, { "Content-Type": "text/plain" }, "Expired or invalid access link");
+            return;
+          }
+
+          secretAccessGrants.delete(code);
+
+          const session = createAuthSession();
+
+          respond(
+            302,
+            {
+              Location: grant.redirectTo,
+              "Set-Cookie": encodeSessionCookie({
+                token: session.token,
+                maxAgeSeconds: Math.floor(AUTH_SESSION_TTL_MS / 1_000),
+                secure: requestUsesSecureTransport(req),
+              }),
+            },
+            "",
+          );
+          return;
+        }
+
+        pruneExpiredAuthEntries();
+
+        if (authToken && !hasDirectAuthToken(url) && !hasActiveAuthSession(req)) {
+          respond(401, { "Content-Type": "text/plain" }, "Unauthorized");
+          return;
+        }
+
+        if (authToken && hasDirectAuthToken(url)) {
+          const session = createAuthSession();
+          res.setHeader(
+            "Set-Cookie",
+            encodeSessionCookie({
+              token: session.token,
+              maxAgeSeconds: Math.floor(AUTH_SESSION_TTL_MS / 1_000),
+              secure: requestUsesSecureTransport(req),
+            }),
+          );
+        }
+
         if (tryHandleProjectFaviconRequest(url, res)) {
           return;
         }
@@ -490,7 +741,8 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
         // In dev mode, redirect to Vite dev server
         if (devUrl) {
-          respond(302, { Location: devUrl.href });
+          const redirectUrl = new URL(`${url.pathname}${url.search}`, devUrl);
+          respond(302, { Location: redirectUrl.href });
           return;
         }
 
@@ -688,6 +940,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     ServerRuntimeServices | ServerConfig | FileSystem.FileSystem | Path.Path
   >();
   const runPromise = Effect.runPromiseWith(runtimeServices);
+  const upstreamProxyUrl = upstreamWsUrl?.trim() ? upstreamWsUrl.trim() : undefined;
 
   const unsubscribeTerminalEvents = yield* terminalManager.subscribe(
     (event) => void Effect.runPromise(pushBus.publishAll(WS_CHANNELS.terminalEvent, event)),
@@ -875,7 +1128,62 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           issues: keybindingsConfig.issues,
           providers: providerStatuses,
           availableEditors,
+          ...(remoteAccessOrigin ? { remoteAccessOrigin } : {}),
         };
+
+      case WS_METHODS.serverGenerateSecretUrl: {
+        const body = stripRequestTag(request.body);
+        if (!authToken) {
+          return yield* new RouteRequestError({
+            message: "Secret URLs require T3CODE_AUTH_TOKEN to be configured.",
+          });
+        }
+
+        pruneExpiredAuthEntries();
+
+        const suggestedOrigins = collectPublicOrigins(port, host, remoteAccessOrigin);
+        const preferredSuggestedOrigin =
+          suggestedOrigins.find((candidate) => !isLoopbackHostname(new URL(candidate).hostname)) ??
+          suggestedOrigins[0] ??
+          `http://localhost:${port}`;
+
+        const publicOrigin = yield* Effect.try({
+          try: () => {
+            const requestedOrigin = body.origin
+              ? new URL(body.origin)
+              : new URL(preferredSuggestedOrigin);
+            if (requestedOrigin.protocol !== "http:" && requestedOrigin.protocol !== "https:") {
+              throw new Error("Secret URL origin must use http or https.");
+            }
+            return requestedOrigin.origin;
+          },
+          catch: (error) =>
+            new RouteRequestError({
+              message:
+                error instanceof Error && error.message.trim().length > 0
+                  ? error.message
+                  : "Invalid secret URL origin.",
+            }),
+        });
+
+        const code = crypto.randomUUID();
+        const expiresAt = new Date(Date.now() + SECRET_LINK_TTL_MS).toISOString();
+        const sessionExpiresAt = new Date(Date.now() + AUTH_SESSION_TTL_MS).toISOString();
+        secretAccessGrants.set(code, {
+          expiresAt: Date.parse(expiresAt),
+          redirectTo: resolveRedirectTarget("/"),
+        });
+
+        const publicUrl = new URL(SECRET_LINK_PATH, publicOrigin);
+        publicUrl.searchParams.set(SECRET_LINK_QUERY_PARAM, code);
+        return {
+          url: publicUrl.toString(),
+          expiresAt,
+          sessionExpiresAt,
+          oneTime: true,
+          remoteReachable: !isLoopbackHostname(publicUrl.hostname),
+        };
+      }
 
       case WS_METHODS.serverUpsertKeybinding: {
         const body = stripRequestTag(request.body);
@@ -932,20 +1240,9 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   httpServer.on("upgrade", (request, socket, head) => {
     socket.on("error", () => {}); // Prevent unhandled `EPIPE`/`ECONNRESET` from crashing the process if the client disconnects mid-handshake
 
-    if (authToken) {
-      let providedToken: string | null = null;
-      try {
-        const url = new URL(request.url ?? "/", `http://localhost:${port}`);
-        providedToken = url.searchParams.get("token");
-      } catch {
-        rejectUpgrade(socket, 400, "Invalid WebSocket URL");
-        return;
-      }
-
-      if (providedToken !== authToken) {
-        rejectUpgrade(socket, 401, "Unauthorized WebSocket connection");
-        return;
-      }
+    if (!isAuthorizedUpgrade(request)) {
+      rejectUpgrade(socket, 401, "Unauthorized WebSocket connection");
+      return;
     }
 
     wss.handleUpgrade(request, socket, head, (ws) => {
@@ -954,6 +1251,86 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   });
 
   wss.on("connection", (ws) => {
+    if (upstreamProxyUrl) {
+      const upstream = new NodeWebSocket(upstreamProxyUrl);
+      const pendingMessages: string[] = [];
+
+      const flushPendingMessages = () => {
+        while (pendingMessages.length > 0 && upstream.readyState === NodeWebSocket.OPEN) {
+          const message = pendingMessages.shift();
+          if (message !== undefined) {
+            upstream.send(message);
+          }
+        }
+      };
+
+      const closeUpstream = () => {
+        if (
+          upstream.readyState === NodeWebSocket.OPEN ||
+          upstream.readyState === NodeWebSocket.CONNECTING
+        ) {
+          upstream.close();
+        }
+      };
+
+      upstream.on("open", () => {
+        flushPendingMessages();
+      });
+
+      upstream.on("message", (raw) => {
+        const text = websocketRawToString(raw);
+        if (text !== null && ws.readyState === ws.OPEN) {
+          ws.send(text);
+        }
+      });
+
+      upstream.on("close", () => {
+        if (ws.readyState === ws.OPEN || ws.readyState === ws.CONNECTING) {
+          ws.close();
+        }
+      });
+
+      upstream.on("error", () => {
+        if (ws.readyState === ws.OPEN || ws.readyState === ws.CONNECTING) {
+          ws.close(1011, "Upstream desktop backend unavailable");
+        }
+      });
+
+      ws.on("message", (raw) => {
+        const text = websocketRawToString(raw);
+        if (text === null) {
+          return;
+        }
+
+        try {
+          const parsed = JSON.parse(text) as { body?: { _tag?: string } };
+          if (parsed.body?._tag?.startsWith("server.")) {
+            void runPromise(
+              handleMessage(ws, raw).pipe(
+                Effect.catch((error) => Effect.logError("Error handling local server message", error)),
+              ),
+            );
+            return;
+          }
+        } catch {
+          // Fall through to upstream proxy handling for malformed JSON so the upstream backend
+          // can respond consistently.
+        }
+
+        if (upstream.readyState === NodeWebSocket.OPEN) {
+          upstream.send(text);
+          return;
+        }
+
+        if (upstream.readyState === NodeWebSocket.CONNECTING) {
+          pendingMessages.push(text);
+        }
+      });
+
+      ws.on("close", closeUpstream);
+      ws.on("error", closeUpstream);
+      return;
+    }
     const segments = cwd.split(/[/\\]/).filter(Boolean);
     const projectName = segments[segments.length - 1] ?? "project";
 
