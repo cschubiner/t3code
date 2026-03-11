@@ -30,6 +30,7 @@ import {
 import { isMacPlatform } from "../lib/utils";
 import { getRouter } from "../router";
 import { useStore } from "../store";
+import { isMacPlatform } from "../lib/utils";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
 
 const THREAD_ID = "thread-browser-test" as ThreadId;
@@ -95,6 +96,12 @@ interface MountedChatView {
   measureUserRow: (targetMessageId: MessageId) => Promise<UserRowMeasurement>;
   setViewport: (viewport: ViewportSpec) => Promise<void>;
   router: ReturnType<typeof getRouter>;
+}
+
+function steerShortcutModifiers(): Pick<KeyboardEventInit, "ctrlKey" | "metaKey" | "shiftKey"> {
+  return isMacPlatform(navigator.platform)
+    ? { metaKey: true, shiftKey: true }
+    : { ctrlKey: true, shiftKey: true };
 }
 
 function isoAt(offsetSeconds: number): string {
@@ -1853,7 +1860,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("queues with Tab during a running turn and auto-sends when the thread becomes ready", async () => {
+  it("queues with Enter during a running turn and auto-sends when the thread becomes ready", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createRunningSnapshot(),
@@ -1867,7 +1874,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       composerEditor.focus();
       composerEditor.dispatchEvent(
         new KeyboardEvent("keydown", {
-          key: "Tab",
+          key: "Enter",
           bubbles: true,
           cancelable: true,
         }),
@@ -1911,7 +1918,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("steers immediately with Enter during a running turn", async () => {
+  it("steers immediately with the dedicated shortcut during a running turn", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createRunningSnapshot(),
@@ -1929,6 +1936,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           key: "Enter",
           bubbles: true,
           cancelable: true,
+          ...steerShortcutModifiers(),
         }),
       );
 
