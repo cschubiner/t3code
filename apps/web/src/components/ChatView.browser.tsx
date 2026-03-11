@@ -351,6 +351,9 @@ function createSnapshotWithLongProposedPlan(): OrchestrationReadModel {
           })
         : thread,
     ),
+  };
+}
+
 function createRunningSnapshot(): OrchestrationReadModel {
   const snapshot = createSnapshotForTargetUser({
     targetMessageId: "msg-user-running-target" as MessageId,
@@ -535,9 +538,6 @@ async function waitForComposerEditor(): Promise<HTMLElement> {
   );
 }
 
-async function waitForInteractionModeButton(
-  expectedLabel: "Chat" | "Plan",
-): Promise<HTMLButtonElement> {
 function listDispatchCommandsByType(type: string) {
   return wsRequests.filter(
     (request) =>

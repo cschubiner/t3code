@@ -7,7 +7,6 @@ import {
   type ProviderModelOptions,
   type ProviderKind,
   type ProviderInteractionMode,
-  type ProviderServiceTier,
   type RuntimeMode,
 } from "@t3tools/contracts";
 import { normalizeModelSlug } from "@t3tools/shared/model";
@@ -82,7 +81,6 @@ export interface QueuedComposerTurn {
   model: string | null;
   runtimeMode: RuntimeMode;
   interactionMode: ProviderInteractionMode;
-  serviceTier: ProviderServiceTier | null;
   modelOptions: ProviderModelOptions | null;
 }
 

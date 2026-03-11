@@ -196,7 +196,6 @@ describe("composerDraftStore queued turns", () => {
       model: "gpt-5.4",
       runtimeMode: "full-access",
       interactionMode: "default",
-      serviceTier: null,
       modelOptions: null,
     });
 
@@ -221,7 +220,6 @@ describe("composerDraftStore queued turns", () => {
       model: "gpt-5.4",
       runtimeMode: "full-access",
       interactionMode: "default",
-      serviceTier: null,
       modelOptions: null,
     });
 

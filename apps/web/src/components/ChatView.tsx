@@ -2335,7 +2335,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       interactionMode: ProviderInteractionMode;
       provider: ProviderKind;
       model: string | null;
-      serviceTier: ReturnType<typeof resolveAppServiceTier>;
       optimisticErrorMessage: string;
       failureMessage: string;
       modelOptions: typeof selectedModelOptionsForDispatch | null;
@@ -2417,7 +2416,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
           },
           provider: input.provider,
           model: input.model || undefined,
-          serviceTier: input.serviceTier,
           ...(input.modelOptions ? { modelOptions: input.modelOptions } : {}),
           assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
           runtimeMode: input.runtimeMode,
@@ -2479,7 +2477,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
         model: selectedModel ?? null,
         runtimeMode,
         interactionMode: input?.interactionMode ?? interactionMode,
-        serviceTier: selectedServiceTier,
         modelOptions: selectedModelOptionsForDispatch
           ? {
               codex: {
@@ -2517,7 +2514,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       selectedModel,
       selectedModelOptionsForDispatch,
       selectedProvider,
-      selectedServiceTier,
       setThreadError,
     ],
   );
@@ -3089,7 +3085,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       interactionMode: nextQueuedTurn.interactionMode,
       provider: nextQueuedTurn.provider,
       model: nextQueuedTurn.model,
-      serviceTier: nextQueuedTurn.serviceTier,
       modelOptions: nextQueuedTurn.modelOptions?.codex
         ? {
             codex: {
@@ -3970,13 +3965,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 </div>
               )}
 
-              <div
-                className={cn(
-                  "relative px-3 pb-2 sm:px-4",
-                  hasComposerHeader ? "pt-2.5 sm:pt-3" : "pt-3.5 sm:pt-4",
-                )}
-              >
-            >
               <div
                 className={`group rounded-[20px] border bg-card transition-colors duration-200 focus-within:border-ring/45 ${
                   isDragOverComposer ? "border-primary/70 bg-accent/30" : "border-border"
