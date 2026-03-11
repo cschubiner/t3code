@@ -12,7 +12,7 @@ import {
   resolveModelSlugForProvider,
 } from "@t3tools/shared/model";
 import { create } from "zustand";
-import { type ChatMessage, type Project, type Thread } from "./types";
+import { type ChatAttachment, type ChatMessage, type Project, type Thread } from "./types";
 import { Debouncer } from "@tanstack/react-pacer";
 
 // ── State ────────────────────────────────────────────────────────────
@@ -238,6 +238,27 @@ function attachmentPreviewRoutePath(attachmentId: string): string {
   return `/attachments/${encodeURIComponent(attachmentId)}`;
 }
 
+function mapThreadAttachments(
+  attachments:
+    | ReadonlyArray<{
+        type: "image";
+        id: string;
+        name: string;
+        mimeType: string;
+        sizeBytes: number;
+      }>
+    | undefined,
+): ChatAttachment[] | undefined {
+  return attachments?.map((attachment) => ({
+    type: "image",
+    id: attachment.id,
+    name: attachment.name,
+    mimeType: attachment.mimeType,
+    sizeBytes: attachment.sizeBytes,
+    previewUrl: toAttachmentPreviewUrl(attachmentPreviewRoutePath(attachment.id)),
+  }));
+}
+
 // ── Pure state transition functions ────────────────────────────────────
 
 export function syncServerReadModel(state: AppState, readModel: OrchestrationReadModel): AppState {
@@ -276,14 +297,7 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
             }
           : null,
         messages: thread.messages.map((message) => {
-          const attachments = message.attachments?.map((attachment) => ({
-            type: "image" as const,
-            id: attachment.id,
-            name: attachment.name,
-            mimeType: attachment.mimeType,
-            sizeBytes: attachment.sizeBytes,
-            previewUrl: toAttachmentPreviewUrl(attachmentPreviewRoutePath(attachment.id)),
-          }));
+          const attachments = mapThreadAttachments(message.attachments);
           const normalizedMessage: ChatMessage = {
             id: message.id,
             role: message.role,
@@ -295,6 +309,19 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
           };
           return normalizedMessage;
         }),
+        queuedTurns: thread.queuedTurns.map((queuedTurn) => ({
+          messageId: queuedTurn.messageId,
+          text: queuedTurn.text,
+          attachments: mapThreadAttachments(queuedTurn.attachments) ?? [],
+          provider: queuedTurn.provider,
+          model: queuedTurn.model,
+          modelOptions: queuedTurn.modelOptions,
+          providerOptions: queuedTurn.providerOptions,
+          assistantDeliveryMode: queuedTurn.assistantDeliveryMode,
+          runtimeMode: queuedTurn.runtimeMode,
+          interactionMode: queuedTurn.interactionMode,
+          queuedAt: queuedTurn.queuedAt,
+        })),
         proposedPlans: thread.proposedPlans.map((proposedPlan) => ({
           id: proposedPlan.id,
           turnId: proposedPlan.turnId,
