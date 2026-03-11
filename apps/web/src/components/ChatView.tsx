@@ -2612,7 +2612,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   const onSend = async (
     e?: { preventDefault: () => void },
-    disposition: ComposerSubmissionDisposition = "steer",
+    disposition: ComposerSubmissionDisposition = "queue",
   ) => {
     e?.preventDefault();
     const api = readNativeApi();
@@ -3703,8 +3703,22 @@ export default function ChatView({ threadId }: ChatViewProps) {
     key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
     event: KeyboardEvent,
   ) => {
+    const steerModifierPressed = isMacPlatform(navigator.platform) ? event.metaKey : event.ctrlKey;
+
     if (key === "Tab" && event.shiftKey) {
       toggleInteractionMode();
+      return true;
+    }
+
+    if (
+      key === "Enter" &&
+      phase === "running" &&
+      composerHasContent &&
+      event.shiftKey &&
+      !event.altKey &&
+      steerModifierPressed
+    ) {
+      void onSend(undefined, "steer");
       return true;
     }
 
@@ -3721,7 +3735,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
         nudgeComposerMenuHighlight("ArrowUp");
         return true;
       }
-      if (key === "Tab" || key === "Enter") {
+      if (
+        key === "Tab" ||
+        (key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey)
+      ) {
         const selectedItem = activeComposerMenuItemRef.current ?? currentItems[0];
         if (selectedItem) {
           onSelectComposerItem(selectedItem);
