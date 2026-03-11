@@ -30,7 +30,6 @@ import {
 import { isMacPlatform } from "../lib/utils";
 import { getRouter } from "../router";
 import { useStore } from "../store";
-import { isMacPlatform } from "../lib/utils";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
 
 const THREAD_ID = "thread-browser-test" as ThreadId;
@@ -258,6 +257,7 @@ function createSnapshotForTargetUser(options: {
         updatedAt: NOW_ISO,
         deletedAt: null,
         messages,
+        queuedTurns: [],
         activities: [],
         proposedPlans: [],
         checkpoints: [],
@@ -315,6 +315,7 @@ function addThreadToSnapshot(
         updatedAt: NOW_ISO,
         deletedAt: null,
         messages: [],
+        queuedTurns: [],
         activities: [],
         proposedPlans: [],
         checkpoints: [],
@@ -352,6 +353,25 @@ function withProjectScripts(
     projects: snapshot.projects.map((project) =>
       project.id === PROJECT_ID ? { ...project, scripts: Array.from(scripts) } : project,
     ),
+  };
+}
+
+function createQueuedTurn(
+  overrides: Partial<OrchestrationReadModel["threads"][number]["queuedTurns"][number]> = {},
+): OrchestrationReadModel["threads"][number]["queuedTurns"][number] {
+  return {
+    messageId: "msg-user-queued-1" as MessageId,
+    text: "Queued follow-up",
+    attachments: [],
+    provider: "codex",
+    model: "gpt-5",
+    modelOptions: null,
+    providerOptions: null,
+    assistantDeliveryMode: "buffered",
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    queuedAt: NOW_ISO,
+    ...overrides,
   };
 }
 
@@ -1899,7 +1919,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("queues with Enter during a running turn and auto-sends when the thread becomes ready", async () => {
+  it("queues with Tab during a running turn by dispatching a server queue command", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createRunningSnapshot(),
@@ -1913,7 +1933,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       composerEditor.focus();
       composerEditor.dispatchEvent(
         new KeyboardEvent("keydown", {
-          key: "Enter",
+          key: "Tab",
           bubbles: true,
           cancelable: true,
         }),
@@ -1921,34 +1941,11 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(
         () => {
-          expect(useComposerDraftStore.getState().queuedTurnsByThreadId[THREAD_ID]).toHaveLength(1);
-          expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.prompt ?? "").toBe("");
-        },
-        { timeout: 8_000, interval: 16 },
-      );
-
-      const runningSnapshot = createRunningSnapshot();
-      const readySnapshot: OrchestrationReadModel = {
-        ...runningSnapshot,
-        threads: [
-          {
-            ...runningSnapshot.threads[0]!,
-            session: runningSnapshot.threads[0]!.session
-              ? {
-                  ...runningSnapshot.threads[0]!.session!,
-                  status: "ready",
-                  activeTurnId: null,
-                }
-              : null,
-          },
-        ],
-      };
-      useStore.getState().syncServerReadModel(readySnapshot);
-
-      await vi.waitFor(
-        () => {
-          const turnStartRequest = listDispatchCommandsByType("thread.turn.start")[0];
-          expect(turnStartRequest?.command?.message?.text).toBe("Queue this when ready");
+          const queueRequest = listDispatchCommandsByType("thread.turn.queue.enqueue").at(-1);
+          expect(queueRequest?.command?.message?.text).toBe("Queue this when ready");
+          expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.prompt ?? "").toBe(
+            "",
+          );
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -1987,41 +1984,35 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
-      expect(useComposerDraftStore.getState().queuedTurnsByThreadId[THREAD_ID]).toBeUndefined();
+      expect(listDispatchCommandsByType("thread.turn.queue.enqueue")).toHaveLength(0);
     } finally {
       await mounted.cleanup();
     }
   });
 
-  it("shows queue controls during a running turn and removes queued turns from the banner", async () => {
+  it("shows server queued turns in the banner and removes them via queue.remove", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createRunningSnapshot(),
     });
 
     try {
-      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Queue from button");
-      await waitForLayout();
-
-      const queueButton = await waitForElement(
-        () =>
-          Array.from(document.querySelectorAll("button")).find(
-            (button) => button.textContent?.trim() === "Queue",
-          ) as HTMLButtonElement | null,
-        "Unable to find Queue button.",
-      );
-      queueButton.click();
-
-      await vi.waitFor(
-        () => {
-          expect(useComposerDraftStore.getState().queuedTurnsByThreadId[THREAD_ID]).toHaveLength(1);
-          const removeButton = Array.from(document.querySelectorAll("button")).find(
-            (button) => button.textContent?.trim() === "Remove next",
-          );
-          expect(removeButton).toBeTruthy();
-        },
-        { timeout: 8_000, interval: 16 },
-      );
+      const queuedSnapshot = createRunningSnapshot();
+      const queuedMessageId = "msg-user-queued-banner" as MessageId;
+      useStore.getState().syncServerReadModel({
+        ...queuedSnapshot,
+        threads: [
+          {
+            ...queuedSnapshot.threads[0]!,
+            queuedTurns: [
+              createQueuedTurn({
+                messageId: queuedMessageId,
+                text: "Queue from button",
+              }),
+            ],
+          },
+        ],
+      });
 
       const removeButton = await waitForElement(
         () =>
@@ -2034,11 +2025,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(
         () => {
-          expect(useComposerDraftStore.getState().queuedTurnsByThreadId[THREAD_ID]).toBeUndefined();
-          const stillVisible = Array.from(document.querySelectorAll("button")).find(
-            (button) => button.textContent?.trim() === "Remove next",
+          const removeRequest = listDispatchCommandsByType("thread.turn.queue.remove").at(-1);
+          expect((removeRequest?.command as { messageId?: string } | undefined)?.messageId).toBe(
+            queuedMessageId,
           );
-          expect(stillVisible).toBeFalsy();
         },
         { timeout: 8_000, interval: 16 },
       );
