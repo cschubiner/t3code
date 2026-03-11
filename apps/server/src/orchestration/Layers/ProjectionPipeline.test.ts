@@ -728,6 +728,7 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
           const threadId = ThreadId.makeUnsafe("Thread Revert.Files");
           const keepAttachmentId = "thread-revert-files-00000000-0000-4000-8000-000000000001";
           const removeAttachmentId = "thread-revert-files-00000000-0000-4000-8000-000000000002";
+          const queuedAttachmentId = "thread-revert-files-00000000-0000-4000-8000-000000000004";
           const otherThreadAttachmentId =
             "thread-revert-files-extra-00000000-0000-4000-8000-000000000003";
 
@@ -890,11 +891,50 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
             },
           });
 
+          yield* appendAndProject({
+            type: "thread.turn-queued",
+            eventId: EventId.makeUnsafe("evt-revert-files-queue-1"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: now,
+            commandId: CommandId.makeUnsafe("cmd-revert-files-queue-1"),
+            causationEventId: null,
+            correlationId: CorrelationId.makeUnsafe("cmd-revert-files-queue-1"),
+            metadata: {},
+            payload: {
+              threadId,
+              queuedTurn: {
+                messageId: MessageId.makeUnsafe("message-queued-keep"),
+                text: "Queued keep",
+                attachments: [
+                  {
+                    type: "image",
+                    id: queuedAttachmentId,
+                    name: "queued-keep.png",
+                    mimeType: "image/png",
+                    sizeBytes: 5,
+                  },
+                ],
+                provider: null,
+                model: null,
+                serviceTier: null,
+                modelOptions: null,
+                providerOptions: null,
+                assistantDeliveryMode: "buffered",
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                queuedAt: now,
+              },
+            },
+          });
+
           const keepPath = path.join(stateDir, "attachments", `${keepAttachmentId}.png`);
           const removePath = path.join(stateDir, "attachments", `${removeAttachmentId}.png`);
+          const queuedPath = path.join(stateDir, "attachments", `${queuedAttachmentId}.png`);
           fs.mkdirSync(path.join(stateDir, "attachments"), { recursive: true });
           fs.writeFileSync(keepPath, Buffer.from("keep"));
           fs.writeFileSync(removePath, Buffer.from("remove"));
+          fs.writeFileSync(queuedPath, Buffer.from("queued"));
           const otherThreadPath = path.join(
             stateDir,
             "attachments",
@@ -903,6 +943,7 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
           fs.writeFileSync(otherThreadPath, Buffer.from("other"));
           assert.equal(fs.existsSync(keepPath), true);
           assert.equal(fs.existsSync(removePath), true);
+          assert.equal(fs.existsSync(queuedPath), true);
           assert.equal(fs.existsSync(otherThreadPath), true);
 
           yield* appendAndProject({
@@ -923,7 +964,267 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
 
           assert.equal(fs.existsSync(keepPath), true);
           assert.equal(fs.existsSync(removePath), false);
+          assert.equal(fs.existsSync(queuedPath), true);
           assert.equal(fs.existsSync(otherThreadPath), true);
+        }).pipe(
+          (effect) => runWithProjectionPipelineLayer(stateDir, effect),
+          Effect.ensuring(Effect.sync(() => fs.rmSync(stateDir, { recursive: true, force: true }))),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("keeps queued-turn pending placeholders until queue removal confirms the head", () =>
+    Effect.sync(() =>
+      fs.mkdtempSync(path.join(os.tmpdir(), "t3-projection-queued-head-confirmation-")),
+    ).pipe(
+      Effect.flatMap((stateDir) =>
+        Effect.gen(function* () {
+          const projectionPipeline = yield* OrchestrationProjectionPipeline;
+          const eventStore = yield* OrchestrationEventStore;
+          const sql = yield* SqlClient.SqlClient;
+          const queuedAt = new Date().toISOString();
+          const runningAt = new Date(Date.now() + 1_000).toISOString();
+          const removedAt = new Date(Date.now() + 2_000).toISOString();
+          const threadId = ThreadId.makeUnsafe("Thread Queue Confirmed Head");
+          const queuedAttachmentId =
+            "thread-queue-confirmed-head-00000000-0000-4000-8000-000000000001";
+          const otherThreadAttachmentId =
+            "thread-queue-confirmed-head-extra-00000000-0000-4000-8000-000000000002";
+          const queuedMessageId = MessageId.makeUnsafe("message-queue-confirmed-head");
+          const turnId = TurnId.makeUnsafe("turn-queue-confirmed-head");
+
+          const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+            eventStore
+              .append(event)
+              .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+
+          yield* appendAndProject({
+            type: "project.created",
+            eventId: EventId.makeUnsafe("evt-queue-confirmed-head-1"),
+            aggregateKind: "project",
+            aggregateId: ProjectId.makeUnsafe("project-queue-confirmed-head"),
+            occurredAt: queuedAt,
+            commandId: CommandId.makeUnsafe("cmd-queue-confirmed-head-1"),
+            causationEventId: null,
+            correlationId: CorrelationId.makeUnsafe("cmd-queue-confirmed-head-1"),
+            metadata: {},
+            payload: {
+              projectId: ProjectId.makeUnsafe("project-queue-confirmed-head"),
+              title: "Project Queue Confirmed Head",
+              workspaceRoot: "/tmp/project-queue-confirmed-head",
+              defaultModel: null,
+              scripts: [],
+              createdAt: queuedAt,
+              updatedAt: queuedAt,
+            },
+          });
+
+          yield* appendAndProject({
+            type: "thread.created",
+            eventId: EventId.makeUnsafe("evt-queue-confirmed-head-2"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: queuedAt,
+            commandId: CommandId.makeUnsafe("cmd-queue-confirmed-head-2"),
+            causationEventId: null,
+            correlationId: CorrelationId.makeUnsafe("cmd-queue-confirmed-head-2"),
+            metadata: {},
+            payload: {
+              threadId,
+              projectId: ProjectId.makeUnsafe("project-queue-confirmed-head"),
+              title: "Thread Queue Confirmed Head",
+              model: "gpt-5-codex",
+              runtimeMode: "full-access",
+              branch: null,
+              worktreePath: null,
+              createdAt: queuedAt,
+              updatedAt: queuedAt,
+            },
+          });
+
+          yield* appendAndProject({
+            type: "thread.turn-queued",
+            eventId: EventId.makeUnsafe("evt-queue-confirmed-head-3"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: queuedAt,
+            commandId: CommandId.makeUnsafe("cmd-queue-confirmed-head-3"),
+            causationEventId: null,
+            correlationId: CorrelationId.makeUnsafe("cmd-queue-confirmed-head-3"),
+            metadata: {},
+            payload: {
+              threadId,
+              queuedTurn: {
+                messageId: queuedMessageId,
+                text: "Queued head",
+                attachments: [
+                  {
+                    type: "image",
+                    id: queuedAttachmentId,
+                    name: "queued-head.png",
+                    mimeType: "image/png",
+                    sizeBytes: 5,
+                  },
+                ],
+                provider: "codex",
+                model: "gpt-5-codex",
+                serviceTier: "fast",
+                modelOptions: null,
+                providerOptions: null,
+                assistantDeliveryMode: "buffered",
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                queuedAt,
+              },
+            },
+          });
+
+          yield* appendAndProject({
+            type: "thread.turn-start-requested",
+            eventId: EventId.makeUnsafe("evt-queue-confirmed-head-4"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: queuedAt,
+            commandId: CommandId.makeUnsafe("cmd-queue-confirmed-head-4"),
+            causationEventId: null,
+            correlationId: CorrelationId.makeUnsafe("cmd-queue-confirmed-head-4"),
+            metadata: {},
+            payload: {
+              threadId,
+              messageId: queuedMessageId,
+              provider: "codex",
+              model: "gpt-5-codex",
+              assistantDeliveryMode: "buffered",
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              createdAt: queuedAt,
+            },
+          });
+
+          yield* appendAndProject({
+            type: "thread.session-set",
+            eventId: EventId.makeUnsafe("evt-queue-confirmed-head-5"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: runningAt,
+            commandId: CommandId.makeUnsafe("cmd-queue-confirmed-head-5"),
+            causationEventId: null,
+            correlationId: CorrelationId.makeUnsafe("cmd-queue-confirmed-head-5"),
+            metadata: {},
+            payload: {
+              threadId,
+              session: {
+                threadId,
+                status: "running",
+                providerName: "codex",
+                runtimeMode: "full-access",
+                activeTurnId: turnId,
+                lastError: null,
+                updatedAt: runningAt,
+              },
+            },
+          });
+
+          const queuedAttachmentPath = path.join(
+            stateDir,
+            "attachments",
+            `${queuedAttachmentId}.png`,
+          );
+          const otherThreadAttachmentPath = path.join(
+            stateDir,
+            "attachments",
+            `${otherThreadAttachmentId}.png`,
+          );
+          fs.mkdirSync(path.join(stateDir, "attachments"), { recursive: true });
+          fs.writeFileSync(queuedAttachmentPath, Buffer.from("queued-head"));
+          fs.writeFileSync(otherThreadAttachmentPath, Buffer.from("other-thread"));
+
+          const pendingBeforeRemove = yield* sql<{
+            readonly turnId: string | null;
+            readonly pendingMessageId: string | null;
+            readonly state: string;
+          }>`
+            SELECT
+              turn_id AS "turnId",
+              pending_message_id AS "pendingMessageId",
+              state
+            FROM projection_turns
+            WHERE thread_id = ${threadId}
+            ORDER BY CASE WHEN turn_id IS NULL THEN 0 ELSE 1 END ASC, requested_at ASC
+          `;
+          assert.deepEqual(pendingBeforeRemove, [
+            {
+              turnId: null,
+              pendingMessageId: queuedMessageId,
+              state: "pending",
+            },
+            {
+              turnId,
+              pendingMessageId: queuedMessageId,
+              state: "running",
+            },
+          ]);
+
+          const queuedRowsBeforeRemove = yield* sql<{
+            readonly messageId: string;
+          }>`
+            SELECT message_id AS "messageId"
+            FROM projection_thread_queued_turns
+            WHERE thread_id = ${threadId}
+          `;
+          assert.deepEqual(queuedRowsBeforeRemove, [{ messageId: queuedMessageId }]);
+          assert.equal(fs.existsSync(queuedAttachmentPath), true);
+          assert.equal(fs.existsSync(otherThreadAttachmentPath), true);
+
+          yield* appendAndProject({
+            type: "thread.turn-queue-removed",
+            eventId: EventId.makeUnsafe("evt-queue-confirmed-head-6"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: removedAt,
+            commandId: CommandId.makeUnsafe("cmd-queue-confirmed-head-6"),
+            causationEventId: null,
+            correlationId: CorrelationId.makeUnsafe("cmd-queue-confirmed-head-6"),
+            metadata: {},
+            payload: {
+              threadId,
+              messageId: queuedMessageId,
+              removedAt,
+            },
+          });
+
+          const pendingAfterRemove = yield* sql<{
+            readonly turnId: string | null;
+            readonly pendingMessageId: string | null;
+            readonly state: string;
+          }>`
+            SELECT
+              turn_id AS "turnId",
+              pending_message_id AS "pendingMessageId",
+              state
+            FROM projection_turns
+            WHERE thread_id = ${threadId}
+            ORDER BY CASE WHEN turn_id IS NULL THEN 0 ELSE 1 END ASC, requested_at ASC
+          `;
+          assert.deepEqual(pendingAfterRemove, [
+            {
+              turnId,
+              pendingMessageId: queuedMessageId,
+              state: "running",
+            },
+          ]);
+
+          const queuedRowsAfterRemove = yield* sql<{
+            readonly messageId: string;
+          }>`
+            SELECT message_id AS "messageId"
+            FROM projection_thread_queued_turns
+            WHERE thread_id = ${threadId}
+          `;
+          assert.deepEqual(queuedRowsAfterRemove, []);
+          assert.equal(fs.existsSync(queuedAttachmentPath), false);
+          assert.equal(fs.existsSync(otherThreadAttachmentPath), true);
         }).pipe(
           (effect) => runWithProjectionPipelineLayer(stateDir, effect),
           Effect.ensuring(Effect.sync(() => fs.rmSync(stateDir, { recursive: true, force: true }))),
