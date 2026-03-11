@@ -78,6 +78,7 @@ import {
   DEFAULT_THREAD_TERMINAL_ID,
   MAX_TERMINALS_PER_GROUP,
   type ChatMessage,
+  type ThreadQueuedTurn,
   type TurnDiffSummary,
 } from "../types";
 import { basenameOfPath } from "../vscode-icons";
@@ -122,7 +123,6 @@ import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
   type PersistedComposerImageAttachment,
-  type QueuedComposerTurn,
   useComposerDraftStore,
   useComposerThreadDraft,
 } from "../composerDraftStore";
@@ -169,10 +169,23 @@ const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_AVAILABLE_EDITORS: EditorId[] = [];
 const EMPTY_PROVIDER_STATUSES: ServerProviderStatus[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
-const EMPTY_QUEUED_COMPOSER_TURNS: QueuedComposerTurn[] = [];
+const EMPTY_QUEUED_TURNS: ThreadQueuedTurn[] = [];
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
+
+function summarizeQueuedTurn(turn: ThreadQueuedTurn): string {
+  const trimmed = turn.text.trim();
+  if (trimmed.length > 0) {
+    return trimmed;
+  }
+  if (turn.attachments.length > 0) {
+    return turn.attachments.length === 1
+      ? "1 image attachment"
+      : `${turn.attachments.length} image attachments`;
+  }
+  return "Queued follow-up";
+}
 
 interface ChatViewProps {
   threadId: ThreadId;
@@ -216,14 +229,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const syncComposerDraftPersistedAttachments = useComposerDraftStore(
     (store) => store.syncPersistedAttachments,
   );
-  const queuedTurns = useComposerDraftStore(
-    (store) => store.queuedTurnsByThreadId[threadId] ?? EMPTY_QUEUED_COMPOSER_TURNS,
-  );
-  const enqueueQueuedTurn = useComposerDraftStore((store) => store.enqueueQueuedTurn);
-  const prependQueuedTurn = useComposerDraftStore((store) => store.prependQueuedTurn);
-  const consumeQueuedTurn = useComposerDraftStore((store) => store.consumeQueuedTurn);
-  const removeQueuedTurn = useComposerDraftStore((store) => store.removeQueuedTurn);
-  const clearQueuedTurns = useComposerDraftStore((store) => store.clearQueuedTurns);
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const getDraftThreadByProjectId = useComposerDraftStore(
@@ -248,6 +253,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   >({});
   const [sendPhase, setSendPhase] = useState<SendPhase>("idle");
   const [sendStartedAt, setSendStartedAt] = useState<string | null>(null);
+  const [pendingQueuedTurnMessageId, setPendingQueuedTurnMessageId] = useState<MessageId | null>(
+    null,
+  );
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
   const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
@@ -308,7 +316,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewHandoffTimeoutByMessageIdRef = useRef<Record<string, number>>({});
   const sendInFlightRef = useRef(false);
-  const queuedTurnFlushIdRef = useRef<string | null>(null);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
   const setMessagesScrollContainerRef = useCallback((element: HTMLDivElement | null) => {
@@ -572,6 +579,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     sendStartedAt,
   );
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
+  const queuedTurns = activeThread?.queuedTurns ?? EMPTY_QUEUED_TURNS;
   const workLogEntries = useMemo(
     () => deriveWorkLogEntries(threadActivities, activeLatestTurn?.turnId ?? undefined),
     [activeLatestTurn?.turnId, threadActivities],
@@ -1486,6 +1494,29 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [serverThread],
   );
 
+  useEffect(() => {
+    if (pendingQueuedTurnMessageId === null) {
+      return;
+    }
+    if (queuedTurns.some((queuedTurn) => queuedTurn.messageId === pendingQueuedTurnMessageId)) {
+      setPendingQueuedTurnMessageId(null);
+    }
+  }, [pendingQueuedTurnMessageId, queuedTurns]);
+
+  useEffect(() => {
+    try {
+      if (Object.keys(lastInvokedScriptByProjectId).length === 0) {
+        localStorage.removeItem(LAST_INVOKED_SCRIPT_BY_PROJECT_KEY);
+        return;
+      }
+      localStorage.setItem(
+        LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
+        JSON.stringify(lastInvokedScriptByProjectId),
+      );
+    } catch {
+      // Ignore storage write failures (private mode, quota exceeded, etc.)
+    }
+  }, [lastInvokedScriptByProjectId]);
   // Auto-scroll on new messages
   const messageCount = timelineMessages.length;
   const scrollMessagesToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
@@ -1935,140 +1966,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
     sendPhase,
   ]);
 
-  const dispatchExistingThreadTurn = useCallback(
-    async (input: {
+  const queueComposerTurn = useCallback(
+    async (input?: {
       text: string;
-      images: ComposerImageAttachment[];
-      runtimeMode: RuntimeMode;
       interactionMode: ProviderInteractionMode;
-      provider: ProviderKind;
-      model: string | null;
-      serviceTier: ReturnType<typeof resolveAppServiceTier>;
-      optimisticErrorMessage: string;
-      failureMessage: string;
-      modelOptions: typeof selectedModelOptionsForDispatch | null;
     }) => {
       const api = readNativeApi();
       if (
         !api ||
         !activeThread ||
         !isServerThread ||
-        isSendBusy ||
-        isConnecting ||
+        pendingQueuedTurnMessageId !== null ||
         sendInFlightRef.current
       ) {
-        return false;
-      }
-
-      const trimmed = input.text.trim();
-      if (!trimmed && input.images.length === 0) {
-        return false;
-      }
-
-      const threadIdForSend = activeThread.id;
-      const messageIdForSend = newMessageId();
-      const messageCreatedAt = new Date().toISOString();
-      const optimisticAttachments = input.images.map((image) => ({
-        type: "image" as const,
-        id: image.id,
-        name: image.name,
-        mimeType: image.mimeType,
-        sizeBytes: image.sizeBytes,
-        previewUrl: image.previewUrl,
-      }));
-
-      sendInFlightRef.current = true;
-      beginSendPhase("sending-turn");
-      setThreadError(threadIdForSend, null);
-      setOptimisticUserMessages((existing) => [
-        ...existing,
-        {
-          id: messageIdForSend,
-          role: "user",
-          text: trimmed,
-          ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
-          createdAt: messageCreatedAt,
-          streaming: false,
-        },
-      ]);
-      shouldAutoScrollRef.current = true;
-      forceStickToBottom();
-
-      try {
-        await persistThreadSettingsForNextTurn({
-          threadId: threadIdForSend,
-          createdAt: messageCreatedAt,
-          ...(input.model ? { model: input.model } : {}),
-          runtimeMode: input.runtimeMode,
-          interactionMode: input.interactionMode,
-        });
-
-        const turnAttachments = await Promise.all(
-          input.images.map(async (image) => ({
-            type: "image" as const,
-            name: image.name,
-            mimeType: image.mimeType,
-            sizeBytes: image.sizeBytes,
-            dataUrl: await readFileAsDataUrl(image.file),
-          })),
-        );
-
-        await api.orchestration.dispatchCommand({
-          type: "thread.turn.start",
-          commandId: newCommandId(),
-          threadId: threadIdForSend,
-          message: {
-            messageId: messageIdForSend,
-            role: "user",
-            text: trimmed || IMAGE_ONLY_BOOTSTRAP_PROMPT,
-            attachments: turnAttachments,
-          },
-          provider: input.provider,
-          model: input.model || undefined,
-          serviceTier: input.serviceTier,
-          ...(input.modelOptions ? { modelOptions: input.modelOptions } : {}),
-          assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
-          runtimeMode: input.runtimeMode,
-          interactionMode: input.interactionMode,
-          createdAt: messageCreatedAt,
-        });
-        sendInFlightRef.current = false;
-        return true;
-      } catch (err) {
-        setOptimisticUserMessages((existing) =>
-          existing.filter((message) => message.id !== messageIdForSend),
-        );
-        setThreadError(
-          threadIdForSend,
-          err instanceof Error ? err.message : input.optimisticErrorMessage,
-        );
-        sendInFlightRef.current = false;
-        resetSendPhase();
-        throw err instanceof Error
-          ? new Error(err.message, { cause: err })
-          : new Error(input.failureMessage);
-      }
-    },
-    [
-      activeThread,
-      beginSendPhase,
-      forceStickToBottom,
-      isConnecting,
-      isSendBusy,
-      isServerThread,
-      persistThreadSettingsForNextTurn,
-      resetSendPhase,
-      setThreadError,
-      settings.enableAssistantStreaming,
-    ],
-  );
-
-  const queueComposerTurn = useCallback(
-    async (input?: {
-      text: string;
-      interactionMode: ProviderInteractionMode;
-    }) => {
-      if (!activeThread || !isServerThread) {
         return false;
       }
 
@@ -2078,57 +1988,117 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return false;
       }
 
-      const queuedTurn: QueuedComposerTurn = {
-        id: crypto.randomUUID(),
-        queuedAt: new Date().toISOString(),
-        text: trimmed,
-        images: queuedImages,
-        provider: selectedProvider,
-        model: selectedModel ?? null,
-        runtimeMode,
-        interactionMode: input?.interactionMode ?? interactionMode,
-        serviceTier: selectedServiceTier,
-        modelOptions: selectedModelOptionsForDispatch
-          ? {
-              codex: {
-                ...(selectedModelOptionsForDispatch.codex?.reasoningEffort !== undefined
-                  ? {
-                      reasoningEffort: selectedModelOptionsForDispatch.codex.reasoningEffort,
-                    }
-                  : {}),
-                ...(selectedModelOptionsForDispatch.codex?.fastMode === true
-                  ? { fastMode: true }
-                  : {}),
-              },
-            }
-          : null,
-      };
+      const threadIdForQueue = activeThread.id;
+      const createdAt = new Date().toISOString();
+      const messageIdForQueue = newMessageId();
+      setThreadError(threadIdForQueue, null);
+      setPendingQueuedTurnMessageId(messageIdForQueue);
 
-      enqueueQueuedTurn(activeThread.id, queuedTurn);
-      setThreadError(activeThread.id, null);
-      promptRef.current = "";
-      clearComposerDraftContent(activeThread.id);
-      setComposerHighlightedItemId(null);
-      setComposerCursor(0);
-      setComposerTrigger(null);
-      return true;
+      try {
+        await persistThreadSettingsForNextTurn({
+          threadId: threadIdForQueue,
+          createdAt,
+          ...(selectedModel ? { model: selectedModel } : {}),
+          runtimeMode,
+          interactionMode: input?.interactionMode ?? interactionMode,
+        });
+
+        const turnAttachments = await Promise.all(
+          queuedImages.map(async (image) => ({
+            type: "image" as const,
+            name: image.name,
+            mimeType: image.mimeType,
+            sizeBytes: image.sizeBytes,
+            dataUrl: await readFileAsDataUrl(image.file),
+          })),
+        );
+
+        await api.orchestration.dispatchCommand({
+          type: "thread.turn.queue.enqueue",
+          commandId: newCommandId(),
+          threadId: threadIdForQueue,
+          message: {
+            messageId: messageIdForQueue,
+            role: "user",
+            text: trimmed || IMAGE_ONLY_BOOTSTRAP_PROMPT,
+            attachments: turnAttachments,
+          },
+          model: selectedModel || undefined,
+          ...(selectedModelOptionsForDispatch
+            ? { modelOptions: selectedModelOptionsForDispatch }
+            : {}),
+          ...(providerOptionsForDispatch ? { providerOptions: providerOptionsForDispatch } : {}),
+          provider: selectedProvider,
+          assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
+          runtimeMode,
+          interactionMode: input?.interactionMode ?? interactionMode,
+          createdAt,
+        });
+
+        for (const image of queuedImages) {
+          revokeBlobPreviewUrl(image.previewUrl);
+        }
+        promptRef.current = "";
+        clearComposerDraftContent(threadIdForQueue);
+        setComposerHighlightedItemId(null);
+        setComposerCursor(0);
+        setComposerTrigger(null);
+        return true;
+      } catch (err) {
+        setPendingQueuedTurnMessageId(null);
+        setThreadError(
+          threadIdForQueue,
+          err instanceof Error ? err.message : "Failed to queue follow-up.",
+        );
+        return false;
+      }
     },
     [
       activeThread,
       clearComposerDraftContent,
       composerImages,
-      enqueueQueuedTurn,
       interactionMode,
       isServerThread,
+      pendingQueuedTurnMessageId,
       prompt,
+      providerOptionsForDispatch,
+      persistThreadSettingsForNextTurn,
       runtimeMode,
       selectedModel,
       selectedModelOptionsForDispatch,
       selectedProvider,
-      selectedServiceTier,
+      settings.enableAssistantStreaming,
       setThreadError,
     ],
   );
+
+  const removeQueuedTurnFromServer = useCallback(
+    async (messageId: MessageId) => {
+      const api = readNativeApi();
+      if (!api || !activeThread || !isServerThread) {
+        return;
+      }
+
+      await api.orchestration.dispatchCommand({
+        type: "thread.turn.queue.remove",
+        commandId: newCommandId(),
+        threadId: activeThread.id,
+        messageId,
+        createdAt: new Date().toISOString(),
+      });
+    },
+    [activeThread, isServerThread],
+  );
+
+  const clearQueuedTurnsFromServer = useCallback(async () => {
+    if (!activeThread || !isServerThread || queuedTurns.length === 0) {
+      return;
+    }
+
+    for (const queuedTurn of queuedTurns) {
+      await removeQueuedTurnFromServer(queuedTurn.messageId);
+    }
+  }, [activeThread, isServerThread, queuedTurns, removeQueuedTurnFromServer]);
 
   useEffect(() => {
     if (!activeThreadId) return;
@@ -2664,68 +2634,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       resetSendPhase();
     }
   };
-
-  useEffect(() => {
-    const nextQueuedTurn = queuedTurns[0];
-    if (!nextQueuedTurn) {
-      return;
-    }
-    if (
-      phase === "running" ||
-      isSendBusy ||
-      isConnecting ||
-      sendInFlightRef.current ||
-      !activeThread ||
-      !isServerThread ||
-      queuedTurnFlushIdRef.current !== null
-    ) {
-      return;
-    }
-
-    queuedTurnFlushIdRef.current = nextQueuedTurn.id;
-    consumeQueuedTurn(threadId, nextQueuedTurn.id);
-
-    void dispatchExistingThreadTurn({
-      text: nextQueuedTurn.text,
-      images: nextQueuedTurn.images,
-      runtimeMode: nextQueuedTurn.runtimeMode,
-      interactionMode: nextQueuedTurn.interactionMode,
-      provider: nextQueuedTurn.provider,
-      model: nextQueuedTurn.model,
-      serviceTier: nextQueuedTurn.serviceTier,
-      modelOptions: nextQueuedTurn.modelOptions?.codex
-        ? {
-            codex: {
-              ...(nextQueuedTurn.modelOptions.codex.reasoningEffort !== undefined
-                ? {
-                    reasoningEffort: nextQueuedTurn.modelOptions.codex.reasoningEffort,
-                  }
-                : {}),
-              ...(nextQueuedTurn.modelOptions.codex.fastMode === true ? { fastMode: true } : {}),
-            },
-          }
-        : null,
-      optimisticErrorMessage: "Failed to send queued follow-up.",
-      failureMessage: "Failed to send queued follow-up.",
-    })
-      .catch(() => {
-        prependQueuedTurn(threadId, nextQueuedTurn);
-      })
-      .finally(() => {
-        queuedTurnFlushIdRef.current = null;
-      });
-  }, [
-    activeThread,
-    consumeQueuedTurn,
-    dispatchExistingThreadTurn,
-    isConnecting,
-    isSendBusy,
-    isServerThread,
-    phase,
-    prependQueuedTurn,
-    queuedTurns,
-    threadId,
-  ]);
 
   const onInterrupt = async () => {
     const api = readNativeApi();
@@ -3574,7 +3482,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                       size="sm"
                       variant="ghost"
                       className="h-7 rounded-full px-3 text-xs"
-                      onClick={() => removeQueuedTurn(threadId, queuedTurns[0]!.id)}
+                      onClick={() => void removeQueuedTurnFromServer(queuedTurns[0]!.messageId)}
                     >
                       Remove next
                     </Button>
@@ -3584,7 +3492,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                         size="sm"
                         variant="ghost"
                         className="h-7 rounded-full px-3 text-xs"
-                        onClick={() => clearQueuedTurns(threadId)}
+                        onClick={() => void clearQueuedTurnsFromServer()}
                       >
                         Clear all
                       </Button>
@@ -3962,10 +3870,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                 size="sm"
                                 variant="outline"
                                 className="h-9 rounded-full px-4 sm:h-8"
-                                disabled={isSendBusy || isConnecting}
+                                disabled={
+                                  isSendBusy || isConnecting || pendingQueuedTurnMessageId !== null
+                                }
                                 onClick={() => void onSend(undefined, "queue")}
                               >
-                                Queue
+                                {pendingQueuedTurnMessageId !== null ? "Queueing..." : "Queue"}
                               </Button>
                             </>
                           ) : null}
