@@ -78,6 +78,7 @@ import { expandHomePath } from "./os-jank.ts";
 import { makeServerPushBus } from "./wsServer/pushBus.ts";
 import { makeServerReadiness } from "./wsServer/readiness.ts";
 import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
+import { CodexImport } from "./codexImport/Services/CodexImport.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -207,6 +208,7 @@ export type ServerCoreRuntimeServices =
   | ProjectionSnapshotQuery
   | CheckpointDiffQuery
   | OrchestrationReactor
+  | CodexImport
   | ProviderService
   | ProviderHealth;
 
@@ -254,6 +256,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const terminalManager = yield* TerminalManager;
   const keybindingsManager = yield* Keybindings;
   const providerHealth = yield* ProviderHealth;
+  const codexImport = yield* CodexImport;
   const git = yield* GitCore;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -942,6 +945,27 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return { keybindings: keybindingsConfig, issues: [] };
       }
 
+      case WS_METHODS.codexImportListSessions: {
+        const body = stripRequestTag(request.body);
+        return yield* codexImport
+          .listSessions(body)
+          .pipe(Effect.mapError((error) => new RouteRequestError({ message: error.message })));
+      }
+
+      case WS_METHODS.codexImportPeekSession: {
+        const body = stripRequestTag(request.body);
+        return yield* codexImport
+          .peekSession(body)
+          .pipe(Effect.mapError((error) => new RouteRequestError({ message: error.message })));
+      }
+
+      case WS_METHODS.codexImportImportSessions: {
+        const body = stripRequestTag(request.body);
+        return yield* codexImport
+          .importSessions(body)
+          .pipe(Effect.mapError((error) => new RouteRequestError({ message: error.message })));
+      }
+
       default: {
         const _exhaustiveCheck: never = request.body;
         return yield* new RouteRequestError({
@@ -1013,6 +1037,88 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   });
 
   wss.on("connection", (ws) => {
+    if (upstreamProxyUrl) {
+      const upstream = new NodeWebSocket(upstreamProxyUrl);
+      const pendingMessages: string[] = [];
+
+      const flushPendingMessages = () => {
+        while (pendingMessages.length > 0 && upstream.readyState === NodeWebSocket.OPEN) {
+          const message = pendingMessages.shift();
+          if (message !== undefined) {
+            upstream.send(message);
+          }
+        }
+      };
+
+      const closeUpstream = () => {
+        if (
+          upstream.readyState === NodeWebSocket.OPEN ||
+          upstream.readyState === NodeWebSocket.CONNECTING
+        ) {
+          upstream.close();
+        }
+      };
+
+      upstream.on("open", () => {
+        flushPendingMessages();
+      });
+
+      upstream.on("message", (raw) => {
+        const text = websocketRawToString(raw);
+        if (text !== null && ws.readyState === ws.OPEN) {
+          ws.send(text);
+        }
+      });
+
+      upstream.on("close", () => {
+        if (ws.readyState === ws.OPEN || ws.readyState === ws.CONNECTING) {
+          ws.close();
+        }
+      });
+
+      upstream.on("error", () => {
+        if (ws.readyState === ws.OPEN || ws.readyState === ws.CONNECTING) {
+          ws.close(1011, "Upstream desktop backend unavailable");
+        }
+      });
+
+      ws.on("message", (raw) => {
+        const text = websocketRawToString(raw);
+        if (text === null) {
+          return;
+        }
+
+        try {
+          const parsed = JSON.parse(text) as { body?: { _tag?: string } };
+          if (parsed.body?._tag?.startsWith("server.")) {
+            void runPromise(
+              handleMessage(ws, raw).pipe(
+                Effect.catch((error) =>
+                  Effect.logError("Error handling local server message", error),
+                ),
+              ),
+            );
+            return;
+          }
+        } catch {
+          // Fall through to upstream proxy handling for malformed JSON so the upstream backend
+          // can respond consistently.
+        }
+
+        if (upstream.readyState === NodeWebSocket.OPEN) {
+          upstream.send(text);
+          return;
+        }
+
+        if (upstream.readyState === NodeWebSocket.CONNECTING) {
+          pendingMessages.push(text);
+        }
+      });
+
+      ws.on("close", closeUpstream);
+      ws.on("error", closeUpstream);
+      return;
+    }
     const segments = cwd.split(/[/\\]/).filter(Boolean);
     const projectName = segments[segments.length - 1] ?? "project";
 

@@ -3,8 +3,10 @@ import { it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
 
 import {
+  ClientOrchestrationCommand,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  OrchestrationCommand,
   OrchestrationGetTurnDiffInput,
   OrchestrationLatestTurn,
   OrchestrationProposedPlan,
@@ -25,6 +27,8 @@ const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
 );
 const decodeOrchestrationLatestTurn = Schema.decodeUnknownEffect(OrchestrationLatestTurn);
 const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(OrchestrationProposedPlan);
+const decodeClientOrchestrationCommand = Schema.decodeUnknownEffect(ClientOrchestrationCommand);
+const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
 
@@ -313,5 +317,46 @@ it.effect("preserves proposed plan implementation metadata when present", () =>
     });
     assert.strictEqual(parsed.implementedAt, "2026-01-02T00:00:00.000Z");
     assert.strictEqual(parsed.implementationThreadId, "thread-2");
+  }),
+);
+
+it.effect("accepts thread.import as an internal orchestration command only", () =>
+  Effect.gen(function* () {
+    const command = {
+      type: "thread.import",
+      commandId: "cmd-import-1",
+      threadId: "thread-1",
+      projectId: "project-1",
+      title: "Imported thread",
+      model: "gpt-5-codex",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      messages: [
+        {
+          messageId: "message-1",
+          role: "user",
+          text: "hello",
+          createdAt: "2025-12-31T23:59:00.000Z",
+          updatedAt: "2025-12-31T23:59:00.000Z",
+        },
+      ],
+      source: {
+        provider: "codex",
+        sessionId: "session-1",
+        kind: "direct",
+        originalCwd: "/tmp/project",
+        sourceCreatedAt: "2025-12-31T23:58:00.000Z",
+        sourceUpdatedAt: "2025-12-31T23:59:00.000Z",
+      },
+    } as const;
+
+    const parsed = yield* decodeOrchestrationCommand(command);
+    assert.strictEqual(parsed.type, "thread.import");
+
+    const clientResult = yield* Effect.exit(decodeClientOrchestrationCommand(command));
+    assert.strictEqual(clientResult._tag, "Failure");
   }),
 );
