@@ -1,6 +1,6 @@
-import { type ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { ThreadId, type ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { useQuery } from "@tanstack/react-query";
-import { Outlet, createFileRoute, useNavigate } from "@tanstack/react-router";
+import { Outlet, createFileRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { useEffect } from "react";
 
 import ThreadSidebar from "../components/Sidebar";
@@ -10,6 +10,7 @@ import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { resolveShortcutCommand } from "../keybindings";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
+import { useThreadNavigationHistoryStore } from "../threadNavigationHistoryStore";
 import { Sidebar, SidebarProvider } from "~/components/ui/sidebar";
 import { resolveSidebarNewThreadEnvMode } from "~/components/Sidebar.logic";
 import { useAppSettings } from "~/appSettings";
@@ -86,6 +87,21 @@ function ChatRouteGlobalShortcuts() {
     terminalOpen,
     appSettings.defaultThreadEnvMode,
   ]);
+ 
+  return null;
+}
+
+function ThreadNavigationHistoryTracker() {
+  const routeThreadId = useParams({
+    strict: false,
+    select: (params) => (params.threadId ? ThreadId.makeUnsafe(params.threadId) : null),
+  });
+  const recordVisit = useThreadNavigationHistoryStore((store) => store.recordVisit);
+
+  useEffect(() => {
+    if (!routeThreadId) return;
+    recordVisit(routeThreadId);
+  }, [recordVisit, routeThreadId]);
 
   return null;
 }
@@ -112,6 +128,7 @@ function ChatRouteLayout() {
   return (
     <SidebarProvider defaultOpen>
       <ChatRouteGlobalShortcuts />
+      <ThreadNavigationHistoryTracker />
       <Sidebar
         side="left"
         collapsible="offcanvas"
