@@ -29,6 +29,14 @@ function isoOffset(minutesAgo: number): string {
   return new Date(Date.now() - minutesAgo * 60_000).toISOString();
 }
 
+function toEpochSeconds(timestamp: string): number {
+  return Math.floor(Date.parse(timestamp) / 1_000);
+}
+
+function fromEpochSeconds(timestamp: number): string {
+  return new Date(timestamp * 1_000).toISOString();
+}
+
 function buildTranscript(
   messages: ReadonlyArray<{ role: string; text: string; timestamp: string }>,
 ) {
@@ -66,8 +74,8 @@ interface FixtureSessionInput {
   readonly cwd: string | null;
   readonly source?: string;
   readonly firstUserMessage?: string | null;
-  readonly updatedAt?: string;
-  readonly createdAt?: string;
+  readonly updatedAt?: string | number;
+  readonly createdAt?: string | number;
   readonly transcript?: string;
 }
 
@@ -83,8 +91,8 @@ function createCodexHomeFixture(sessions: ReadonlyArray<FixtureSessionInput>): {
         id TEXT PRIMARY KEY,
         title TEXT,
         cwd TEXT,
-        updated_at TEXT,
-        created_at TEXT,
+        updated_at INTEGER,
+        created_at INTEGER,
         source TEXT,
         rollout_path TEXT,
         first_user_message TEXT,
@@ -265,6 +273,67 @@ describe("CodexImportLive", () => {
         }),
       );
       expect(cwdSearch.map((session) => session.sessionId)).toEqual(["orchestrator-session"]);
+    } finally {
+      await system.dispose();
+    }
+  });
+
+  it("normalizes integer Codex timestamps before recency filtering and sorting", async () => {
+    const newestUpdatedAt = toEpochSeconds(isoOffset(5));
+    const olderUpdatedAt = toEpochSeconds(isoOffset(15));
+    const staleUpdatedAt = toEpochSeconds(isoOffset(60 * 24 * 45));
+    const { homePath } = createCodexHomeFixture([
+      {
+        sessionId: "newest-session",
+        title: "Newest session",
+        cwd: makeTempDir("newest-project-"),
+        updatedAt: newestUpdatedAt,
+        createdAt: newestUpdatedAt - 60,
+      },
+      {
+        sessionId: "older-session",
+        title: "Older session",
+        cwd: makeTempDir("older-project-"),
+        updatedAt: olderUpdatedAt,
+        createdAt: olderUpdatedAt - 60,
+      },
+      {
+        sessionId: "stale-session",
+        title: "Stale session",
+        cwd: makeTempDir("stale-project-"),
+        updatedAt: staleUpdatedAt,
+        createdAt: staleUpdatedAt - 60,
+      },
+    ]);
+    const system = await createCodexImportSystem();
+
+    try {
+      const sessions = await system.run(
+        Effect.gen(function* () {
+          const codexImport = yield* CodexImport;
+          return yield* codexImport.listSessions({
+            homePath,
+            kind: "all",
+            days: 30,
+            limit: 50,
+          });
+        }),
+      );
+
+      expect(sessions.map((session) => session.sessionId)).toEqual([
+        "newest-session",
+        "older-session",
+      ]);
+      expect(sessions[0]).toMatchObject({
+        sessionId: "newest-session",
+        updatedAt: fromEpochSeconds(newestUpdatedAt),
+        createdAt: fromEpochSeconds(newestUpdatedAt - 60),
+      });
+      expect(sessions[1]).toMatchObject({
+        sessionId: "older-session",
+        updatedAt: fromEpochSeconds(olderUpdatedAt),
+        createdAt: fromEpochSeconds(olderUpdatedAt - 60),
+      });
     } finally {
       await system.dispose();
     }
