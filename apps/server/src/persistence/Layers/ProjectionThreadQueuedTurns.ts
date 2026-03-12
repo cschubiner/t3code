@@ -7,6 +7,7 @@ import { toPersistenceSqlError } from "../Errors.ts";
 import {
   DeleteProjectionThreadQueuedTurnInput,
   DeleteProjectionThreadQueuedTurnsByThreadInput,
+  GetProjectionThreadQueuedTurnInput,
   ListProjectionThreadQueuedTurnsInput,
   ProjectionThreadQueuedTurn,
   ProjectionThreadQueuedTurnRepository,
@@ -31,6 +32,7 @@ const makeProjectionThreadQueuedTurnRepository = Effect.gen(function* () {
         INSERT INTO projection_thread_queued_turns (
           message_id,
           thread_id,
+          sort_order,
           text,
           attachments_json,
           provider,
@@ -46,6 +48,7 @@ const makeProjectionThreadQueuedTurnRepository = Effect.gen(function* () {
         VALUES (
           ${row.messageId},
           ${row.threadId},
+          ${row.sortOrder},
           ${row.text},
           ${JSON.stringify(row.attachments)},
           ${row.provider},
@@ -61,6 +64,7 @@ const makeProjectionThreadQueuedTurnRepository = Effect.gen(function* () {
         ON CONFLICT (message_id)
         DO UPDATE SET
           thread_id = excluded.thread_id,
+          sort_order = excluded.sort_order,
           text = excluded.text,
           attachments_json = excluded.attachments_json,
           provider = excluded.provider,
@@ -83,6 +87,7 @@ const makeProjectionThreadQueuedTurnRepository = Effect.gen(function* () {
         SELECT
           message_id AS "messageId",
           thread_id AS "threadId",
+          sort_order AS "sortOrder",
           text,
           attachments_json AS "attachments",
           provider,
@@ -96,7 +101,32 @@ const makeProjectionThreadQueuedTurnRepository = Effect.gen(function* () {
           queued_at AS "queuedAt"
         FROM projection_thread_queued_turns
         WHERE thread_id = ${threadId}
-        ORDER BY queued_at ASC, message_id ASC
+        ORDER BY sort_order ASC, queued_at ASC, message_id ASC
+      `,
+  });
+
+  const getProjectionThreadQueuedTurnRows = SqlSchema.findAll({
+    Request: GetProjectionThreadQueuedTurnInput,
+    Result: ProjectionThreadQueuedTurnDbRowSchema,
+    execute: ({ messageId }) =>
+      sql`
+        SELECT
+          message_id AS "messageId",
+          thread_id AS "threadId",
+          sort_order AS "sortOrder",
+          text,
+          attachments_json AS "attachments",
+          provider,
+          model,
+          service_tier AS "serviceTier",
+          model_options_json AS "modelOptions",
+          provider_options_json AS "providerOptions",
+          assistant_delivery_mode AS "assistantDeliveryMode",
+          runtime_mode AS "runtimeMode",
+          interaction_mode AS "interactionMode",
+          queued_at AS "queuedAt"
+        FROM projection_thread_queued_turns
+        WHERE message_id = ${messageId}
       `,
   });
 
@@ -130,6 +160,14 @@ const makeProjectionThreadQueuedTurnRepository = Effect.gen(function* () {
       ),
     );
 
+  const getByMessageId: ProjectionThreadQueuedTurnRepositoryShape["getByMessageId"] = (input) =>
+    getProjectionThreadQueuedTurnRows(input).pipe(
+      Effect.map((rows) => rows[0] ?? null),
+      Effect.mapError(
+        toPersistenceSqlError("ProjectionThreadQueuedTurnRepository.getByMessageId:query"),
+      ),
+    );
+
   const deleteByMessageId: ProjectionThreadQueuedTurnRepositoryShape["deleteByMessageId"] = (
     input,
   ) =>
@@ -149,6 +187,7 @@ const makeProjectionThreadQueuedTurnRepository = Effect.gen(function* () {
   return {
     upsert,
     listByThreadId,
+    getByMessageId,
     deleteByMessageId,
     deleteByThreadId,
   } satisfies ProjectionThreadQueuedTurnRepositoryShape;
