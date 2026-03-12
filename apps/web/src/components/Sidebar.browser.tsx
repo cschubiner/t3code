@@ -21,6 +21,7 @@ import { useComposerDraftStore } from "../composerDraftStore";
 import { isMacPlatform } from "../lib/utils";
 import { getRouter } from "../router";
 import { useStore } from "../store";
+import { useThreadNavigationHistoryStore } from "../threadNavigationHistoryStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 
 const NOW_ISO = "2026-03-12T12:00:00.000Z";
@@ -51,6 +52,7 @@ const wsLink = ws.link(/ws(s)?:\/\/.*/);
 function createResolvedKeybinding(
   key: string,
   command: ServerConfig["keybindings"][number]["command"],
+  overrides: Partial<ServerConfig["keybindings"][number]["shortcut"]> = {},
 ) {
   return {
     command,
@@ -61,6 +63,7 @@ function createResolvedKeybinding(
       shiftKey: false,
       altKey: false,
       modKey: true,
+      ...overrides,
     },
   } as const;
 }
@@ -70,8 +73,26 @@ function createBaseServerConfig(): ServerConfig {
     cwd: "/repo/alpha",
     keybindingsConfigPath: "/repo/.t3/keybindings.json",
     keybindings: [
-      createResolvedKeybinding("[", "sidebar.thread.previous"),
-      createResolvedKeybinding("]", "sidebar.thread.next"),
+      createResolvedKeybinding("[", "sidebar.history.previous"),
+      createResolvedKeybinding("]", "sidebar.history.next"),
+      createResolvedKeybinding("arrowup", "sidebar.thread.previous", {
+        altKey: true,
+        modKey: false,
+      }),
+      createResolvedKeybinding("arrowdown", "sidebar.thread.next", {
+        altKey: true,
+        modKey: false,
+      }),
+      createResolvedKeybinding("arrowup", "sidebar.project.previous", {
+        altKey: true,
+        shiftKey: true,
+        modKey: false,
+      }),
+      createResolvedKeybinding("arrowdown", "sidebar.project.next", {
+        altKey: true,
+        shiftKey: true,
+        modKey: false,
+      }),
     ],
     issues: [],
     providers: [
@@ -310,13 +331,18 @@ function shortcutModifiers(): Pick<KeyboardEventInit, "ctrlKey" | "metaKey"> {
   return isMacPlatform(navigator.platform) ? { metaKey: true } : { ctrlKey: true };
 }
 
-function dispatchSidebarShortcut(key: "[" | "]", target: EventTarget = window): void {
+function dispatchSidebarShortcut(
+  init: { key: string; altKey?: boolean; shiftKey?: boolean },
+  target: EventTarget = window,
+): void {
   target.dispatchEvent(
     new KeyboardEvent("keydown", {
-      key,
+      key: init.key,
+      altKey: init.altKey ?? false,
+      shiftKey: init.shiftKey ?? false,
       bubbles: true,
       cancelable: true,
-      ...shortcutModifiers(),
+      ...(init.altKey || init.shiftKey ? {} : shortcutModifiers()),
     }),
   );
 }
@@ -400,7 +426,7 @@ async function mountApp(initialEntry: string): Promise<{
   };
 }
 
-describe("Sidebar thread navigation keybindings", () => {
+describe("Sidebar navigation keybindings", () => {
   beforeAll(async () => {
     fixture = buildFixture();
     await worker.start({
@@ -430,25 +456,26 @@ describe("Sidebar thread navigation keybindings", () => {
       threads: [],
       threadsHydrated: false,
     });
+    useThreadNavigationHistoryStore.getState().clearHistory();
     useThreadSelectionStore.getState().clearSelection();
   });
 
-  it("navigates to the next visible sidebar thread with mod+]", async () => {
+  it("navigates down the visible sidebar thread list with alt+down", async () => {
     const mounted = await mountApp(`/${THREAD_A5}`);
 
     try {
-      dispatchSidebarShortcut("]");
+      dispatchSidebarShortcut({ key: "ArrowDown", altKey: true });
       await waitForPath(mounted.router, `/${THREAD_A4}`);
     } finally {
       await mounted.cleanup();
     }
   });
 
-  it("navigates to the previous visible sidebar thread with mod+[", async () => {
+  it("navigates up the visible sidebar thread list with alt+up", async () => {
     const mounted = await mountApp(`/${THREAD_A5}`);
 
     try {
-      dispatchSidebarShortcut("[");
+      dispatchSidebarShortcut({ key: "ArrowUp", altKey: true });
       await waitForPath(mounted.router, `/${THREAD_A6}`);
     } finally {
       await mounted.cleanup();
@@ -459,7 +486,7 @@ describe("Sidebar thread navigation keybindings", () => {
     const mounted = await mountApp("/settings");
 
     try {
-      dispatchSidebarShortcut("]");
+      dispatchSidebarShortcut({ key: "ArrowDown", altKey: true });
       await waitForPath(mounted.router, `/${THREAD_A8}`);
     } finally {
       await mounted.cleanup();
@@ -470,7 +497,7 @@ describe("Sidebar thread navigation keybindings", () => {
     const mounted = await mountApp("/settings");
 
     try {
-      dispatchSidebarShortcut("[");
+      dispatchSidebarShortcut({ key: "ArrowUp", altKey: true });
       await waitForPath(mounted.router, `/${THREAD_B1}`);
     } finally {
       await mounted.cleanup();
@@ -481,7 +508,7 @@ describe("Sidebar thread navigation keybindings", () => {
     const mounted = await mountApp(`/${THREAD_A3}`);
 
     try {
-      dispatchSidebarShortcut("]");
+      dispatchSidebarShortcut({ key: "ArrowDown", altKey: true });
       await waitForPath(mounted.router, `/${THREAD_B2}`);
     } finally {
       await mounted.cleanup();
@@ -497,8 +524,64 @@ describe("Sidebar thread navigation keybindings", () => {
       await waitForButton("Show less");
       await waitForSidebarThread("Alpha 2");
 
-      dispatchSidebarShortcut("]");
+      dispatchSidebarShortcut({ key: "ArrowDown", altKey: true });
       await waitForPath(mounted.router, `/${THREAD_A2}`);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("jumps between projects with alt+shift+up/down", async () => {
+    const mounted = await mountApp(`/${THREAD_A5}`);
+
+    try {
+      dispatchSidebarShortcut({ key: "ArrowDown", altKey: true, shiftKey: true });
+      await waitForPath(mounted.router, `/${THREAD_B2}`);
+
+      dispatchSidebarShortcut({ key: "ArrowUp", altKey: true, shiftKey: true });
+      await waitForPath(mounted.router, `/${THREAD_A8}`);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("expands the destination project when project navigation targets a collapsed project", async () => {
+    const mounted = await mountApp(`/${THREAD_A8}`);
+
+    try {
+      const betaProjectButton = Array.from(
+        document.querySelectorAll<HTMLButtonElement>("button"),
+      ).find((node) => node.textContent?.includes("Beta"));
+      expect(betaProjectButton).toBeTruthy();
+      betaProjectButton?.click();
+      await waitForLayout();
+
+      dispatchSidebarShortcut({ key: "ArrowDown", altKey: true, shiftKey: true });
+      await waitForPath(mounted.router, `/${THREAD_B2}`);
+      await waitForSidebarThread("Beta 2");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("navigates through chat selection history with mod+[ and mod+]", async () => {
+    const mounted = await mountApp(`/${THREAD_A5}`);
+
+    try {
+      dispatchSidebarShortcut({ key: "ArrowDown", altKey: true });
+      await waitForPath(mounted.router, `/${THREAD_A4}`);
+
+      dispatchSidebarShortcut({ key: "ArrowDown", altKey: true, shiftKey: true });
+      await waitForPath(mounted.router, `/${THREAD_B2}`);
+
+      dispatchSidebarShortcut({ key: "[" });
+      await waitForPath(mounted.router, `/${THREAD_A4}`);
+
+      dispatchSidebarShortcut({ key: "[" });
+      await waitForPath(mounted.router, `/${THREAD_A5}`);
+
+      dispatchSidebarShortcut({ key: "]" });
+      await waitForPath(mounted.router, `/${THREAD_A4}`);
     } finally {
       await mounted.cleanup();
     }
@@ -513,7 +596,7 @@ describe("Sidebar thread navigation keybindings", () => {
       selectionStore.toggleThread(THREAD_A4);
       await waitForLayout();
 
-      dispatchSidebarShortcut("]");
+      dispatchSidebarShortcut({ key: "ArrowDown", altKey: true });
       await waitForPath(mounted.router, `/${THREAD_A4}`);
 
       const state = useThreadSelectionStore.getState();
@@ -550,7 +633,7 @@ describe("Sidebar thread navigation keybindings", () => {
       }
       addProjectInput.focus();
 
-      dispatchSidebarShortcut("]", addProjectInput);
+      dispatchSidebarShortcut({ key: "ArrowDown", altKey: true }, addProjectInput);
       await new Promise((resolve) => window.setTimeout(resolve, 150));
 
       expect(mounted.router.state.location.pathname).toBe(`/${THREAD_A5}`);
@@ -566,7 +649,7 @@ describe("Sidebar thread navigation keybindings", () => {
       const composerEditor = await waitForComposerEditor();
       composerEditor.focus();
 
-      dispatchSidebarShortcut("]", composerEditor);
+      dispatchSidebarShortcut({ key: "ArrowDown", altKey: true }, composerEditor);
       await new Promise((resolve) => window.setTimeout(resolve, 150));
 
       expect(mounted.router.state.location.pathname).toBe(`/${THREAD_A5}`);
