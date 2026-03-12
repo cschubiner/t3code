@@ -162,6 +162,14 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
 
       const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
       assert.deepEqual(persisted, DEFAULT_KEYBINDINGS);
+      assert.isTrue(
+        persisted.some(
+          (entry) => entry.command === "sidebar.thread.previous" && entry.key === "mod+[",
+        ),
+      );
+      assert.isTrue(
+        persisted.some((entry) => entry.command === "sidebar.thread.next" && entry.key === "mod+]"),
+      );
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
