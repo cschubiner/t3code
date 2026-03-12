@@ -24,8 +24,12 @@ See the full schema for more details: [`packages/contracts/src/keybindings.ts`](
   { "key": "mod+n", "command": "terminal.new", "when": "terminalFocus" },
   { "key": "mod+w", "command": "terminal.close", "when": "terminalFocus" },
   { "key": "mod+d", "command": "diff.toggle", "when": "!terminalFocus" },
-  { "key": "mod+[", "command": "sidebar.thread.previous" },
-  { "key": "mod+]", "command": "sidebar.thread.next" },
+  { "key": "mod+[", "command": "sidebar.history.previous" },
+  { "key": "mod+]", "command": "sidebar.history.next" },
+  { "key": "alt+arrowup", "command": "sidebar.thread.previous" },
+  { "key": "alt+arrowdown", "command": "sidebar.thread.next" },
+  { "key": "alt+shift+arrowup", "command": "sidebar.project.previous" },
+  { "key": "alt+shift+arrowdown", "command": "sidebar.project.next" },
   { "key": "mod+n", "command": "chat.new", "when": "!terminalFocus" },
   { "key": "mod+shift+o", "command": "chat.new", "when": "!terminalFocus" },
   { "key": "mod+shift+n", "command": "chat.newLocal", "when": "!terminalFocus" },
@@ -54,8 +58,12 @@ Invalid rules are ignored. Invalid config files are ignored. Warnings are logged
 - `terminal.new`: create new terminal (in focused terminal context by default)
 - `terminal.close`: close/kill the focused terminal (in focused terminal context by default)
 - `diff.toggle`: open/close the diff panel outside terminal focus
-- `sidebar.thread.previous`: move to the previous visible thread in the left sidebar
-- `sidebar.thread.next`: move to the next visible thread in the left sidebar
+- `sidebar.history.previous`: move to the previous chat in thread-selection history
+- `sidebar.history.next`: move to the next chat in thread-selection history
+- `sidebar.thread.previous`: move up through visible threads in the left sidebar
+- `sidebar.thread.next`: move down through visible threads in the left sidebar
+- `sidebar.project.previous`: move to the previous project in the left sidebar
+- `sidebar.project.next`: move to the next project in the left sidebar
 - `chat.new`: create a new chat thread preserving the active thread's branch/worktree state
 - `chat.newLocal`: create a new chat thread for the active project in a new environment (local/worktree determined by app settings (default `local`))
 - `editor.openFavorite`: open current project/worktree in the last-used editor
