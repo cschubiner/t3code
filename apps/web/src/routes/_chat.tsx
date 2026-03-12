@@ -1,6 +1,6 @@
 import { ThreadId, type ResolvedKeybindingsConfig } from "@t3tools/contracts";
-import { Outlet, createFileRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { Outlet, createFileRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { useEffect } from "react";
 
 import ThreadSidebar from "../components/Sidebar";
