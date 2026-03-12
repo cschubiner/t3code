@@ -1,7 +1,9 @@
 import type {
+  MessageId,
   OrchestrationCommand,
   OrchestrationEvent,
   OrchestrationReadModel,
+  ThreadId,
 } from "@t3tools/contracts";
 import { Effect } from "effect";
 
@@ -49,6 +51,54 @@ function withEventBase(
 
 function getThreadFromReadModel(readModel: OrchestrationReadModel, threadId: string) {
   return readModel.threads.find((entry) => entry.id === threadId);
+}
+
+type ReadModelQueuedTurn = OrchestrationReadModel["threads"][number]["queuedTurns"][number];
+
+function buildQueuedTurnUpsertEvent(input: {
+  readonly command: Pick<OrchestrationCommand, "commandId">;
+  readonly threadId: ThreadId;
+  readonly occurredAt: string;
+  readonly eventType: "thread.turn-queued" | "thread.turn-queue-updated";
+  readonly queuedTurn: ReadModelQueuedTurn;
+}): Omit<OrchestrationEvent, "sequence"> {
+  return {
+    ...withEventBase({
+      aggregateKind: "thread",
+      aggregateId: input.threadId as OrchestrationEvent["aggregateId"],
+      occurredAt: input.occurredAt,
+      commandId: input.command.commandId,
+    }),
+    type: input.eventType,
+    payload: {
+      threadId: input.threadId,
+      queuedTurn: input.queuedTurn,
+    },
+  };
+}
+
+function buildQueuedTurnMoveEvent(input: {
+  readonly command: Pick<OrchestrationCommand, "commandId">;
+  readonly threadId: ThreadId;
+  readonly occurredAt: string;
+  readonly messageId: MessageId;
+  readonly targetMessageId: MessageId;
+}): Omit<OrchestrationEvent, "sequence"> {
+  return {
+    ...withEventBase({
+      aggregateKind: "thread",
+      aggregateId: input.threadId as OrchestrationEvent["aggregateId"],
+      occurredAt: input.occurredAt,
+      commandId: input.command.commandId,
+    }),
+    type: "thread.turn-queue-moved",
+    payload: {
+      threadId: input.threadId,
+      messageId: input.messageId,
+      targetMessageId: input.targetMessageId,
+      movedAt: input.occurredAt,
+    },
+  };
 }
 
 export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand")(function* ({
@@ -446,31 +496,26 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
-      return {
-        ...withEventBase({
-          aggregateKind: "thread",
-          aggregateId: command.threadId,
-          occurredAt: command.createdAt,
-          commandId: command.commandId,
-        }),
-        type: "thread.turn-queued",
-        payload: {
-          threadId: command.threadId,
-          queuedTurn: {
-            messageId: command.message.messageId,
-            text: command.message.text,
-            attachments: command.message.attachments,
-            provider: command.provider ?? null,
-            model: command.model ?? null,
-            modelOptions: command.modelOptions ?? null,
-            providerOptions: command.providerOptions ?? null,
-            assistantDeliveryMode: command.assistantDeliveryMode ?? DEFAULT_ASSISTANT_DELIVERY_MODE,
-            runtimeMode: command.runtimeMode,
-            interactionMode: command.interactionMode,
-            queuedAt: command.createdAt,
-          },
+      return buildQueuedTurnUpsertEvent({
+        command,
+        threadId: command.threadId,
+        occurredAt: command.createdAt,
+        eventType: "thread.turn-queued",
+        queuedTurn: {
+          messageId: command.message.messageId,
+          text: command.message.text,
+          attachments: command.message.attachments,
+          provider: command.provider ?? null,
+          model: command.model ?? null,
+          serviceTier: command.serviceTier ?? null,
+          modelOptions: command.modelOptions ?? null,
+          providerOptions: command.providerOptions ?? null,
+          assistantDeliveryMode: command.assistantDeliveryMode ?? DEFAULT_ASSISTANT_DELIVERY_MODE,
+          runtimeMode: command.runtimeMode,
+          interactionMode: command.interactionMode,
+          queuedAt: command.createdAt,
         },
-      };
+      });
     }
 
     case "thread.turn.queue.remove": {
@@ -501,6 +546,112 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           removedAt: command.createdAt,
         },
       };
+    }
+
+    case "thread.turn.queue.update": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const thread = getThreadFromReadModel(readModel, command.threadId);
+      const queuedTurn =
+        thread?.queuedTurns.find((entry) => entry.messageId === command.messageId) ?? null;
+      if (!queuedTurn) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Queued turn '${command.messageId}' was not found on thread '${command.threadId}'.`,
+        });
+      }
+
+      return buildQueuedTurnUpsertEvent({
+        command,
+        threadId: command.threadId,
+        occurredAt: command.createdAt,
+        eventType: "thread.turn-queue-updated",
+        queuedTurn: {
+          ...queuedTurn,
+          text: command.text,
+        },
+      });
+    }
+
+    case "thread.turn.queue.move": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const thread = getThreadFromReadModel(readModel, command.threadId);
+      if (!thread) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' was not found.`,
+        });
+      }
+
+      const activeIndex = thread.queuedTurns.findIndex(
+        (entry) => entry.messageId === command.messageId,
+      );
+      const targetIndex = thread.queuedTurns.findIndex(
+        (entry) => entry.messageId === command.targetMessageId,
+      );
+      if (activeIndex < 0 || targetIndex < 0) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Unable to move queued turn '${command.messageId}' relative to '${command.targetMessageId}' on thread '${command.threadId}'.`,
+        });
+      }
+
+      return buildQueuedTurnMoveEvent({
+        command,
+        threadId: command.threadId,
+        occurredAt: command.createdAt,
+        messageId: command.messageId,
+        targetMessageId: command.targetMessageId,
+      });
+    }
+
+    case "thread.turn.queue.send-now": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const thread = getThreadFromReadModel(readModel, command.threadId);
+      if (!thread) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' was not found.`,
+        });
+      }
+
+      const queuedTurn =
+        thread.queuedTurns.find((entry) => entry.messageId === command.messageId) ?? null;
+      if (!queuedTurn) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Queued turn '${command.messageId}' was not found on thread '${command.threadId}'.`,
+        });
+      }
+      const headQueuedTurn = thread.queuedTurns[0] ?? null;
+      if (!headQueuedTurn || headQueuedTurn.messageId === queuedTurn.messageId) {
+        return buildQueuedTurnUpsertEvent({
+          command,
+          threadId: command.threadId,
+          occurredAt: command.createdAt,
+          eventType: "thread.turn-queue-updated",
+          queuedTurn,
+        });
+      }
+
+      return buildQueuedTurnMoveEvent({
+        command,
+        threadId: command.threadId,
+        occurredAt: command.createdAt,
+        messageId: command.messageId,
+        targetMessageId: headQueuedTurn.messageId,
+      });
     }
 
     case "thread.turn.queue.promote": {

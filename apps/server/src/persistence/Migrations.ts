@@ -30,6 +30,7 @@ import Migration0014 from "./Migrations/014_ProjectionThreadProposedPlanImplemen
 import Migration0015 from "./Migrations/015_ProjectionTurnsSourceProposedPlan.ts";
 import Migration0016 from "./Migrations/016_ProjectionThreadQueuedTurns.ts";
 import Migration0020 from "./Migrations/016_CanonicalizeModelSelections.ts";
+import Migration0017 from "./Migrations/017_ProjectionThreadQueuedTurnSortOrder.ts";
 import { Effect } from "effect";
 
 /**
@@ -59,6 +60,7 @@ export const migrationEntries = [
   [14, "ProjectionThreadProposedPlanImplementation", Migration0014],
   [15, "ProjectionTurnsSourceProposedPlan", Migration0015],
   [16, "ProjectionThreadQueuedTurns", Migration0016],
+  [17, "ProjectionThreadQueuedTurnSortOrder", Migration0017],
   [20, "CanonicalizeModelSelections", Migration0020],
 ] as const;
 
