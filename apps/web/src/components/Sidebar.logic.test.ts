@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ProjectId, ThreadId } from "@t3tools/contracts";
 
 import {
   getFallbackThreadIdAfterDelete,
@@ -7,19 +8,71 @@ import {
   hasUnseenCompletion,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadEnvMode,
+  resolveSidebarThreadNavigationTarget,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
-  shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
   sortThreadsForSidebar,
+  shouldClearThreadSelectionOnMouseDown,
+  visibleThreadIdsForSidebar,
+  visibleThreadsForSidebar,
 } from "./Sidebar.logic";
-import { ProjectId, ThreadId } from "@t3tools/contracts";
 import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   type Project,
   type Thread,
 } from "../types";
+
+const PROJECT_A = ProjectId.makeUnsafe("project-a");
+const PROJECT_B = ProjectId.makeUnsafe("project-b");
+const THREAD_A1 = ThreadId.makeUnsafe("thread-a1");
+const THREAD_A2 = ThreadId.makeUnsafe("thread-a2");
+const THREAD_A3 = ThreadId.makeUnsafe("thread-a3");
+const THREAD_A4 = ThreadId.makeUnsafe("thread-a4");
+const THREAD_A5 = ThreadId.makeUnsafe("thread-a5");
+const THREAD_A6 = ThreadId.makeUnsafe("thread-a6");
+const THREAD_A7 = ThreadId.makeUnsafe("thread-a7");
+const THREAD_B1 = ThreadId.makeUnsafe("thread-b1");
+const THREAD_B2 = ThreadId.makeUnsafe("thread-b2");
+
+function makeNavigationProject(id: Project["id"], name: string, expanded = true): Project {
+  return {
+    id,
+    name,
+    cwd: `/repo/${name}`,
+    model: "gpt-5",
+    expanded,
+    scripts: [],
+  };
+}
+
+function makeNavigationThread(
+  id: Thread["id"],
+  projectId: Thread["projectId"],
+  createdAt: string,
+): Thread {
+  return {
+    id,
+    codexThreadId: null,
+    projectId,
+    title: String(id),
+    model: "gpt-5",
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    session: null,
+    messages: [],
+    queuedTurns: [],
+    proposedPlans: [],
+    error: null,
+    createdAt,
+    latestTurn: null,
+    branch: null,
+    worktreePath: null,
+    turnDiffSummaries: [],
+    activities: [],
+  };
+}
 
 function makeLatestTurn(overrides?: {
   completedAt?: string | null;
@@ -93,6 +146,163 @@ describe("resolveSidebarNewThreadEnvMode", () => {
         defaultEnvMode: "worktree",
       }),
     ).toBe("local");
+  });
+});
+
+describe("sidebar thread ordering", () => {
+  const projects = [
+    makeNavigationProject(PROJECT_A, "alpha"),
+    makeNavigationProject(PROJECT_B, "beta"),
+  ] as const;
+  const threads = [
+    makeNavigationThread(THREAD_A4, PROJECT_A, "2026-03-09T10:04:00.000Z"),
+    makeNavigationThread(THREAD_A2, PROJECT_A, "2026-03-09T10:02:00.000Z"),
+    makeNavigationThread(THREAD_A7, PROJECT_A, "2026-03-09T10:07:00.000Z"),
+    makeNavigationThread(THREAD_A6, PROJECT_A, "2026-03-09T10:06:00.000Z"),
+    makeNavigationThread(THREAD_A1, PROJECT_A, "2026-03-09T10:01:00.000Z"),
+    makeNavigationThread(THREAD_A5, PROJECT_A, "2026-03-09T10:05:00.000Z"),
+    makeNavigationThread(THREAD_A3, PROJECT_A, "2026-03-09T10:03:00.000Z"),
+    makeNavigationThread(THREAD_B1, PROJECT_B, "2026-03-09T11:01:00.000Z"),
+    makeNavigationThread(THREAD_B2, PROJECT_B, "2026-03-09T11:02:00.000Z"),
+  ] as const;
+
+  it("sorts project threads newest-first with id tie-breakers", () => {
+    expect(
+      sortThreadsForSidebar(
+        [
+          makeNavigationThread(THREAD_A1, PROJECT_A, "2026-03-09T10:00:00.000Z"),
+          makeNavigationThread(THREAD_A3, PROJECT_A, "2026-03-09T10:00:00.000Z"),
+          makeNavigationThread(THREAD_A2, PROJECT_A, "2026-03-09T10:01:00.000Z"),
+        ],
+        "created_at",
+      ).map((thread) => thread.id),
+    ).toEqual([THREAD_A2, THREAD_A3, THREAD_A1]);
+  });
+
+  it("limits visible threads when show more is collapsed", () => {
+    const projectThreads = sortThreadsForSidebar(
+      threads.filter((thread) => thread.projectId === PROJECT_A),
+      "created_at",
+    );
+    expect(
+      visibleThreadsForSidebar({
+        projectThreads,
+        isThreadListExpanded: false,
+        threadPreviewLimit: 6,
+      }).map((thread) => thread.id),
+    ).toEqual([THREAD_A7, THREAD_A6, THREAD_A5, THREAD_A4, THREAD_A3, THREAD_A2]);
+  });
+
+  it("returns all threads when show more is expanded", () => {
+    const projectThreads = sortThreadsForSidebar(
+      threads.filter((thread) => thread.projectId === PROJECT_A),
+      "created_at",
+    );
+    expect(
+      visibleThreadsForSidebar({
+        projectThreads,
+        isThreadListExpanded: true,
+        threadPreviewLimit: 6,
+      }).map((thread) => thread.id),
+    ).toEqual([THREAD_A7, THREAD_A6, THREAD_A5, THREAD_A4, THREAD_A3, THREAD_A2, THREAD_A1]);
+  });
+
+  it("derives visible thread ids in project order and skips collapsed projects", () => {
+    expect(
+      visibleThreadIdsForSidebar({
+        projects: [projects[0], makeNavigationProject(PROJECT_B, "beta", false)],
+        threads,
+        expandedThreadListsByProject: new Set<Project["id"]>(),
+        threadPreviewLimit: 6,
+        threadSortOrder: "created_at",
+      }),
+    ).toEqual([THREAD_A7, THREAD_A6, THREAD_A5, THREAD_A4, THREAD_A3, THREAD_A2]);
+  });
+
+  it("includes hidden threads only after show more is expanded", () => {
+    expect(
+      visibleThreadIdsForSidebar({
+        projects,
+        threads,
+        expandedThreadListsByProject: new Set<Project["id"]>([PROJECT_A]),
+        threadPreviewLimit: 6,
+        threadSortOrder: "created_at",
+      }),
+    ).toEqual([
+      THREAD_A7,
+      THREAD_A6,
+      THREAD_A5,
+      THREAD_A4,
+      THREAD_A3,
+      THREAD_A2,
+      THREAD_A1,
+      THREAD_B2,
+      THREAD_B1,
+    ]);
+  });
+});
+
+describe("resolveSidebarThreadNavigationTarget", () => {
+  const orderedVisibleThreadIds = [THREAD_A1, THREAD_A2, THREAD_B1] as const;
+
+  it("moves to the previous thread from the middle", () => {
+    expect(
+      resolveSidebarThreadNavigationTarget({
+        orderedVisibleThreadIds,
+        currentThreadId: THREAD_A2,
+        direction: "previous",
+      }),
+    ).toBe(THREAD_A1);
+  });
+
+  it("moves to the next thread from the middle", () => {
+    expect(
+      resolveSidebarThreadNavigationTarget({
+        orderedVisibleThreadIds,
+        currentThreadId: THREAD_A2,
+        direction: "next",
+      }),
+    ).toBe(THREAD_B1);
+  });
+
+  it("returns null at the previous boundary", () => {
+    expect(
+      resolveSidebarThreadNavigationTarget({
+        orderedVisibleThreadIds,
+        currentThreadId: THREAD_A1,
+        direction: "previous",
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null at the next boundary", () => {
+    expect(
+      resolveSidebarThreadNavigationTarget({
+        orderedVisibleThreadIds,
+        currentThreadId: THREAD_B1,
+        direction: "next",
+      }),
+    ).toBeNull();
+  });
+
+  it("falls back to the first thread for next when there is no active thread", () => {
+    expect(
+      resolveSidebarThreadNavigationTarget({
+        orderedVisibleThreadIds,
+        currentThreadId: null,
+        direction: "next",
+      }),
+    ).toBe(THREAD_A1);
+  });
+
+  it("falls back to the last thread for previous when the active thread is hidden", () => {
+    expect(
+      resolveSidebarThreadNavigationTarget({
+        orderedVisibleThreadIds,
+        currentThreadId: THREAD_A7,
+        direction: "previous",
+      }),
+    ).toBe(THREAD_B1);
   });
 });
 

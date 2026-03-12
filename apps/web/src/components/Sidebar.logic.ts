@@ -1,5 +1,6 @@
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "../appSettings";
-import type { Thread } from "../types";
+import type { Project, Thread } from "../types";
+import type { ThreadId } from "@t3tools/contracts";
 import { cn } from "../lib/utils";
 import {
   findLatestProposedPlan,
@@ -43,6 +44,93 @@ type ThreadStatusInput = Pick<
   Thread,
   "interactionMode" | "latestTurn" | "lastVisitedAt" | "proposedPlans" | "session"
 >;
+
+export type SidebarNavigationDirection = "previous" | "next";
+
+export function visibleThreadsForSidebar(input: {
+  projectThreads: readonly Thread[];
+  activeThreadId?: Thread["id"] | undefined;
+  isThreadListExpanded: boolean;
+  threadPreviewLimit: number;
+}): Thread[] {
+  return getVisibleThreadsForProject({
+    threads: input.projectThreads,
+    activeThreadId: input.activeThreadId,
+    isThreadListExpanded: input.isThreadListExpanded,
+    previewLimit: input.threadPreviewLimit,
+  }).visibleThreads;
+}
+
+export function visibleThreadIdsForSidebar(input: {
+  projects: readonly Project[];
+  threads: readonly Thread[];
+  expandedThreadListsByProject: ReadonlySet<Project["id"]>;
+  threadPreviewLimit: number;
+  threadSortOrder: SidebarThreadSortOrder;
+  activeThreadId?: Thread["id"] | undefined;
+}): ThreadId[] {
+  const visibleThreadIds: ThreadId[] = [];
+
+  for (const project of input.projects) {
+    if (!project.expanded) continue;
+    const projectThreads = sortThreadsForSidebar(
+      input.threads.filter((thread) => thread.projectId === project.id),
+      input.threadSortOrder,
+    );
+    const visibleThreads = visibleThreadsForSidebar({
+      projectThreads,
+      activeThreadId: input.activeThreadId,
+      isThreadListExpanded: input.expandedThreadListsByProject.has(project.id),
+      threadPreviewLimit: input.threadPreviewLimit,
+    });
+    for (const thread of visibleThreads) {
+      visibleThreadIds.push(thread.id);
+    }
+  }
+
+  return visibleThreadIds;
+}
+
+export function resolveSidebarThreadNavigationTarget(input: {
+  orderedVisibleThreadIds: readonly ThreadId[];
+  currentThreadId: ThreadId | null;
+  direction: SidebarNavigationDirection;
+}): ThreadId | null {
+  const { orderedVisibleThreadIds, currentThreadId, direction } = input;
+  if (orderedVisibleThreadIds.length === 0) return null;
+
+  if (currentThreadId === null) {
+    return direction === "next"
+      ? (orderedVisibleThreadIds[0] ?? null)
+      : (orderedVisibleThreadIds.at(-1) ?? null);
+  }
+
+  const currentIndex = orderedVisibleThreadIds.indexOf(currentThreadId);
+  if (currentIndex === -1) {
+    return direction === "next"
+      ? (orderedVisibleThreadIds[0] ?? null)
+      : (orderedVisibleThreadIds.at(-1) ?? null);
+  }
+
+  if (direction === "previous") {
+    return orderedVisibleThreadIds[currentIndex - 1] ?? null;
+  }
+
+  return orderedVisibleThreadIds[currentIndex + 1] ?? null;
+}
+
+export function isTypingInSidebarTextEntry(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement
+  ) {
+    return true;
+  }
+  if (target.isContentEditable) return true;
+  return Boolean(target.closest("input, textarea, select, [contenteditable]"));
+}
 
 export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   if (!thread.latestTurn?.completedAt) return false;
