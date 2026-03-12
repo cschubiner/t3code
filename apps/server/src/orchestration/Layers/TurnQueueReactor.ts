@@ -49,7 +49,7 @@ function canDispatchQueuedTurn(thread: OrchestrationThread): boolean {
     return false;
   }
 
-  return thread.latestTurn?.state !== "running";
+  return true;
 }
 
 const make = Effect.gen(function* () {
@@ -104,6 +104,20 @@ const make = Effect.gen(function* () {
       const thread = readModel.threads.find((entry) => entry.id === threadId);
       if (!thread || !canDispatchQueuedTurn(thread)) {
         return;
+      }
+
+      if (thread.latestTurn?.state === "running") {
+        const projectedLatestTurn = yield* projectionTurnRepository.getByTurnId({
+          threadId,
+          turnId: thread.latestTurn.turnId,
+        });
+        if (
+          Option.isNone(projectedLatestTurn) ||
+          projectedLatestTurn.value.state === "pending" ||
+          projectedLatestTurn.value.state === "running"
+        ) {
+          return;
+        }
       }
 
       const nextQueuedTurn = thread.queuedTurns[0];
