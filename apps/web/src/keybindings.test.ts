@@ -12,6 +12,10 @@ import {
   isChatNewLocalShortcut,
   isDiffToggleShortcut,
   isOpenFavoriteEditorShortcut,
+  isSidebarHistoryNextShortcut,
+  isSidebarHistoryPreviousShortcut,
+  isSidebarProjectNextShortcut,
+  isSidebarProjectPreviousShortcut,
   isSidebarThreadNextShortcut,
   isSidebarThreadPreviousShortcut,
   isTerminalClearShortcut,
@@ -99,8 +103,24 @@ const DEFAULT_BINDINGS = compile([
     command: "diff.toggle",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
-  { shortcut: modShortcut("["), command: "sidebar.thread.previous" },
-  { shortcut: modShortcut("]"), command: "sidebar.thread.next" },
+  { shortcut: modShortcut("["), command: "sidebar.history.previous" },
+  { shortcut: modShortcut("]"), command: "sidebar.history.next" },
+  {
+    shortcut: { ...modShortcut("arrowup"), modKey: false, altKey: true },
+    command: "sidebar.thread.previous",
+  },
+  {
+    shortcut: { ...modShortcut("arrowdown"), modKey: false, altKey: true },
+    command: "sidebar.thread.next",
+  },
+  {
+    shortcut: { ...modShortcut("arrowup"), modKey: false, altKey: true, shiftKey: true },
+    command: "sidebar.project.previous",
+  },
+  {
+    shortcut: { ...modShortcut("arrowdown"), modKey: false, altKey: true, shiftKey: true },
+    command: "sidebar.project.next",
+  },
   { shortcut: modShortcut("o", { shiftKey: true }), command: "chat.new" },
   { shortcut: modShortcut("n", { shiftKey: true }), command: "chat.newLocal" },
   { shortcut: modShortcut("o"), command: "editor.openFavorite" },
@@ -242,12 +262,20 @@ describe("shortcutLabelForCommand", () => {
     assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "chat.new", "MacIntel"), "⇧⌘O");
     assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "diff.toggle", "Linux"), "Ctrl+D");
     assert.strictEqual(
-      shortcutLabelForCommand(DEFAULT_BINDINGS, "sidebar.thread.previous", "MacIntel"),
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "sidebar.history.previous", "MacIntel"),
       "⌘[",
     );
     assert.strictEqual(
-      shortcutLabelForCommand(DEFAULT_BINDINGS, "sidebar.thread.next", "Linux"),
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "sidebar.history.next", "Linux"),
       "Ctrl+]",
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "sidebar.thread.previous", "Linux"),
+      "Alt+Up",
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "sidebar.project.next", "MacIntel"),
+      "⌥⇧Down",
     );
     assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "editor.openFavorite", "Linux"),
@@ -311,16 +339,47 @@ describe("chat/editor shortcuts", () => {
     );
   });
 
-  it("matches sidebar thread navigation shortcuts", () => {
+  it("matches sidebar history shortcuts", () => {
     assert.isTrue(
-      isSidebarThreadPreviousShortcut(event({ key: "[", metaKey: true }), DEFAULT_BINDINGS, {
+      isSidebarHistoryPreviousShortcut(event({ key: "[", metaKey: true }), DEFAULT_BINDINGS, {
         platform: "MacIntel",
       }),
     );
     assert.isTrue(
-      isSidebarThreadNextShortcut(event({ key: "]", ctrlKey: true }), DEFAULT_BINDINGS, {
+      isSidebarHistoryNextShortcut(event({ key: "]", ctrlKey: true }), DEFAULT_BINDINGS, {
         platform: "Linux",
       }),
+    );
+  });
+
+  it("matches sidebar thread and project navigation shortcuts", () => {
+    assert.isTrue(
+      isSidebarThreadPreviousShortcut(event({ key: "ArrowUp", altKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+      }),
+    );
+    assert.isTrue(
+      isSidebarThreadNextShortcut(event({ key: "ArrowDown", altKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+      }),
+    );
+    assert.isTrue(
+      isSidebarProjectPreviousShortcut(
+        event({ key: "ArrowUp", altKey: true, shiftKey: true }),
+        DEFAULT_BINDINGS,
+        {
+          platform: "Linux",
+        },
+      ),
+    );
+    assert.isTrue(
+      isSidebarProjectNextShortcut(
+        event({ key: "ArrowDown", altKey: true, shiftKey: true }),
+        DEFAULT_BINDINGS,
+        {
+          platform: "MacIntel",
+        },
+      ),
     );
   });
 });
@@ -404,13 +463,29 @@ describe("resolveShortcutCommand", () => {
       resolveShortcutCommand(event({ key: "[", metaKey: true }), DEFAULT_BINDINGS, {
         platform: "MacIntel",
       }),
-      "sidebar.thread.previous",
+      "sidebar.history.previous",
     );
     assert.strictEqual(
       resolveShortcutCommand(event({ key: "]", ctrlKey: true }), DEFAULT_BINDINGS, {
         platform: "Linux",
       }),
-      "sidebar.thread.next",
+      "sidebar.history.next",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "ArrowUp", altKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+      }),
+      "sidebar.thread.previous",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "ArrowDown", altKey: true, shiftKey: true }),
+        DEFAULT_BINDINGS,
+        {
+          platform: "MacIntel",
+        },
+      ),
+      "sidebar.project.next",
     );
   });
 });

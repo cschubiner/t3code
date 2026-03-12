@@ -41,17 +41,29 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedDiffToggle.command, "diff.toggle");
 
-    const parsedPrevious = yield* decode(KeybindingRule, {
+    const parsedHistoryPrevious = yield* decode(KeybindingRule, {
       key: "mod+[",
+      command: "sidebar.history.previous",
+    });
+    assert.strictEqual(parsedHistoryPrevious.command, "sidebar.history.previous");
+
+    const parsedHistoryNext = yield* decode(KeybindingRule, {
+      key: "mod+]",
+      command: "sidebar.history.next",
+    });
+    assert.strictEqual(parsedHistoryNext.command, "sidebar.history.next");
+
+    const parsedThreadPrevious = yield* decode(KeybindingRule, {
+      key: "alt+arrowup",
       command: "sidebar.thread.previous",
     });
-    assert.strictEqual(parsedPrevious.command, "sidebar.thread.previous");
+    assert.strictEqual(parsedThreadPrevious.command, "sidebar.thread.previous");
 
-    const parsedNext = yield* decode(KeybindingRule, {
-      key: "mod+]",
-      command: "sidebar.thread.next",
+    const parsedProjectNext = yield* decode(KeybindingRule, {
+      key: "alt+shift+arrowdown",
+      command: "sidebar.project.next",
     });
-    assert.strictEqual(parsedNext.command, "sidebar.thread.next");
+    assert.strictEqual(parsedProjectNext.command, "sidebar.project.next");
 
     const parsedLocal = yield* decode(KeybindingRule, {
       key: "mod+shift+n",
