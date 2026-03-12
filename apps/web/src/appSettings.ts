@@ -3,8 +3,10 @@ import { Option, Schema } from "effect";
 import {
   DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   ModelSelection,
+  type ProviderKind,
   type ProviderStartOptions,
 } from "@t3tools/contracts";
+import { getModelOptions } from "@t3tools/shared/model";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import { EnvMode } from "./components/BranchToolbar.logic";
 import { normalizeCustomModelSlugs } from "./modelSelection";
@@ -20,6 +22,22 @@ export const DEFAULT_SIDEBAR_PROJECT_SORT_ORDER: SidebarProjectSortOrder = "upda
 export const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at"]);
 export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
 export const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
+type CustomModelSettingsKey = "customCodexModels" | "customClaudeModels";
+export type ProviderCustomModelConfig = {
+  provider: ProviderKind;
+  settingsKey: CustomModelSettingsKey;
+  defaultSettingsKey: CustomModelSettingsKey;
+  title: string;
+  description: string;
+  placeholder: string;
+  example: string;
+};
+const MAX_SKILL_ROOT_COUNT = 32;
+const MAX_SKILL_ROOT_LENGTH = 4096;
+const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
+  codex: new Set(getModelOptions("codex").map((option) => option.slug)),
+  claudeAgent: new Set(getModelOptions("claudeAgent").map((option) => option.slug)),
+};
 
 const withDefaults =
   <
@@ -39,6 +57,9 @@ export const AppSettingsSchema = Schema.Struct({
   codexBinaryPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(withDefaults(() => "")),
   codexHomePath: Schema.String.check(Schema.isMaxLength(4096)).pipe(withDefaults(() => "")),
   defaultThreadEnvMode: EnvMode.pipe(withDefaults(() => "local" as const satisfies EnvMode)),
+  extraSkillRoots: Schema.Array(Schema.String.check(Schema.isMaxLength(MAX_SKILL_ROOT_LENGTH)))
+    .pipe(withDefaults(() => []))
+    .check(Schema.isMaxLength(MAX_SKILL_ROOT_COUNT)),
   confirmThreadDelete: Schema.Boolean.pipe(withDefaults(() => true)),
   diffWordWrap: Schema.Boolean.pipe(withDefaults(() => false)),
   enableAssistantStreaming: Schema.Boolean.pipe(withDefaults(() => false)),
@@ -62,9 +83,30 @@ export type AppSettings = typeof AppSettingsSchema.Type;
 
 const DEFAULT_APP_SETTINGS = AppSettingsSchema.makeUnsafe({});
 
+export function normalizeSkillRootPaths(roots: Iterable<string | null | undefined>): string[] {
+  const normalizedRoots: string[] = [];
+  const seen = new Set<string>();
+
+  for (const candidate of roots) {
+    const normalized = candidate?.trim();
+    if (!normalized || normalized.length > MAX_SKILL_ROOT_LENGTH || seen.has(normalized)) {
+      continue;
+    }
+
+    seen.add(normalized);
+    normalizedRoots.push(normalized);
+    if (normalizedRoots.length >= MAX_SKILL_ROOT_COUNT) {
+      break;
+    }
+  }
+
+  return normalizedRoots;
+}
+
 function normalizeAppSettings(settings: AppSettings): AppSettings {
   return {
     ...settings,
+    extraSkillRoots: normalizeSkillRootPaths(settings.extraSkillRoots),
     customCodexModels: normalizeCustomModelSlugs(settings.customCodexModels, "codex"),
     customClaudeModels: normalizeCustomModelSlugs(settings.customClaudeModels, "claudeAgent"),
   };
@@ -103,7 +145,14 @@ export function useAppSettings() {
 
   const updateSettings = useCallback(
     (patch: Partial<AppSettings>) => {
-      setSettings((prev) => normalizeAppSettings({ ...prev, ...patch }));
+      setSettings((prev) =>
+        normalizeAppSettings(
+          Schema.decodeSync(AppSettingsSchema)({
+            ...prev,
+            ...patch,
+          }),
+        ),
+      );
     },
     [setSettings],
   );
