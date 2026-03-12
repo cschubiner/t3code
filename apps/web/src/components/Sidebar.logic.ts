@@ -46,6 +46,10 @@ type ThreadStatusInput = Pick<
 >;
 
 export type SidebarNavigationDirection = "previous" | "next";
+export interface SidebarProjectNavigationTarget {
+  projectId: Project["id"];
+  threadId: ThreadId;
+}
 
 export function visibleThreadsForSidebar(input: {
   projectThreads: readonly Thread[];
@@ -117,6 +121,58 @@ export function resolveSidebarThreadNavigationTarget(input: {
   }
 
   return orderedVisibleThreadIds[currentIndex + 1] ?? null;
+}
+
+export function projectNavigationTargetsForSidebar(input: {
+  projects: readonly Project[];
+  threads: readonly Thread[];
+  threadSortOrder: SidebarThreadSortOrder;
+}): SidebarProjectNavigationTarget[] {
+  const targets: SidebarProjectNavigationTarget[] = [];
+
+  for (const project of input.projects) {
+    const newestThread = sortThreadsForSidebar(
+      input.threads.filter((thread) => thread.projectId === project.id),
+      input.threadSortOrder,
+    )[0];
+    if (!newestThread) continue;
+    targets.push({
+      projectId: project.id,
+      threadId: newestThread.id,
+    });
+  }
+
+  return targets;
+}
+
+export function resolveSidebarProjectNavigationTarget(input: {
+  orderedProjectTargets: readonly SidebarProjectNavigationTarget[];
+  currentProjectId: Project["id"] | null;
+  direction: SidebarNavigationDirection;
+}): SidebarProjectNavigationTarget | null {
+  const { orderedProjectTargets, currentProjectId, direction } = input;
+  if (orderedProjectTargets.length === 0) return null;
+
+  if (currentProjectId === null) {
+    return direction === "next"
+      ? (orderedProjectTargets[0] ?? null)
+      : (orderedProjectTargets.at(-1) ?? null);
+  }
+
+  const currentIndex = orderedProjectTargets.findIndex(
+    (target) => target.projectId === currentProjectId,
+  );
+  if (currentIndex === -1) {
+    return direction === "next"
+      ? (orderedProjectTargets[0] ?? null)
+      : (orderedProjectTargets.at(-1) ?? null);
+  }
+
+  if (direction === "previous") {
+    return orderedProjectTargets[currentIndex - 1] ?? null;
+  }
+
+  return orderedProjectTargets[currentIndex + 1] ?? null;
 }
 
 export function isTypingInSidebarTextEntry(target: EventTarget | null): boolean {

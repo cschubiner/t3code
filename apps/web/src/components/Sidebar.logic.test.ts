@@ -5,8 +5,10 @@ import {
   getVisibleThreadsForProject,
   getProjectSortTimestamp,
   hasUnseenCompletion,
+  projectNavigationTargetsForSidebar,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadEnvMode,
+  resolveSidebarProjectNavigationTarget,
   resolveSidebarThreadNavigationTarget,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
@@ -302,6 +304,79 @@ describe("resolveSidebarThreadNavigationTarget", () => {
         direction: "previous",
       }),
     ).toBe(THREAD_B1);
+  });
+});
+
+describe("projectNavigationTargetsForSidebar", () => {
+  const projects = [
+    makeNavigationProject(PROJECT_A, "alpha"),
+    makeNavigationProject(PROJECT_B, "beta"),
+    makeNavigationProject(ProjectId.makeUnsafe("project-empty"), "empty"),
+  ] as const;
+  const threads = [
+    makeNavigationThread(THREAD_A1, PROJECT_A, "2026-03-09T10:01:00.000Z"),
+    makeNavigationThread(THREAD_A2, PROJECT_A, "2026-03-09T10:02:00.000Z"),
+    makeNavigationThread(THREAD_B1, PROJECT_B, "2026-03-09T11:01:00.000Z"),
+  ] as const;
+
+  it("returns newest thread targets in project order and skips empty projects", () => {
+    expect(
+      projectNavigationTargetsForSidebar({
+        projects,
+        threads,
+        threadSortOrder: "created_at",
+      }),
+    ).toEqual([
+      { projectId: PROJECT_A, threadId: THREAD_A2 },
+      { projectId: PROJECT_B, threadId: THREAD_B1 },
+    ]);
+  });
+});
+
+describe("resolveSidebarProjectNavigationTarget", () => {
+  const orderedProjectTargets = [
+    { projectId: PROJECT_A, threadId: THREAD_A2 },
+    { projectId: PROJECT_B, threadId: THREAD_B1 },
+  ] as const;
+
+  it("moves to the previous project from the middle", () => {
+    expect(
+      resolveSidebarProjectNavigationTarget({
+        orderedProjectTargets,
+        currentProjectId: PROJECT_B,
+        direction: "previous",
+      }),
+    ).toEqual({ projectId: PROJECT_A, threadId: THREAD_A2 });
+  });
+
+  it("returns null at the previous boundary", () => {
+    expect(
+      resolveSidebarProjectNavigationTarget({
+        orderedProjectTargets,
+        currentProjectId: PROJECT_A,
+        direction: "previous",
+      }),
+    ).toBeNull();
+  });
+
+  it("falls back to the first project when there is no active project", () => {
+    expect(
+      resolveSidebarProjectNavigationTarget({
+        orderedProjectTargets,
+        currentProjectId: null,
+        direction: "next",
+      }),
+    ).toEqual({ projectId: PROJECT_A, threadId: THREAD_A2 });
+  });
+
+  it("falls back to the last project when the active project is missing", () => {
+    expect(
+      resolveSidebarProjectNavigationTarget({
+        orderedProjectTargets,
+        currentProjectId: ProjectId.makeUnsafe("project-missing"),
+        direction: "previous",
+      }),
+    ).toEqual({ projectId: PROJECT_B, threadId: THREAD_B1 });
   });
 });
 
