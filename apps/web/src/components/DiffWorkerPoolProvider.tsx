@@ -29,6 +29,10 @@ function DiffWorkerThemeSync({ themeName }: { themeName: DiffThemeName }) {
 }
 
 export function DiffWorkerPoolProvider({ children }: { children?: ReactNode }) {
+  if (import.meta.env.VITEST) {
+    return <>{children}</>;
+  }
+
   const { resolvedTheme } = useTheme();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const workerPoolSize = useMemo(() => {

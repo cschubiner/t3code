@@ -209,6 +209,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           message_id AS "messageId",
           thread_id AS "threadId",
+          sort_order AS "sortOrder",
           text,
           attachments_json AS "attachments",
           provider,
@@ -221,7 +222,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           queued_at AS "queuedAt"
         FROM projection_thread_queued_turns
-        ORDER BY thread_id ASC, queued_at ASC, message_id ASC
+        ORDER BY thread_id ASC, sort_order ASC, queued_at ASC, message_id ASC
       `,
   });
 
