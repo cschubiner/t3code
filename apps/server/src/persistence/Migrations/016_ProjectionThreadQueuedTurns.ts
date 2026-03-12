@@ -8,6 +8,7 @@ export default Effect.gen(function* () {
     CREATE TABLE IF NOT EXISTS projection_thread_queued_turns (
       message_id TEXT PRIMARY KEY,
       thread_id TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
       text TEXT NOT NULL,
       attachments_json TEXT NOT NULL,
       provider TEXT,
@@ -24,6 +25,6 @@ export default Effect.gen(function* () {
 
   yield* sql`
     CREATE INDEX IF NOT EXISTS idx_projection_thread_queued_turns_thread_queued
-    ON projection_thread_queued_turns(thread_id, queued_at)
+    ON projection_thread_queued_turns(thread_id, sort_order, queued_at)
   `;
 });
