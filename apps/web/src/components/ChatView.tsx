@@ -158,6 +158,7 @@ import {
   SendPhase,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import QueuedFollowUpsPanel from "./QueuedFollowUpsPanel";
 
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
@@ -173,19 +174,6 @@ const EMPTY_QUEUED_TURNS: ThreadQueuedTurn[] = [];
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
-
-function summarizeQueuedTurn(turn: ThreadQueuedTurn): string {
-  const trimmed = turn.text.trim();
-  if (trimmed.length > 0) {
-    return trimmed;
-  }
-  if (turn.attachments.length > 0) {
-    return turn.attachments.length === 1
-      ? "1 image attachment"
-      : `${turn.attachments.length} image attachments`;
-  }
-  return "Queued follow-up";
-}
 
 interface ChatViewProps {
   threadId: ThreadId;
@@ -256,6 +244,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [pendingQueuedTurnMessageId, setPendingQueuedTurnMessageId] = useState<MessageId | null>(
     null,
   );
+  const [pendingQueueAction, setPendingQueueAction] = useState<{
+    kind: "send-now" | "mutate";
+    messageId: MessageId | null;
+  } | null>(null);
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
   const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
@@ -2075,30 +2067,175 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const removeQueuedTurnFromServer = useCallback(
     async (messageId: MessageId) => {
       const api = readNativeApi();
-      if (!api || !activeThread || !isServerThread) {
+      if (!api || !activeThread || !isServerThread || pendingQueueAction !== null) {
         return;
       }
 
-      await api.orchestration.dispatchCommand({
-        type: "thread.turn.queue.remove",
-        commandId: newCommandId(),
-        threadId: activeThread.id,
+      setPendingQueueAction({
+        kind: "mutate",
         messageId,
-        createdAt: new Date().toISOString(),
       });
+
+      await api.orchestration
+        .dispatchCommand({
+          type: "thread.turn.queue.remove",
+          commandId: newCommandId(),
+          threadId: activeThread.id,
+          messageId,
+          createdAt: new Date().toISOString(),
+        })
+        .catch((err: unknown) => {
+          setThreadError(
+            activeThread.id,
+            err instanceof Error ? err.message : "Failed to remove queued follow-up.",
+          );
+        })
+        .finally(() => {
+          setPendingQueueAction((current) =>
+            current?.kind === "mutate" && current?.messageId === messageId ? null : current,
+          );
+        });
     },
-    [activeThread, isServerThread],
+    [activeThread, isServerThread, pendingQueueAction, setThreadError],
+  );
+
+  const updateQueuedTurnOnServer = useCallback(
+    async (messageId: MessageId, text: string) => {
+      const api = readNativeApi();
+      if (!api || !activeThread || !isServerThread || pendingQueueAction !== null) {
+        return;
+      }
+
+      const queuedTurn = queuedTurns.find((entry) => entry.messageId === messageId);
+      if (!queuedTurn) {
+        return;
+      }
+
+      const trimmed = text.trim();
+      if (!trimmed && queuedTurn.attachments.length === 0) {
+        return;
+      }
+
+      setPendingQueueAction({
+        kind: "mutate",
+        messageId,
+      });
+
+      await api.orchestration
+        .dispatchCommand({
+          type: "thread.turn.queue.update",
+          commandId: newCommandId(),
+          threadId: activeThread.id,
+          messageId,
+          text: trimmed,
+          createdAt: new Date().toISOString(),
+        })
+        .catch((err: unknown) => {
+          setThreadError(
+            activeThread.id,
+            err instanceof Error ? err.message : "Failed to update queued follow-up.",
+          );
+        })
+        .finally(() => {
+          setPendingQueueAction((current) =>
+            current?.kind === "mutate" && current?.messageId === messageId ? null : current,
+          );
+        });
+    },
+    [activeThread, isServerThread, pendingQueueAction, queuedTurns, setThreadError],
+  );
+
+  const moveQueuedTurnOnServer = useCallback(
+    async (messageId: MessageId, targetMessageId: MessageId) => {
+      const api = readNativeApi();
+      if (
+        !api ||
+        !activeThread ||
+        !isServerThread ||
+        pendingQueueAction !== null ||
+        messageId === targetMessageId
+      ) {
+        return;
+      }
+
+      setPendingQueueAction({
+        kind: "mutate",
+        messageId,
+      });
+
+      await api.orchestration
+        .dispatchCommand({
+          type: "thread.turn.queue.move",
+          commandId: newCommandId(),
+          threadId: activeThread.id,
+          messageId,
+          targetMessageId,
+          createdAt: new Date().toISOString(),
+        })
+        .catch((err: unknown) => {
+          setThreadError(
+            activeThread.id,
+            err instanceof Error ? err.message : "Failed to reorder queued follow-up.",
+          );
+        })
+        .finally(() => {
+          setPendingQueueAction((current) =>
+            current?.kind === "mutate" && current?.messageId === messageId ? null : current,
+          );
+        });
+    },
+    [activeThread, isServerThread, pendingQueueAction, setThreadError],
+  );
+
+  const sendQueuedTurnNow = useCallback(
+    async (messageId: MessageId) => {
+      const api = readNativeApi();
+      if (!api || !activeThread || !isServerThread || pendingQueueAction !== null) {
+        return;
+      }
+
+      setPendingQueueAction({
+        kind: "send-now",
+        messageId,
+      });
+
+      await api.orchestration
+        .dispatchCommand({
+          type: "thread.turn.queue.send-now",
+          commandId: newCommandId(),
+          threadId: activeThread.id,
+          messageId,
+          createdAt: new Date().toISOString(),
+        })
+        .catch((err: unknown) => {
+          setThreadError(
+            activeThread.id,
+            err instanceof Error ? err.message : "Failed to send queued follow-up now.",
+          );
+        })
+        .finally(() => {
+          setPendingQueueAction((current) =>
+            current?.kind === "send-now" && current?.messageId === messageId ? null : current,
+          );
+        });
+    },
+    [activeThread, isServerThread, pendingQueueAction, setThreadError],
   );
 
   const clearQueuedTurnsFromServer = useCallback(async () => {
-    if (!activeThread || !isServerThread || queuedTurns.length === 0) {
+    if (
+      !activeThread ||
+      !isServerThread ||
+      queuedTurns.length === 0 ||
+      pendingQueueAction !== null
+    ) {
       return;
     }
 
     for (const queuedTurn of queuedTurns) {
       await removeQueuedTurnFromServer(queuedTurn.messageId);
     }
-  }, [activeThread, isServerThread, queuedTurns, removeQueuedTurnFromServer]);
+  }, [activeThread, isServerThread, pendingQueueAction, queuedTurns, removeQueuedTurnFromServer]);
 
   useEffect(() => {
     if (!activeThreadId) return;
@@ -3466,40 +3603,27 @@ export default function ChatView({ threadId }: ChatViewProps) {
               className="mx-auto w-full min-w-0 max-w-3xl"
               data-chat-composer-form="true"
             >
-              {queuedTurns.length > 0 && (
-                <div className="border-b border-border/65 bg-muted/15 px-3 py-2 sm:px-4">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant="secondary" className="rounded-full">
-                      {queuedTurns.length === 1
-                        ? "1 queued follow-up"
-                        : `${queuedTurns.length} queued follow-ups`}
-                    </Badge>
-                    <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground/80">
-                      Next: {summarizeQueuedTurn(queuedTurns[0]!)}
-                    </p>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 rounded-full px-3 text-xs"
-                      onClick={() => void removeQueuedTurnFromServer(queuedTurns[0]!.messageId)}
-                    >
-                      Remove next
-                    </Button>
-                    {queuedTurns.length > 1 ? (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 rounded-full px-3 text-xs"
-                        onClick={() => void clearQueuedTurnsFromServer()}
-                      >
-                        Clear all
-                      </Button>
-                    ) : null}
-                  </div>
-                </div>
-              )}
+              <QueuedFollowUpsPanel
+                queuedTurns={queuedTurns}
+                busyQueuedTurnId={
+                  pendingQueueAction?.kind === "send-now" ? pendingQueueAction.messageId : null
+                }
+                isQueueInteractionDisabled={
+                  pendingQueueAction !== null || pendingQueuedTurnMessageId !== null
+                }
+                onDelete={(messageId) => void removeQueuedTurnFromServer(messageId as MessageId)}
+                onClearAll={() => void clearQueuedTurnsFromServer()}
+                onSaveEdit={(messageId, text) =>
+                  void updateQueuedTurnOnServer(messageId as MessageId, text)
+                }
+                onSendNow={(messageId) => void sendQueuedTurnNow(messageId as MessageId)}
+                onReorder={(activeMessageId, targetMessageId) =>
+                  void moveQueuedTurnOnServer(
+                    activeMessageId as MessageId,
+                    targetMessageId as MessageId,
+                  )
+                }
+              />
 
               <div
                 className={cn(
@@ -3507,7 +3631,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   hasComposerHeader ? "pt-2.5 sm:pt-3" : "pt-3.5 sm:pt-4",
                 )}
               >
-            >
               <div
                 className={`group rounded-[20px] border bg-card transition-colors duration-200 focus-within:border-ring/45 ${
                   isDragOverComposer ? "border-primary/70 bg-accent/30" : "border-border"
