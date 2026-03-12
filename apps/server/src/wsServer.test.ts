@@ -1726,6 +1726,7 @@ describe("WebSocket Server", () => {
 
   it("supports skills.search", async () => {
     const workspace = makeTempDir("t3code-ws-skills-");
+    const codexHome = makeTempDir("t3code-ws-skills-home-");
     const skillRoot = path.join(workspace, ".codex", "skills", "slackcli");
     fs.mkdirSync(skillRoot, { recursive: true });
     fs.writeFileSync(
@@ -1745,6 +1746,7 @@ describe("WebSocket Server", () => {
       cwd: workspace,
       query: "slack",
       limit: 10,
+      codexHomePath: codexHome,
     });
     expect(response.error).toBeUndefined();
     expect(response.result).toEqual({
