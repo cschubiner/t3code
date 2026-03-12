@@ -394,6 +394,49 @@ describe("wsNativeApi", () => {
     });
   });
 
+  it("forwards Codex import methods to websocket transport", async () => {
+    requestMock
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce({
+        sessionId: "session-1",
+        title: "Session",
+        cwd: "/tmp/project",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        model: "gpt-5-codex",
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        kind: "direct",
+        transcriptAvailable: true,
+        transcriptError: null,
+        alreadyImported: false,
+        importedThreadId: null,
+        messages: [],
+      })
+      .mockResolvedValueOnce({
+        results: [],
+      });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.codexImport.listSessions({ kind: "direct", days: 30, limit: 50 });
+    await api.codexImport.peekSession({ sessionId: "session-1", messageCount: 10 });
+    await api.codexImport.importSessions({ sessionIds: ["session-1"] });
+
+    expect(requestMock).toHaveBeenNthCalledWith(1, WS_METHODS.codexImportListSessions, {
+      kind: "direct",
+      days: 30,
+      limit: 50,
+    });
+    expect(requestMock).toHaveBeenNthCalledWith(2, WS_METHODS.codexImportPeekSession, {
+      sessionId: "session-1",
+      messageCount: 10,
+    });
+    expect(requestMock).toHaveBeenNthCalledWith(3, WS_METHODS.codexImportImportSessions, {
+      sessionIds: ["session-1"],
+    });
+  });
+
   it("forwards context menu metadata to desktop bridge", async () => {
     const showContextMenu = vi.fn().mockResolvedValue("delete");
     Object.defineProperty(getWindowForTest(), "desktopBridge", {

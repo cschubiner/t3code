@@ -180,6 +180,11 @@ export function createWsNativeApi(): NativeApi {
       getConfig: () => transport.request(WS_METHODS.serverGetConfig),
       upsertKeybinding: (input) => transport.request(WS_METHODS.serverUpsertKeybinding, input),
     },
+    codexImport: {
+      listSessions: (input) => transport.request(WS_METHODS.codexImportListSessions, input),
+      peekSession: (input) => transport.request(WS_METHODS.codexImportPeekSession, input),
+      importSessions: (input) => transport.request(WS_METHODS.codexImportImportSessions, input),
+    },
     orchestration: {
       getSnapshot: () => transport.request(ORCHESTRATION_WS_METHODS.getSnapshot),
       dispatchCommand: (command) =>

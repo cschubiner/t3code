@@ -169,6 +169,99 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.import": {
+      yield* requireProject({
+        readModel,
+        command,
+        projectId: command.projectId,
+      });
+      yield* requireThreadAbsent({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+
+      const createdEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.created",
+        payload: {
+          threadId: command.threadId,
+          projectId: command.projectId,
+          title: command.title,
+          model: command.model,
+          runtimeMode: command.runtimeMode,
+          interactionMode: command.interactionMode,
+          branch: command.branch,
+          worktreePath: command.worktreePath,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+
+      const messageEvents: ReadonlyArray<Omit<OrchestrationEvent, "sequence">> =
+        command.messages.map((message) => ({
+          ...withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: message.updatedAt,
+            commandId: command.commandId,
+          }),
+          type: "thread.message-sent",
+          payload: {
+            threadId: command.threadId,
+            messageId: message.messageId,
+            role: message.role,
+            text: message.text,
+            turnId: null,
+            streaming: false,
+            createdAt: message.createdAt,
+            updatedAt: message.updatedAt,
+          },
+        }));
+
+      const importedCount = command.messages.length;
+      const summary =
+        importedCount === 1
+          ? `Imported 1 message from Codex ${command.source.kind} session`
+          : `Imported ${String(importedCount)} messages from Codex ${command.source.kind} session`;
+      const activityEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.activity-appended",
+        payload: {
+          threadId: command.threadId,
+          activity: {
+            id: crypto.randomUUID() as OrchestrationEvent["eventId"],
+            tone: "info",
+            kind: "codex.imported",
+            summary,
+            payload: {
+              provider: command.source.provider,
+              sessionId: command.source.sessionId,
+              kind: command.source.kind,
+              originalCwd: command.source.originalCwd,
+              sourceCreatedAt: command.source.sourceCreatedAt,
+              sourceUpdatedAt: command.source.sourceUpdatedAt,
+              importedMessageCount: importedCount,
+            },
+            turnId: null,
+            createdAt: command.createdAt,
+          },
+        },
+      };
+
+      return [createdEvent, ...messageEvents, activityEvent];
+    }
+
     case "thread.delete": {
       yield* requireThread({
         readModel,
