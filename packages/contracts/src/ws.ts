@@ -82,6 +82,7 @@ export const WS_METHODS = {
 
   // Server meta
   serverGetConfig: "server.getConfig",
+  serverGenerateSecretUrl: "server.generateSecretUrl",
   serverUpsertKeybinding: "server.upsertKeybinding",
 
   // Codex import
@@ -153,6 +154,7 @@ const WebSocketRequestBody = Schema.Union([
 
   // Server meta
   tagRequestBody(WS_METHODS.serverGetConfig, Schema.Struct({})),
+  tagRequestBody(WS_METHODS.serverGenerateSecretUrl, ServerGenerateSecretUrlInput),
   tagRequestBody(WS_METHODS.serverUpsertKeybinding, KeybindingRule),
 
   // Codex import

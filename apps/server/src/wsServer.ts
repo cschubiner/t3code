@@ -7,6 +7,7 @@
  * @module Server
  */
 import http from "node:http";
+import os from "node:os";
 import type { Duplex } from "node:stream";
 
 import Mime from "@effect/platform-node/Mime";
@@ -43,7 +44,7 @@ import {
   Stream,
   Struct,
 } from "effect";
-import { WebSocketServer, type WebSocket } from "ws";
+import { WebSocket as NodeWebSocket, WebSocketServer, type WebSocket } from "ws";
 
 import { createLogger } from "./logger";
 import { GitManager } from "./git/Services/GitManager.ts";
@@ -159,6 +160,109 @@ function toPosixRelativePath(input: string): string {
   return input.replaceAll("\\", "/");
 }
 
+function formatHostForUrl(host: string): string {
+  return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+}
+
+const SECRET_LINK_PATH = "/auth/exchange";
+const SECRET_LINK_QUERY_PARAM = "code";
+const AUTH_SESSION_COOKIE_NAME = "t3_access_session";
+const SECRET_LINK_TTL_MS = 15 * 60 * 1_000;
+const AUTH_SESSION_TTL_MS = 12 * 60 * 60 * 1_000;
+
+interface SecretAccessGrant {
+  readonly expiresAt: number;
+  readonly redirectTo: string;
+}
+
+interface AuthSession {
+  readonly expiresAt: number;
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = hostname.trim().toLowerCase();
+  return (
+    normalized === "localhost" ||
+    normalized === "127.0.0.1" ||
+    normalized === "::1" ||
+    normalized === "[::1]"
+  );
+}
+
+function isWildcardHost(host: string | undefined): boolean {
+  return host === undefined || host === "0.0.0.0" || host === "::" || host === "[::]";
+}
+
+function collectPublicOrigins(
+  port: number,
+  host: string | undefined,
+  remoteAccessOrigin: string | undefined,
+): string[] {
+  const origins = new Set<string>();
+
+  if (remoteAccessOrigin && remoteAccessOrigin.trim().length > 0) {
+    origins.add(remoteAccessOrigin.trim());
+  }
+
+  const addOrigin = (hostname: string) => {
+    const normalized = hostname.trim();
+    if (normalized.length === 0) return;
+    origins.add(`http://${formatHostForUrl(normalized)}:${port}`);
+  };
+
+  if (host && !isWildcardHost(host)) {
+    addOrigin(host);
+    if (isLoopbackHostname(host)) {
+      addOrigin("localhost");
+      addOrigin("127.0.0.1");
+    }
+  } else {
+    addOrigin("localhost");
+    addOrigin("127.0.0.1");
+
+    const interfaces = os.networkInterfaces();
+    for (const addresses of Object.values(interfaces)) {
+      for (const address of addresses ?? []) {
+        if (address.internal) continue;
+        if (address.family !== "IPv4") continue;
+        addOrigin(address.address);
+      }
+    }
+  }
+
+  return Array.from(origins);
+}
+
+function parseCookies(header: string | undefined): Map<string, string> {
+  const cookies = new Map<string, string>();
+  if (!header) {
+    return cookies;
+  }
+
+  for (const segment of header.split(";")) {
+    const separatorIndex = segment.indexOf("=");
+    if (separatorIndex <= 0) continue;
+    const key = segment.slice(0, separatorIndex).trim();
+    const value = segment.slice(separatorIndex + 1).trim();
+    if (key.length === 0 || value.length === 0) continue;
+    try {
+      cookies.set(key, decodeURIComponent(value));
+    } catch {
+      cookies.set(key, value);
+    }
+  }
+
+  return cookies;
+}
+
+function resolveRedirectTarget(raw: string | null): string {
+  if (!raw) {
+    return "/";
+  }
+
+  return raw.startsWith("/") && !raw.startsWith("//") ? raw : "/";
+}
+
 function resolveWorkspaceWritePath(params: {
   workspaceRoot: string;
   relativePath: string;
@@ -247,6 +351,8 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     staticDir,
     devUrl,
     authToken,
+    remoteAccessOrigin,
+    upstreamWsUrl,
     host,
     logWebSocketEvents,
     autoBootstrapProjectFromCwd,
@@ -275,8 +381,26 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const providerStatuses = yield* providerHealth.getStatuses;
 
   const clients = yield* Ref.make(new Set<WebSocket>());
+  const secretAccessGrants = new Map<string, SecretAccessGrant>();
+  const authSessions = new Map<string, AuthSession>();
   const logger = createLogger("ws");
   const readiness = yield* makeServerReadiness;
+
+  const pruneExpiredAuthEntries = () => {
+    const now = Date.now();
+
+    for (const [code, grant] of secretAccessGrants) {
+      if (grant.expiresAt <= now) {
+        secretAccessGrants.delete(code);
+      }
+    }
+
+    for (const [token, session] of authSessions) {
+      if (session.expiresAt <= now) {
+        authSessions.delete(token);
+      }
+    }
+  };
 
   function logOutgoingPush(push: WsPushEnvelopeBase, recipients: number) {
     if (!logWebSocketEvents) return;
@@ -701,6 +825,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     ServerRuntimeServices | ServerConfig | FileSystem.FileSystem | Path.Path
   >();
   const runPromise = Effect.runPromiseWith(runtimeServices);
+  const upstreamProxyUrl = upstreamWsUrl?.trim() ? upstreamWsUrl.trim() : undefined;
 
   const unsubscribeTerminalEvents = yield* terminalManager.subscribe(
     (event) => void Effect.runPromise(pushBus.publishAll(WS_CHANNELS.terminalEvent, event)),
