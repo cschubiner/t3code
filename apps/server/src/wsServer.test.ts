@@ -1680,6 +1680,41 @@ describe("WebSocket Server", () => {
     });
   });
 
+  it("supports skills.search", async () => {
+    const workspace = makeTempDir("t3code-ws-skills-");
+    const skillRoot = path.join(workspace, ".codex", "skills", "slackcli");
+    fs.mkdirSync(skillRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(skillRoot, "SKILL.md"),
+      "---\nname: SlackCLI\ndescription: Slack CLI workflow\n---\n",
+      "utf8",
+    );
+
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const [ws] = await connectAndAwaitWelcome(port);
+    connections.push(ws);
+
+    const response = await sendRequest(ws, WS_METHODS.skillsSearch, {
+      cwd: workspace,
+      query: "slack",
+      limit: 10,
+    });
+    expect(response.error).toBeUndefined();
+    expect(response.result).toEqual({
+      skills: [
+        expect.objectContaining({
+          name: "slackcli",
+          description: "Slack CLI workflow",
+          source: "workspace",
+        }),
+      ],
+      truncated: false,
+    });
+  });
+
   it("supports projects.writeFile within the workspace root", async () => {
     const workspace = makeTempDir("t3code-ws-write-file-");
 
