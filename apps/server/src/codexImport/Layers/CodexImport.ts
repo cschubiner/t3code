@@ -54,6 +54,11 @@ interface CodexThreadRow {
   readonly archived: number | null;
 }
 
+type RawCodexThreadRow = Omit<CodexThreadRow, "updatedAt" | "createdAt"> & {
+  readonly updatedAt: unknown;
+  readonly createdAt: unknown;
+};
+
 interface CodexHomeResolution {
   readonly homePath: string;
   readonly databasePath: string;
@@ -143,6 +148,41 @@ function resolveRolloutPath(homePath: string, rolloutPath: string | null): strin
   return path.isAbsolute(rolloutPath) ? rolloutPath : path.join(homePath, rolloutPath);
 }
 
+function normalizeTimestamp(value: unknown): string | null {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      return null;
+    }
+    return normalizeTimestamp(
+      /^-?\d+(?:\.\d+)?$/.test(trimmed) ? Number(trimmed) : new Date(trimmed),
+    );
+  }
+
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      return null;
+    }
+    const timestampMs = Math.abs(value) < 1_000_000_000_000 ? value * 1_000 : value;
+    const timestamp = new Date(timestampMs);
+    return Number.isFinite(timestamp.getTime()) ? timestamp.toISOString() : null;
+  }
+
+  if (value instanceof Date) {
+    return Number.isFinite(value.getTime()) ? value.toISOString() : null;
+  }
+
+  return null;
+}
+
+function normalizeThreadRow(row: RawCodexThreadRow): CodexThreadRow {
+  return {
+    ...row,
+    createdAt: normalizeTimestamp(row.createdAt),
+    updatedAt: normalizeTimestamp(row.updatedAt),
+  };
+}
+
 function openCodexDatabase(databasePath: string): DatabaseSync {
   return new DatabaseSync(databasePath, { readOnly: true });
 }
@@ -164,7 +204,7 @@ function readThreadRows(databasePath: string): CodexThreadRow[] {
       FROM threads
       ORDER BY updated_at DESC, created_at DESC, id DESC
     `);
-    return statement.all() as unknown as CodexThreadRow[];
+    return (statement.all() as RawCodexThreadRow[]).map(normalizeThreadRow);
   } finally {
     database.close();
   }
@@ -188,7 +228,8 @@ function readThreadRowById(databasePath: string, sessionId: string): CodexThread
       WHERE id = ?
       LIMIT 1
     `);
-    return (statement.get(sessionId) as CodexThreadRow | undefined) ?? null;
+    const row = (statement.get(sessionId) as RawCodexThreadRow | undefined) ?? null;
+    return row ? normalizeThreadRow(row) : null;
   } finally {
     database.close();
   }
