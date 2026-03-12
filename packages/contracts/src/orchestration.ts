@@ -532,6 +532,44 @@ const ThreadActivityAppendCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+export const ThreadImportMessage = Schema.Struct({
+  messageId: MessageId,
+  role: OrchestrationMessageRole,
+  text: Schema.String,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type ThreadImportMessage = typeof ThreadImportMessage.Type;
+
+export const ThreadImportSource = Schema.Struct({
+  provider: Schema.Literal("codex"),
+  sessionId: TrimmedNonEmptyString,
+  kind: Schema.Literals(["direct", "subagent-child", "orchestrator"]),
+  originalCwd: Schema.NullOr(TrimmedNonEmptyString),
+  sourceCreatedAt: Schema.NullOr(IsoDateTime),
+  sourceUpdatedAt: Schema.NullOr(IsoDateTime),
+});
+export type ThreadImportSource = typeof ThreadImportSource.Type;
+
+export const ThreadImportCommand = Schema.Struct({
+  type: Schema.Literal("thread.import"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  projectId: ProjectId,
+  title: TrimmedNonEmptyString,
+  model: TrimmedNonEmptyString,
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
+  ),
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  createdAt: IsoDateTime,
+  messages: Schema.Array(ThreadImportMessage),
+  source: ThreadImportSource,
+});
+export type ThreadImportCommand = typeof ThreadImportCommand.Type;
+
 const ThreadRevertCompleteCommand = Schema.Struct({
   type: Schema.Literal("thread.revert.complete"),
   commandId: CommandId,
@@ -547,6 +585,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadProposedPlanUpsertCommand,
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
+  ThreadImportCommand,
   ThreadRevertCompleteCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
