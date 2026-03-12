@@ -35,8 +35,17 @@ type ReactorInput =
 const serverCommandId = (tag: string): CommandId =>
   CommandId.makeUnsafe(`server:${tag}:${crypto.randomUUID()}`);
 
+function shouldPauseQueuedTurnDispatch(thread: OrchestrationThread): boolean {
+  const sessionStatus = thread.session?.status;
+  return sessionStatus === "error" || sessionStatus === "interrupted";
+}
+
 function canDispatchQueuedTurn(thread: OrchestrationThread): boolean {
   if (thread.deletedAt !== null) {
+    return false;
+  }
+
+  if (shouldPauseQueuedTurnDispatch(thread)) {
     return false;
   }
 
@@ -188,14 +197,14 @@ const make = Effect.gen(function* () {
             return;
           }
 
-          if (
-            status === "ready" ||
-            status === "error" ||
-            status === "interrupted" ||
-            status === "stopped"
-          ) {
+          if (status === "ready" || status === "error" || status === "interrupted") {
             yield* clearPromotionInFlight(threadId);
           }
+
+          if (status === "error" || status === "interrupted") {
+            return;
+          }
+
           yield* attemptDispatchNextQueuedTurn(threadId);
           return;
         }
@@ -249,7 +258,7 @@ const make = Effect.gen(function* () {
     yield* Effect.forEach(
       readModel.threads,
       (thread) =>
-        thread.queuedTurns.length === 0
+        thread.queuedTurns.length === 0 || shouldPauseQueuedTurnDispatch(thread)
           ? Effect.void
           : Queue.offer(queue, {
               source: "bootstrap",
