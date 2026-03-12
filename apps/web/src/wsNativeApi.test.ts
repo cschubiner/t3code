@@ -418,6 +418,31 @@ describe("wsNativeApi", () => {
     });
   });
 
+  it("forwards skill search requests to websocket transport", async () => {
+    requestMock.mockResolvedValue({
+      skills: [],
+      truncated: false,
+    });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.skills.search({
+      cwd: "/repo",
+      query: "slack",
+      limit: 10,
+      codexHomePath: "/Users/me/.codex",
+      extraRoots: ["/tmp/custom-skills"],
+    });
+
+    expect(requestMock).toHaveBeenCalledWith(WS_METHODS.skillsSearch, {
+      cwd: "/repo",
+      query: "slack",
+      limit: 10,
+      codexHomePath: "/Users/me/.codex",
+      extraRoots: ["/tmp/custom-skills"],
+    });
+  });
+
   it("forwards context menu metadata to desktop bridge", async () => {
     const showContextMenu = vi.fn().mockResolvedValue("delete");
     Object.defineProperty(getWindowForTest(), "desktopBridge", {

@@ -25,7 +25,12 @@ import type {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project";
-import type { ServerConfig } from "./server";
+import type { SkillSearchInput, SkillSearchResult } from "./skills";
+import type {
+  ServerConfig,
+  ServerGenerateSecretUrlInput,
+  ServerGenerateSecretUrlResult,
+} from "./server";
 import type {
   TerminalClearInput,
   TerminalCloseInput,
@@ -152,6 +157,9 @@ export interface NativeApi {
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
   };
+  skills: {
+    search: (input: SkillSearchInput) => Promise<SkillSearchResult>;
+  };
   shell: {
     openInEditor: (cwd: string, editor: EditorId) => Promise<void>;
     openExternal: (url: string) => Promise<void>;
@@ -182,6 +190,9 @@ export interface NativeApi {
   };
   server: {
     getConfig: () => Promise<ServerConfig>;
+    generateSecretUrl: (
+      input: ServerGenerateSecretUrlInput,
+    ) => Promise<ServerGenerateSecretUrlResult>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
   };
   codexImport: {

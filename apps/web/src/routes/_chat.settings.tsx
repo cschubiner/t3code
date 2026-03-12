@@ -42,6 +42,7 @@ import {
 import { SidebarTrigger } from "../components/ui/sidebar";
 import { Switch } from "../components/ui/switch";
 import { SidebarInset } from "../components/ui/sidebar";
+import { Textarea } from "../components/ui/textarea";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 import { cn } from "../lib/utils";
 import { ensureNativeApi, readNativeApi } from "../nativeApi";
@@ -198,6 +199,10 @@ function SettingResetButton({ label, onClick }: { label: string; onClick: () => 
     </Tooltip>
   );
 }
+
+function formatSkillRootsForTextarea(roots: readonly string[]): string {
+  return roots.join("\n");
+}
 function remoteAccessStateLabel(status: DesktopRemoteAccessStatus | null): string {
   switch (status?.state) {
     case "ready":
@@ -243,6 +248,7 @@ function SettingsRouteView() {
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
   const claudeBinaryPath = settings.claudeBinaryPath;
+  const extraSkillRoots = settings.extraSkillRoots;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
   const availableEditors = serverConfigQuery.data?.availableEditors;
 
@@ -281,6 +287,9 @@ function SettingsRouteView() {
     settings.claudeBinaryPath !== defaults.claudeBinaryPath ||
     settings.codexBinaryPath !== defaults.codexBinaryPath ||
     settings.codexHomePath !== defaults.codexHomePath;
+  const isSkillDiscoveryDirty =
+    settings.extraSkillRoots.length !== defaults.extraSkillRoots.length ||
+    settings.extraSkillRoots.some((root, index) => root !== defaults.extraSkillRoots[index]);
   const changedSettingLabels = [
     ...(theme !== "system" ? ["Theme"] : []),
     ...(settings.timestampFormat !== defaults.timestampFormat ? ["Time format"] : []),
@@ -296,6 +305,7 @@ function SettingsRouteView() {
     ...(settings.customCodexModels.length > 0 || settings.customClaudeModels.length > 0
       ? ["Custom models"]
       : []),
+    ...(isSkillDiscoveryDirty ? ["Skill discovery"] : []),
     ...(isInstallSettingsDirty ? ["Provider installs"] : []),
   ];
 
@@ -839,6 +849,60 @@ function SettingsRouteView() {
                   />
                 }
               />
+            </SettingsSection>
+
+            <SettingsSection title="Skill Discovery">
+              <SettingsRow
+                title="Extra skill roots"
+                description="Add extra skill roots outside your workspace and CODEX_HOME. Enter one absolute path per line."
+                resetAction={
+                  isSkillDiscoveryDirty ? (
+                    <SettingResetButton
+                      label="skill discovery"
+                      onClick={() =>
+                        updateSettings({
+                          extraSkillRoots: defaults.extraSkillRoots,
+                        })
+                      }
+                    />
+                  ) : null
+                }
+                status={
+                  <span className="block break-all font-mono text-[11px] whitespace-pre-wrap text-foreground">
+                    {extraSkillRoots.length > 0
+                      ? formatSkillRootsForTextarea(extraSkillRoots)
+                      : "None"}
+                  </span>
+                }
+              >
+                <div className="mt-4 space-y-3">
+                  <label htmlFor="skill-roots" className="block">
+                    <span className="block text-xs font-medium text-foreground">
+                      Extra skill roots
+                    </span>
+                    <Textarea
+                      id="skill-roots"
+                      className="mt-1"
+                      value={formatSkillRootsForTextarea(extraSkillRoots)}
+                      onChange={(event) =>
+                        updateSettings({
+                          extraSkillRoots: event.target.value
+                            .split(/\r?\n/)
+                            .map((value) => value.trim())
+                            .filter((value) => value.length > 0),
+                        })
+                      }
+                      placeholder={"/Users/you/.codex/skills\n/Users/you/dotfiles/.codex/skills"}
+                      spellCheck={false}
+                      rows={4}
+                    />
+                    <span className="mt-1 block text-xs text-muted-foreground">
+                      Workspace-local skills from <code>.codex/skills</code> are discovered
+                      automatically.
+                    </span>
+                  </label>
+                </div>
+              </SettingsRow>
             </SettingsSection>
 
             <SettingsSection title="Models">
