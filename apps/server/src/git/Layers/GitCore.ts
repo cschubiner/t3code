@@ -358,12 +358,17 @@ const makeGitCore = Effect.gen(function* () {
     upstream: { upstreamRef: string; remoteName: string; upstreamBranch: string },
   ): Effect.Effect<void, GitCommandError> => {
     const refspec = `+refs/heads/${upstream.upstreamBranch}:refs/remotes/${upstream.upstreamRef}`;
-    return runGit(
+    return executeGit(
       "GitCore.fetchUpstreamRef",
       cwd,
       ["fetch", "--quiet", "--no-tags", upstream.remoteName, refspec],
-      true,
-    );
+      {
+        allowNonZeroExit: true,
+        // This refresh is purely best-effort metadata warming after checkout.
+        // Keep it tightly bounded so a slow remote cannot pin the process.
+        timeoutMs: Duration.toMillis(STATUS_UPSTREAM_REFRESH_TIMEOUT),
+      },
+    ).pipe(Effect.asVoid);
   };
 
   const fetchUpstreamRefForStatus = (
