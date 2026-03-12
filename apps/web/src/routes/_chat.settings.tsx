@@ -453,7 +453,6 @@ function SettingsRouteView() {
         ...existing,
         [provider]: null,
       }));
-      return;
     },
     [customModelInputByProvider, settings, updateSettings],
   );
