@@ -35,6 +35,7 @@ import {
 } from "./terminal";
 import { KeybindingRule } from "./keybindings";
 import { ProjectSearchEntriesInput, ProjectWriteFileInput } from "./project";
+import { SkillSearchInput } from "./skills";
 import { OpenInEditorInput } from "./editor";
 import { ServerConfigUpdatedPayload, ServerGenerateSecretUrlInput } from "./server";
 import {
@@ -52,6 +53,7 @@ export const WS_METHODS = {
   projectsRemove: "projects.remove",
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
+  skillsSearch: "skills.search",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -121,6 +123,7 @@ const WebSocketRequestBody = Schema.Union([
   // Project Search
   tagRequestBody(WS_METHODS.projectsSearchEntries, ProjectSearchEntriesInput),
   tagRequestBody(WS_METHODS.projectsWriteFile, ProjectWriteFileInput),
+  tagRequestBody(WS_METHODS.skillsSearch, SkillSearchInput),
 
   // Shell methods
   tagRequestBody(WS_METHODS.shellOpenInEditor, OpenInEditorInput),
