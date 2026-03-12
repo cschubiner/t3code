@@ -7,6 +7,8 @@ import { useLocalStorage } from "./hooks/useLocalStorage";
 const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
+const MAX_SKILL_ROOT_COUNT = 32;
+const MAX_SKILL_ROOT_LENGTH = 4096;
 const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
   codex: new Set(getModelOptions("codex").map((option) => option.slug)),
 };
@@ -18,6 +20,9 @@ const AppSettingsSchema = Schema.Struct({
   codexHomePath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
     Schema.withConstructorDefault(() => Option.some("")),
   ),
+  extraSkillRoots: Schema.Array(Schema.String.check(Schema.isMaxLength(MAX_SKILL_ROOT_LENGTH)))
+    .pipe(Schema.withConstructorDefault(() => Option.some([])))
+    .check(Schema.isMaxLength(MAX_SKILL_ROOT_COUNT)),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withConstructorDefault(() => Option.some(true))),
   enableAssistantStreaming: Schema.Boolean.pipe(
     Schema.withConstructorDefault(() => Option.some(false)),
@@ -64,6 +69,33 @@ export function normalizeCustomModelSlugs(
   return normalizedModels;
 }
 
+export function normalizeSkillRootPaths(roots: Iterable<string | null | undefined>): string[] {
+  const normalizedRoots: string[] = [];
+  const seen = new Set<string>();
+
+  for (const candidate of roots) {
+    const normalized = candidate?.trim();
+    if (!normalized || normalized.length > MAX_SKILL_ROOT_LENGTH || seen.has(normalized)) {
+      continue;
+    }
+
+    seen.add(normalized);
+    normalizedRoots.push(normalized);
+    if (normalizedRoots.length >= MAX_SKILL_ROOT_COUNT) {
+      break;
+    }
+  }
+
+  return normalizedRoots;
+}
+
+function normalizeAppSettings(settings: AppSettings): AppSettings {
+  return {
+    ...settings,
+    extraSkillRoots: normalizeSkillRootPaths(settings.extraSkillRoots),
+    customCodexModels: normalizeCustomModelSlugs(settings.customCodexModels, "codex"),
+  };
+}
 export function getAppModelOptions(
   provider: ProviderKind,
   customModels: readonly string[],
@@ -142,10 +174,14 @@ export function useAppSettings() {
 
   const updateSettings = useCallback(
     (patch: Partial<AppSettings>) => {
-      setSettings((prev) => ({
-        ...prev,
-        ...patch,
-      }));
+      setSettings((prev) =>
+        normalizeAppSettings(
+          Schema.decodeSync(AppSettingsSchema)({
+            ...prev,
+            ...patch,
+          }),
+        ),
+      );
     },
     [setSettings],
   );

@@ -164,6 +164,27 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
 
       const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
       assert.deepEqual(persisted, DEFAULT_KEYBINDINGS);
+      assert.isTrue(
+        persisted.some(
+          (entry) => entry.command === "sidebar.history.previous" && entry.key === "mod+[",
+        ),
+      );
+      assert.isTrue(
+        persisted.some(
+          (entry) => entry.command === "sidebar.history.next" && entry.key === "mod+]",
+        ),
+      );
+      assert.isTrue(
+        persisted.some(
+          (entry) => entry.command === "sidebar.thread.previous" && entry.key === "alt+arrowup",
+        ),
+      );
+      assert.isTrue(
+        persisted.some(
+          (entry) =>
+            entry.command === "sidebar.project.next" && entry.key === "alt+shift+arrowdown",
+        ),
+      );
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
