@@ -48,7 +48,12 @@ import { isElectron } from "../env";
 import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { isLinuxPlatform, isMacPlatform, newCommandId, newProjectId } from "../lib/utils";
 import { useStore } from "../store";
-import { shortcutLabelForCommand } from "../keybindings";
+import {
+  isChatNewLocalShortcut,
+  isChatNewShortcut,
+  resolveShortcutCommand,
+  shortcutLabelForCommand,
+} from "../keybindings";
 import { derivePendingApprovals, derivePendingUserInputs } from "../session-logic";
 import { gitRemoveWorktreeMutationOptions, gitStatusQueryOptions } from "../lib/gitReactQuery";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
@@ -94,13 +99,16 @@ import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 import {
   getVisibleThreadsForProject,
+  isTypingInSidebarTextEntry,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadEnvMode,
+  resolveSidebarThreadNavigationTarget,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
   sortThreadsForSidebar,
+  visibleThreadIdsForSidebar,
 } from "./Sidebar.logic";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 
@@ -1096,6 +1104,24 @@ export default function Sidebar() {
     [appSettings.sidebarProjectSortOrder, projects, threads],
   );
   const isManualProjectSorting = appSettings.sidebarProjectSortOrder === "manual";
+  const visibleSidebarThreadIds = useMemo(
+    () =>
+      visibleThreadIdsForSidebar({
+        projects: sortedProjects,
+        threads,
+        expandedThreadListsByProject,
+        threadPreviewLimit: THREAD_PREVIEW_LIMIT,
+        threadSortOrder: appSettings.sidebarThreadSortOrder,
+        activeThreadId: routeThreadId ?? undefined,
+      }),
+    [
+      appSettings.sidebarThreadSortOrder,
+      expandedThreadListsByProject,
+      routeThreadId,
+      sortedProjects,
+      threads,
+    ],
+  );
 
   function renderProjectItem(
     project: (typeof sortedProjects)[number],
@@ -1441,6 +1467,62 @@ export default function Sidebar() {
   );
 
   useEffect(() => {
+    const onWindowKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+
+      if (event.key === "Escape" && selectedThreadIds.size > 0) {
+        event.preventDefault();
+        clearSelection();
+        return;
+      }
+
+      const resolvedCommand = resolveShortcutCommand(event, keybindings);
+      if (
+        resolvedCommand === "sidebar.thread.previous" ||
+        resolvedCommand === "sidebar.thread.next"
+      ) {
+        if (isTypingInSidebarTextEntry(event.target)) return;
+
+        const destinationThreadId = resolveSidebarThreadNavigationTarget({
+          orderedVisibleThreadIds: visibleSidebarThreadIds,
+          currentThreadId: routeThreadId,
+          direction: resolvedCommand === "sidebar.thread.previous" ? "previous" : "next",
+        });
+        if (!destinationThreadId) return;
+
+        event.preventDefault();
+        clearSelection();
+        setSelectionAnchor(destinationThreadId);
+        void navigate({
+          to: "/$threadId",
+          params: { threadId: destinationThreadId },
+        });
+        return;
+      }
+
+      const activeThread = routeThreadId
+        ? threads.find((thread) => thread.id === routeThreadId)
+        : undefined;
+      const activeDraftThread = routeThreadId ? getDraftThread(routeThreadId) : null;
+      if (isChatNewLocalShortcut(event, keybindings)) {
+        const projectId =
+          activeThread?.projectId ?? activeDraftThread?.projectId ?? projects[0]?.id;
+        if (!projectId) return;
+        event.preventDefault();
+        void handleNewThread(projectId);
+        return;
+      }
+
+      if (!isChatNewShortcut(event, keybindings)) return;
+      const projectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? projects[0]?.id;
+      if (!projectId) return;
+      event.preventDefault();
+      void handleNewThread(projectId, {
+        branch: activeThread?.branch ?? activeDraftThread?.branch ?? null,
+        worktreePath: activeThread?.worktreePath ?? activeDraftThread?.worktreePath ?? null,
+        envMode: activeDraftThread?.envMode ?? (activeThread?.worktreePath ? "worktree" : "local"),
+      });
+    };
     const onMouseDown = (event: globalThis.MouseEvent) => {
       if (selectedThreadIds.size === 0) return;
       const target = event.target instanceof HTMLElement ? event.target : null;
@@ -1452,7 +1534,19 @@ export default function Sidebar() {
     return () => {
       window.removeEventListener("mousedown", onMouseDown);
     };
-  }, [clearSelection, selectedThreadIds.size]);
+  }, [
+    clearSelection,
+    getDraftThread,
+    handleNewThread,
+    keybindings,
+    projects,
+    routeThreadId,
+    setSelectionAnchor,
+    selectedThreadIds.size,
+    threads,
+    navigate,
+    visibleSidebarThreadIds,
+  ]);
 
   useEffect(() => {
     if (!isElectron) return;
@@ -1806,11 +1900,11 @@ export default function Sidebar() {
               onDragCancel={handleProjectDragCancel}
             >
               <SidebarMenu>
-                <SortableContext
-                  items={sortedProjects.map((project) => project.id)}
-                  strategy={verticalListSortingStrategy}
-                >
-                  {sortedProjects.map((project) => (
+              <SortableContext
+                items={sortedProjects.map((project) => project.id)}
+                strategy={verticalListSortingStrategy}
+              >
+                {sortedProjects.map((project) => (
                     <SortableProjectItem key={project.id} projectId={project.id}>
                       {(dragHandleProps) => renderProjectItem(project, dragHandleProps)}
                     </SortableProjectItem>
