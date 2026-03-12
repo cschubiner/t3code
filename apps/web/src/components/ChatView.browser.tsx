@@ -1096,6 +1096,62 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("deletes the current thread when /delete is submitted", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-target-delete" as MessageId,
+        targetText: "delete target",
+      }),
+    });
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "/delete");
+      await waitForLayout();
+
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          const closeRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.terminalClose,
+          );
+          expect(closeRequest).toMatchObject({
+            _tag: WS_METHODS.terminalClose,
+            threadId: THREAD_ID,
+            deleteHistory: true,
+          });
+          const deleteRequest = listDispatchCommandsByType("thread.delete").at(-1);
+          expect((deleteRequest?.command as { threadId?: string } | undefined)?.threadId).toBe(
+            THREAD_ID,
+          );
+          expect(confirmSpy).toHaveBeenCalledWith(
+            'Delete thread "Browser test thread"?\nThis permanently clears conversation history for this thread.',
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await waitForURL(
+        mounted.router,
+        (path) => path === "/",
+        "Route should navigate home after deleting the last thread.",
+      );
+    } finally {
+      confirmSpy.mockRestore();
+      await mounted.cleanup();
+    }
+  });
+
   it("keeps the new thread selected after clicking the new-thread button", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
