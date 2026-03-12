@@ -33,7 +33,11 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "~/lib/gitReactQuery";
+import {
+  gitBranchesQueryOptions,
+  gitCreateWorktreeMutationOptions,
+  gitRemoveWorktreeMutationOptions,
+} from "~/lib/gitReactQuery";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
 import { skillSearchQueryOptions } from "~/lib/skillReactQuery";
@@ -163,6 +167,7 @@ import {
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import QueuedFollowUpsPanel from "./QueuedFollowUpsPanel";
+import { confirmAndDeleteThreadWithSidebarBehavior } from "../lib/threadDeletion";
 
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
@@ -225,6 +230,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const { resolvedTheme } = useTheme();
   const queryClient = useQueryClient();
   const createWorktreeMutation = useMutation(gitCreateWorktreeMutationOptions({ queryClient }));
+  const removeWorktreeMutation = useMutation(gitRemoveWorktreeMutationOptions({ queryClient }));
   const composerDraft = useComposerThreadDraft(threadId);
   const prompt = composerDraft.prompt;
   const composerImages = composerDraft.images;
@@ -257,6 +263,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const clearProjectDraftThreadId = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadId,
   );
+  const clearProjectDraftThreadById = useComposerDraftStore(
+    (store) => store.clearProjectDraftThreadById,
+  );
+  const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearThreadDraft);
   const draftThread = useComposerDraftStore(
     (store) => store.draftThreadsByThreadId[threadId] ?? null,
   );
@@ -356,6 +366,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const storeNewTerminal = useTerminalStateStore((s) => s.newTerminal);
   const storeSetActiveTerminal = useTerminalStateStore((s) => s.setActiveTerminal);
   const storeCloseTerminal = useTerminalStateStore((s) => s.closeTerminal);
+  const clearTerminalState = useTerminalStateStore((s) => s.clearTerminalState);
 
   const setPrompt = useCallback(
     (nextPrompt: string) => {
@@ -1005,6 +1016,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
           label: "/default",
           description: "Switch this thread back to normal chat mode",
         },
+        {
+          id: "slash:delete",
+          type: "slash-command",
+          command: "delete",
+          label: "/delete",
+          description: "Delete this thread",
+        },
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
       const query = composerTrigger.query.trim().toLowerCase();
       if (!query) {
@@ -1491,6 +1509,50 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const toggleInteractionMode = useCallback(() => {
     handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
   }, [handleInteractionModeChange, interactionMode]);
+  const handleDeleteSlashCommand = useCallback(async () => {
+    if (!serverThread) {
+      toastManager.add({
+        type: "warning",
+        title: "Only saved threads can be deleted",
+        description: "Create the thread first, then run /delete.",
+      });
+      return "missing" as const;
+    }
+
+    return confirmAndDeleteThreadWithSidebarBehavior({
+      threadId: serverThread.id,
+      confirmBeforeDelete: settings.confirmThreadDelete,
+      threads,
+      projects,
+      routeThreadId: threadId,
+      clearComposerDraftForThread,
+      clearProjectDraftThreadById,
+      clearTerminalState,
+      navigateToThread: (nextThreadId) => {
+        if (nextThreadId) {
+          void navigate({
+            to: "/$threadId",
+            params: { threadId: nextThreadId },
+            replace: true,
+          });
+          return;
+        }
+        void navigate({ to: "/", replace: true });
+      },
+      removeWorktree: (input) => removeWorktreeMutation.mutateAsync(input),
+    });
+  }, [
+    clearComposerDraftForThread,
+    clearProjectDraftThreadById,
+    clearTerminalState,
+    navigate,
+    projects,
+    removeWorktreeMutation,
+    serverThread,
+    settings.confirmThreadDelete,
+    threadId,
+    threads,
+  ]);
   const toggleRuntimeMode = useCallback(() => {
     void handleRuntimeModeChange(
       runtimeMode === "full-access" ? "approval-required" : "full-access",
@@ -2595,6 +2657,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
     const standaloneSlashCommand =
       composerImages.length === 0 ? parseStandaloneComposerSlashCommand(trimmed) : null;
     if (standaloneSlashCommand) {
+      if (standaloneSlashCommand === "delete") {
+        const deleteResult = await handleDeleteSlashCommand();
+        if (deleteResult !== "deleted") {
+          promptRef.current = "";
+          clearComposerDraftContent(activeThread.id);
+          setComposerHighlightedItemId(null);
+          setComposerCursor(0);
+          setComposerTrigger(null);
+        }
+        return;
+      }
       await handleInteractionModeChange(standaloneSlashCommand);
       promptRef.current = "";
       clearComposerDraftContent(activeThread.id);
@@ -3425,6 +3498,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
           }
           return;
         }
+        if (item.command === "delete") {
+          void handleDeleteSlashCommand();
+          const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+            expectedText: expectedToken,
+          });
+          if (applied) {
+            setComposerHighlightedItemId(null);
+          }
+          return;
+        }
         void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
@@ -3444,6 +3527,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [
       applyPromptReplacement,
+      handleDeleteSlashCommand,
       handleInteractionModeChange,
       onProviderModelSelect,
       resolveActiveComposerTrigger,
