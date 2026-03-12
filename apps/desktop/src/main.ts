@@ -1073,15 +1073,13 @@ function startBackend(): void {
 }
 
 function scheduleRemoteGatewayRestart(reason: string): void {
-  if (
-    isQuitting ||
-    remoteGatewayRestartTimer ||
-    !desktopPreferences.remoteAccess.enabled
-  ) {
+  if (isQuitting || remoteGatewayRestartTimer || !desktopPreferences.remoteAccess.enabled) {
     return;
   }
 
-  writeDesktopLogHeader(`remote access gateway exited unexpectedly reason=${sanitizeLogValue(reason)}`);
+  writeDesktopLogHeader(
+    `remote access gateway exited unexpectedly reason=${sanitizeLogValue(reason)}`,
+  );
   setRemoteAccessStatus({
     enabled: true,
     state: "starting",
@@ -1121,8 +1119,7 @@ function startRemoteGateway(): void {
     `remote access gateway start requested pid=${child.pid ?? "unknown"} port=${remoteGatewayPort}`,
   );
 
-  child.once("spawn", () => {
-  });
+  child.once("spawn", () => {});
 
   child.on("error", (error) => {
     if (remoteGatewayProcess === child) {
