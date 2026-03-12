@@ -6,9 +6,9 @@
  *
  * @module GitServiceLive
  */
-import { Effect, Layer, Option, Schema, Stream } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { Effect, Layer, Schema } from "effect";
 import { GitCommandError } from "../Errors.ts";
+import { runProcess } from "../../processRunner.ts";
 import {
   ExecuteGitInput,
   ExecuteGitResult,
@@ -39,37 +39,7 @@ function toGitCommandError(
         });
 }
 
-const collectOutput = Effect.fn(function* <E>(
-  input: Pick<ExecuteGitInput, "operation" | "cwd" | "args">,
-  stream: Stream.Stream<Uint8Array, E>,
-  maxOutputBytes: number,
-): Effect.fn.Return<string, GitCommandError> {
-  const decoder = new TextDecoder();
-  let bytes = 0;
-  let text = "";
-
-  yield* Stream.runForEach(stream, (chunk) =>
-    Effect.gen(function* () {
-      bytes += chunk.byteLength;
-      if (bytes > maxOutputBytes) {
-        return yield* new GitCommandError({
-          operation: input.operation,
-          command: quoteGitCommand(input.args),
-          cwd: input.cwd,
-          detail: `${quoteGitCommand(input.args)} output exceeded ${maxOutputBytes} bytes and was truncated.`,
-        });
-      }
-      text += decoder.decode(chunk, { stream: true });
-    }),
-  ).pipe(Effect.mapError(toGitCommandError(input, "output stream failed.")));
-
-  text += decoder.decode();
-  return text;
-});
-
-const makeGitService = Effect.gen(function* () {
-  const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-
+const makeGitService = Effect.sync(() => {
   const execute: GitServiceShape["execute"] = Effect.fnUntraced(function* (input) {
     const commandInput = {
       ...input,
@@ -77,63 +47,48 @@ const makeGitService = Effect.gen(function* () {
     } as const;
     const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const maxOutputBytes = input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
-
-    const commandEffect = Effect.gen(function* () {
-      const child = yield* commandSpawner
-        .spawn(
-          ChildProcess.make("git", commandInput.args, {
-            cwd: commandInput.cwd,
-            ...(input.env ? { env: input.env } : {}),
-          }),
-        )
-        .pipe(Effect.mapError(toGitCommandError(commandInput, "failed to spawn.")));
-
-      const [stdout, stderr, exitCode] = yield* Effect.all(
-        [
-          collectOutput(commandInput, child.stdout, maxOutputBytes),
-          collectOutput(commandInput, child.stderr, maxOutputBytes),
-          child.exitCode.pipe(
-            Effect.map((value) => Number(value)),
-            Effect.mapError(toGitCommandError(commandInput, "failed to report exit code.")),
-          ),
-        ],
-        { concurrency: "unbounded" },
-      );
-
-      if (!input.allowNonZeroExit && exitCode !== 0) {
-        const trimmedStderr = stderr.trim();
-        return yield* new GitCommandError({
-          operation: commandInput.operation,
-          command: quoteGitCommand(commandInput.args),
+    const result = yield* Effect.tryPromise({
+      try: () =>
+        runProcess("git", commandInput.args, {
           cwd: commandInput.cwd,
-          detail:
-            trimmedStderr.length > 0
-              ? `${quoteGitCommand(commandInput.args)} failed: ${trimmedStderr}`
-              : `${quoteGitCommand(commandInput.args)} failed with code ${exitCode}.`,
-        });
-      }
-
-      return { code: exitCode, stdout, stderr } satisfies ExecuteGitResult;
+          env: input.env,
+          timeoutMs,
+          maxBufferBytes: maxOutputBytes,
+          // Preserve GitService's own exit-code handling while letting the
+          // process runner enforce timeout and process-tree cleanup.
+          allowNonZeroExit: true,
+        }),
+      catch: toGitCommandError(commandInput, "command execution failed."),
     });
 
-    return yield* commandEffect.pipe(
-      Effect.scoped,
-      Effect.timeoutOption(timeoutMs),
-      Effect.flatMap((result) =>
-        Option.match(result, {
-          onNone: () =>
-            Effect.fail(
-              new GitCommandError({
-                operation: commandInput.operation,
-                command: quoteGitCommand(commandInput.args),
-                cwd: commandInput.cwd,
-                detail: `${quoteGitCommand(commandInput.args)} timed out.`,
-              }),
-            ),
-          onSome: Effect.succeed,
-        }),
-      ),
-    );
+    if (result.timedOut) {
+      return yield* new GitCommandError({
+        operation: commandInput.operation,
+        command: quoteGitCommand(commandInput.args),
+        cwd: commandInput.cwd,
+        detail: `${quoteGitCommand(commandInput.args)} timed out.`,
+      });
+    }
+
+    const exitCode = result.code ?? 1;
+    if (!input.allowNonZeroExit && exitCode !== 0) {
+      const trimmedStderr = result.stderr.trim();
+      return yield* new GitCommandError({
+        operation: commandInput.operation,
+        command: quoteGitCommand(commandInput.args),
+        cwd: commandInput.cwd,
+        detail:
+          trimmedStderr.length > 0
+            ? `${quoteGitCommand(commandInput.args)} failed: ${trimmedStderr}`
+            : `${quoteGitCommand(commandInput.args)} failed with code ${exitCode}.`,
+      });
+    }
+
+    return {
+      code: exitCode,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    } satisfies ExecuteGitResult;
   });
 
   return {
