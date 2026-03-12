@@ -85,12 +85,9 @@ export function createTailscaleRemoteAccessHelpers(
       ]);
     }
 
-    const origins = REMOTE_ACCESS_PORTS.map(
-      (externalPort) => `https://${dnsName}:${externalPort}`,
-    );
+    const origins = REMOTE_ACCESS_PORTS.map((externalPort) => `https://${dnsName}:${externalPort}`);
     const preferredOrigin =
-      origins.find((origin) => origin.endsWith(`:${PREFERRED_REMOTE_ACCESS_PORT}`)) ??
-      origins[0]!;
+      origins.find((origin) => origin.endsWith(`:${PREFERRED_REMOTE_ACCESS_PORT}`)) ?? origins[0]!;
 
     return {
       kind: "ready",

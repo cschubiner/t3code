@@ -271,42 +271,11 @@ function SettingsRouteView() {
       }));
       setCustomModelErrorByProvider((existing) => ({
         ...existing,
-        [provider]: "Enter a model slug.",
+        [provider]: null,
       }));
-      return;
-    }
-    if (getModelOptions(provider).some((option) => option.slug === normalized)) {
-      setCustomModelErrorByProvider((existing) => ({
-        ...existing,
-        [provider]: "That model is already built in.",
-      }));
-      return;
-    }
-    if (normalized.length > MAX_CUSTOM_MODEL_LENGTH) {
-      setCustomModelErrorByProvider((existing) => ({
-        ...existing,
-        [provider]: `Model slugs must be ${MAX_CUSTOM_MODEL_LENGTH} characters or less.`,
-      }));
-      return;
-    }
-    if (customModels.includes(normalized)) {
-      setCustomModelErrorByProvider((existing) => ({
-        ...existing,
-        [provider]: "That custom model is already saved.",
-      }));
-      return;
-    }
-
-    updateSettings(patchCustomModels(provider, [...customModels, normalized]));
-    setCustomModelInputByProvider((existing) => ({
-      ...existing,
-      [provider]: "",
-    }));
-    setCustomModelErrorByProvider((existing) => ({
-      ...existing,
-      [provider]: null,
-    }));
-  }, [customModelInputByProvider, settings, updateSettings]);
+    },
+    [customModelInputByProvider, settings, updateSettings],
+  );
 
   const removeCustomModel = useCallback(
     (provider: ProviderKind, slug: string) => {
