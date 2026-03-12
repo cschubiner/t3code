@@ -108,8 +108,8 @@ export default function MobileSessionBrowser() {
               Open a thread from your phone
             </h1>
             <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
-              This mobile surface points at the same live desktop backend, so you can browse
-              current sessions and jump into the full thread view when needed.
+              This mobile surface points at the same live desktop backend, so you can browse current
+              sessions and jump into the full thread view when needed.
             </p>
           </div>
         </section>
@@ -170,7 +170,9 @@ export default function MobileSessionBrowser() {
                                 {thread.title}
                               </h3>
                               {badge ? (
-                                <Badge className={cn("border", badge.className)}>{badge.label}</Badge>
+                                <Badge className={cn("border", badge.className)}>
+                                  {badge.label}
+                                </Badge>
                               ) : null}
                             </div>
                             <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
