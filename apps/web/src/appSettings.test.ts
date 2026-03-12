@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   getAppModelOptions,
   normalizeCustomModelSlugs,
+  normalizeSkillRootPaths,
   resolveAppModelSelection,
 } from "./appSettings";
 
@@ -43,6 +44,20 @@ describe("getAppModelOptions", () => {
       name: "custom/selected-model",
       isCustom: true,
     });
+  });
+});
+
+describe("normalizeSkillRootPaths", () => {
+  it("trims, deduplicates, and drops blank skill root values", () => {
+    expect(
+      normalizeSkillRootPaths([
+        " /Users/me/.codex/skills ",
+        "",
+        " /Users/me/.codex/skills ",
+        null,
+        "/tmp/custom-skills",
+      ]),
+    ).toEqual(["/Users/me/.codex/skills", "/tmp/custom-skills"]);
   });
 });
 
