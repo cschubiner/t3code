@@ -661,6 +661,7 @@ function findButtonByText(scope: ParentNode, text: string): HTMLButtonElement | 
     (button) => button.textContent?.trim() === text,
   ) as HTMLButtonElement | null;
 }
+
 function listDispatchCommandsByType(type: string) {
   return wsRequests.filter(
     (request) =>

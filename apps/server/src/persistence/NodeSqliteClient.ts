@@ -120,9 +120,13 @@ const makeWithDatabase = (
           Cache.get(prepareCache, sql),
           (statement) =>
             Effect.withFiber<ReadonlyArray<ReadonlyArray<unknown>>, SqlError>((fiber) => {
-              statement.setReadBigInts(Boolean(ServiceMap.get(fiber.services, Client.SafeIntegers)));
+              statement.setReadBigInts(
+                Boolean(ServiceMap.get(fiber.services, Client.SafeIntegers)),
+              );
               try {
-                const rows = statement.all(...(params as any)) as ReadonlyArray<Record<string, unknown>>;
+                const rows = statement.all(...(params as any)) as ReadonlyArray<
+                  Record<string, unknown>
+                >;
                 return Effect.succeed(rows.map((row) => Object.values(row)));
               } catch (cause) {
                 return Effect.fail(new SqlError({ cause, message: "Failed to execute statement" }));
