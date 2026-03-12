@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
+import { Textarea } from "../components/ui/textarea";
 import { APP_VERSION } from "../branding";
 import { toastManager } from "~/components/ui/toast";
 import { SidebarInset } from "~/components/ui/sidebar";
@@ -94,6 +95,10 @@ function patchCustomModels(provider: ProviderKind, models: string[]) {
   }
 }
 
+function formatSkillRootsForTextarea(roots: readonly string[]): string {
+  return roots.join("\n");
+}
+
 function remoteAccessStateLabel(status: DesktopRemoteAccessStatus | null): string {
   switch (status?.state) {
     case "ready":
@@ -131,6 +136,7 @@ function SettingsRouteView() {
 
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
+  const extraSkillRoots = settings.extraSkillRoots;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
   const availableEditors = serverConfigQuery.data?.availableEditors;
 
@@ -562,10 +568,67 @@ function SettingsRouteView() {
                       updateSettings({
                         codexBinaryPath: defaults.codexBinaryPath,
                         codexHomePath: defaults.codexHomePath,
+                        extraSkillRoots: defaults.extraSkillRoots,
                       })
                     }
                   >
                     Reset codex overrides
+                  </Button>
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">Skill Discovery</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Add extra skill roots outside your workspace and `CODEX_HOME`. Enter one absolute
+                  path per line.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <label htmlFor="skill-roots" className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">Extra skill roots</span>
+                  <Textarea
+                    id="skill-roots"
+                    value={formatSkillRootsForTextarea(extraSkillRoots)}
+                    onChange={(event) =>
+                      updateSettings({
+                        extraSkillRoots: event.target.value
+                          .split(/\r?\n/)
+                          .map((value) => value.trim()),
+                      })
+                    }
+                    placeholder={"/Users/you/.codex/skills\n/Users/you/dotfiles/.codex/skills"}
+                    spellCheck={false}
+                    rows={4}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    Workspace-local skills from `.codex/skills` are discovered automatically.
+                  </span>
+                </label>
+
+                <div className="flex flex-col gap-3 text-xs text-muted-foreground sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0 flex-1">
+                    <p>Discovered extra roots</p>
+                    <p className="mt-1 break-all font-mono text-[11px] text-foreground whitespace-pre-wrap">
+                      {extraSkillRoots.length > 0
+                        ? formatSkillRootsForTextarea(extraSkillRoots)
+                        : "None"}
+                    </p>
+                  </div>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    className="self-start"
+                    onClick={() =>
+                      updateSettings({
+                        extraSkillRoots: defaults.extraSkillRoots,
+                      })
+                    }
+                  >
+                    Reset skill roots
                   </Button>
                 </div>
               </div>
