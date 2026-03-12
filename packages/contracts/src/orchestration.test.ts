@@ -261,3 +261,39 @@ it.effect("accepts thread.import as an internal orchestration command only", () 
     assert.strictEqual(clientResult._tag, "Failure");
   }),
 );
+
+it.effect("accepts queued turn update, move, and send-now as client orchestration commands", () =>
+  Effect.gen(function* () {
+    const update = yield* decodeClientOrchestrationCommand({
+      type: "thread.turn.queue.update",
+      commandId: "cmd-queue-update-1",
+      threadId: "thread-1",
+      messageId: "message-1",
+      text: "Updated queued text",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(update.type, "thread.turn.queue.update");
+    assert.strictEqual(update.text, "Updated queued text");
+
+    const move = yield* decodeClientOrchestrationCommand({
+      type: "thread.turn.queue.move",
+      commandId: "cmd-queue-move-1",
+      threadId: "thread-1",
+      messageId: "message-2",
+      targetMessageId: "message-1",
+      createdAt: "2026-01-01T00:00:01.000Z",
+    });
+    assert.strictEqual(move.type, "thread.turn.queue.move");
+    assert.strictEqual(move.targetMessageId, "message-1");
+
+    const sendNow = yield* decodeClientOrchestrationCommand({
+      type: "thread.turn.queue.send-now",
+      commandId: "cmd-queue-send-now-1",
+      threadId: "thread-1",
+      messageId: "message-3",
+      createdAt: "2026-01-01T00:00:02.000Z",
+    });
+    assert.strictEqual(sendNow.type, "thread.turn.queue.send-now");
+    assert.strictEqual(sendNow.messageId, "message-3");
+  }),
+);

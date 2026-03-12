@@ -106,6 +106,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         INSERT INTO projection_thread_queued_turns (
           message_id,
           thread_id,
+          sort_order,
           text,
           attachments_json,
           provider,
@@ -121,6 +122,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         VALUES (
           'message-queued-1',
           'thread-1',
+          0,
           'queued follow-up',
           '[]',
           'codex',
