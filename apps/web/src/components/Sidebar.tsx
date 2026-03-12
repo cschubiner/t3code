@@ -96,7 +96,6 @@ import {
 } from "./ui/sidebar";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useThreadNavigationHistoryStore } from "../threadNavigationHistoryStore";
-import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 import {
   getFallbackThreadIdAfterDelete,
