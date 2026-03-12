@@ -38,7 +38,7 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
+import { useLocation, useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import {
   type SidebarProjectSortOrder,
   type SidebarThreadSortOrder,
@@ -95,14 +95,17 @@ import {
   SidebarTrigger,
 } from "./ui/sidebar";
 import { useThreadSelectionStore } from "../threadSelectionStore";
+import { useThreadNavigationHistoryStore } from "../threadNavigationHistoryStore";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 import {
   getFallbackThreadIdAfterDelete,
   getVisibleThreadsForProject,
   isTypingInSidebarTextEntry,
+  projectNavigationTargetsForSidebar,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadEnvMode,
+  resolveSidebarProjectNavigationTarget,
   resolveSidebarThreadNavigationTarget,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
@@ -138,6 +141,19 @@ function formatRelativeTime(iso: string): string {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
+}
+
+function threadIdFromSidebarPathname(pathname: string): ThreadId | null {
+  if (!pathname.startsWith("/")) {
+    return null;
+  }
+
+  const candidate = pathname.slice(1).split("/", 1)[0];
+  if (!candidate || candidate === "settings") {
+    return null;
+  }
+
+  return ThreadId.makeUnsafe(candidate);
 }
 
 interface TerminalStatusIndicator {
@@ -376,11 +392,14 @@ export default function Sidebar() {
   const threads = useStore((store) => store.threads);
   const markThreadUnread = useStore((store) => store.markThreadUnread);
   const toggleProject = useStore((store) => store.toggleProject);
+  const setProjectExpanded = useStore((store) => store.setProjectExpanded);
   const reorderProjects = useStore((store) => store.reorderProjects);
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearDraftThread);
   const getDraftThreadByProjectId = useComposerDraftStore(
     (store) => store.getDraftThreadByProjectId,
   );
+  const getDraftThread = useComposerDraftStore((store) => store.getDraftThread);
+  const draftThreadsByThreadId = useComposerDraftStore((store) => store.draftThreadsByThreadId);
   const terminalStateByThreadId = useTerminalStateStore((state) => state.terminalStateByThreadId);
   const clearTerminalState = useTerminalStateStore((state) => state.clearTerminalState);
   const clearProjectDraftThreadId = useComposerDraftStore(
@@ -427,12 +446,71 @@ export default function Sidebar() {
   const removeFromSelection = useThreadSelectionStore((s) => s.removeFromSelection);
   const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
   const isLinuxDesktop = isElectron && isLinuxPlatform(navigator.platform);
+  const navigateHistory = useThreadNavigationHistoryStore((s) => s.navigateHistory);
+  const recordHistoryVisit = useThreadNavigationHistoryStore((s) => s.recordVisit);
+  const router = useRouter();
   const shouldBrowseForProjectImmediately = isElectron && !isLinuxDesktop;
   const shouldShowProjectPathEntry = addingProject && !shouldBrowseForProjectImmediately;
   const projectCwdById = useMemo(
     () => new Map(projects.map((project) => [project.id, project.cwd] as const)),
     [projects],
   );
+  const sortedProjects = useMemo(
+    () => sortProjectsForSidebar(projects, threads, appSettings.sidebarProjectSortOrder),
+    [appSettings.sidebarProjectSortOrder, projects, threads],
+  );
+  const isManualProjectSorting = appSettings.sidebarProjectSortOrder === "manual";
+  const visibleSidebarThreadIds = useMemo(
+    () =>
+      visibleThreadIdsForSidebar({
+        projects: sortedProjects,
+        threads,
+        expandedThreadListsByProject,
+        threadPreviewLimit: THREAD_PREVIEW_LIMIT,
+        threadSortOrder: appSettings.sidebarThreadSortOrder,
+        activeThreadId: routeThreadId ?? undefined,
+      }),
+    [
+      appSettings.sidebarThreadSortOrder,
+      expandedThreadListsByProject,
+      routeThreadId,
+      sortedProjects,
+      threads,
+    ],
+  );
+  const sidebarProjectTargets = useMemo(
+    () =>
+      projectNavigationTargetsForSidebar({
+        projects: sortedProjects,
+        threads,
+        threadSortOrder: appSettings.sidebarThreadSortOrder,
+      }),
+    [appSettings.sidebarThreadSortOrder, sortedProjects, threads],
+  );
+  const draftThreadIds = useMemo(
+    () => Object.keys(draftThreadsByThreadId) as ThreadId[],
+    [draftThreadsByThreadId],
+  );
+  const availableHistoryThreadIds = useMemo(
+    () => [...new Set([...threads.map((thread) => thread.id), ...draftThreadIds])],
+    [draftThreadIds, threads],
+  );
+  const keybindingsRef = useRef(keybindings);
+  const projectsRef = useRef(projects);
+  const threadsRef = useRef(threads);
+  const routeThreadIdRef = useRef(routeThreadId);
+  const visibleSidebarThreadIdsRef = useRef(visibleSidebarThreadIds);
+  const sidebarProjectTargetsRef = useRef(sidebarProjectTargets);
+  const availableHistoryThreadIdsRef = useRef(availableHistoryThreadIds);
+  const selectedThreadCountRef = useRef(selectedThreadIds.size);
+  keybindingsRef.current = keybindings;
+  projectsRef.current = projects;
+  threadsRef.current = threads;
+  routeThreadIdRef.current = routeThreadId;
+  visibleSidebarThreadIdsRef.current = visibleSidebarThreadIds;
+  sidebarProjectTargetsRef.current = sidebarProjectTargets;
+  availableHistoryThreadIdsRef.current = availableHistoryThreadIds;
+  selectedThreadCountRef.current = selectedThreadIds.size;
   const threadGitTargets = useMemo(
     () =>
       threads.map((thread) => ({
@@ -517,6 +595,30 @@ export default function Sidebar() {
       });
     },
     [appSettings.sidebarThreadSortOrder, navigate, threads],
+  );
+
+  const navigateToThreadFromShortcut = useCallback(
+    (
+      threadId: ThreadId,
+      options?: {
+        expandProjectId?: ProjectId;
+        recordHistory?: boolean;
+      },
+    ) => {
+      if (options?.recordHistory ?? true) {
+        recordHistoryVisit(threadId);
+      }
+      if (options?.expandProjectId) {
+        setProjectExpanded(options.expandProjectId, true);
+      }
+      clearSelection();
+      setSelectionAnchor(threadId);
+      void navigate({
+        to: "/$threadId",
+        params: { threadId },
+      });
+    },
+    [clearSelection, navigate, recordHistoryVisit, setProjectExpanded, setSelectionAnchor],
   );
 
   const addProjectFromPath = useCallback(
@@ -1108,30 +1210,6 @@ export default function Sidebar() {
     suppressProjectClickAfterDragRef.current = false;
   }, []);
 
-  const sortedProjects = useMemo(
-    () => sortProjectsForSidebar(projects, threads, appSettings.sidebarProjectSortOrder),
-    [appSettings.sidebarProjectSortOrder, projects, threads],
-  );
-  const isManualProjectSorting = appSettings.sidebarProjectSortOrder === "manual";
-  const visibleSidebarThreadIds = useMemo(
-    () =>
-      visibleThreadIdsForSidebar({
-        projects: sortedProjects,
-        threads,
-        expandedThreadListsByProject,
-        threadPreviewLimit: THREAD_PREVIEW_LIMIT,
-        threadSortOrder: appSettings.sidebarThreadSortOrder,
-        activeThreadId: routeThreadId ?? undefined,
-      }),
-    [
-      appSettings.sidebarThreadSortOrder,
-      expandedThreadListsByProject,
-      routeThreadId,
-      sortedProjects,
-      threads,
-    ],
-  );
-
   function renderProjectItem(
     project: (typeof sortedProjects)[number],
     dragHandleProps: SortableProjectHandleProps | null,
@@ -1479,51 +1557,92 @@ export default function Sidebar() {
     const onWindowKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
 
-      if (event.key === "Escape" && selectedThreadIds.size > 0) {
+      if (event.key === "Escape" && selectedThreadCountRef.current > 0) {
         event.preventDefault();
         clearSelection();
         return;
       }
 
-      const resolvedCommand = resolveShortcutCommand(event, keybindings);
+      const resolvedCommand = resolveShortcutCommand(event, keybindingsRef.current);
+      const currentRouteThreadId =
+        threadIdFromSidebarPathname(router.state.location.pathname) ?? routeThreadIdRef.current;
+      const currentThreads = threadsRef.current;
+      const activeThread = currentRouteThreadId
+        ? currentThreads.find((thread) => thread.id === currentRouteThreadId)
+        : undefined;
+      const activeDraftThread = currentRouteThreadId ? getDraftThread(currentRouteThreadId) : null;
+      if (
+        resolvedCommand === "sidebar.history.previous" ||
+        resolvedCommand === "sidebar.history.next" ||
+        resolvedCommand === "sidebar.thread.previous" ||
+        resolvedCommand === "sidebar.thread.next" ||
+        resolvedCommand === "sidebar.project.previous" ||
+        resolvedCommand === "sidebar.project.next"
+      ) {
+        if (isTypingInSidebarTextEntry(event.target)) return;
+      }
+
+      if (
+        resolvedCommand === "sidebar.history.previous" ||
+        resolvedCommand === "sidebar.history.next"
+      ) {
+        const destinationThreadId = navigateHistory(
+          resolvedCommand === "sidebar.history.previous" ? "previous" : "next",
+          availableHistoryThreadIdsRef.current,
+        );
+        if (!destinationThreadId) return;
+
+        event.preventDefault();
+        navigateToThreadFromShortcut(destinationThreadId, { recordHistory: false });
+        return;
+      }
+
       if (
         resolvedCommand === "sidebar.thread.previous" ||
         resolvedCommand === "sidebar.thread.next"
       ) {
-        if (isTypingInSidebarTextEntry(event.target)) return;
-
         const destinationThreadId = resolveSidebarThreadNavigationTarget({
-          orderedVisibleThreadIds: visibleSidebarThreadIds,
-          currentThreadId: routeThreadId,
+          orderedVisibleThreadIds: visibleSidebarThreadIdsRef.current,
+          currentThreadId: currentRouteThreadId,
           direction: resolvedCommand === "sidebar.thread.previous" ? "previous" : "next",
         });
         if (!destinationThreadId) return;
 
         event.preventDefault();
-        clearSelection();
-        setSelectionAnchor(destinationThreadId);
-        void navigate({
-          to: "/$threadId",
-          params: { threadId: destinationThreadId },
+        navigateToThreadFromShortcut(destinationThreadId);
+        return;
+      }
+
+      if (
+        resolvedCommand === "sidebar.project.previous" ||
+        resolvedCommand === "sidebar.project.next"
+      ) {
+        const destination = resolveSidebarProjectNavigationTarget({
+          orderedProjectTargets: sidebarProjectTargetsRef.current,
+          currentProjectId: activeThread?.projectId ?? activeDraftThread?.projectId ?? null,
+          direction: resolvedCommand === "sidebar.project.previous" ? "previous" : "next",
+        });
+        if (!destination) return;
+
+        event.preventDefault();
+        navigateToThreadFromShortcut(destination.threadId, {
+          expandProjectId: destination.projectId,
         });
         return;
       }
 
-      const activeThread = routeThreadId
-        ? threads.find((thread) => thread.id === routeThreadId)
-        : undefined;
-      const activeDraftThread = routeThreadId ? getDraftThread(routeThreadId) : null;
-      if (isChatNewLocalShortcut(event, keybindings)) {
+      if (isChatNewLocalShortcut(event, keybindingsRef.current)) {
         const projectId =
-          activeThread?.projectId ?? activeDraftThread?.projectId ?? projects[0]?.id;
+          activeThread?.projectId ?? activeDraftThread?.projectId ?? projectsRef.current[0]?.id;
         if (!projectId) return;
         event.preventDefault();
         void handleNewThread(projectId);
         return;
       }
 
-      if (!isChatNewShortcut(event, keybindings)) return;
-      const projectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? projects[0]?.id;
+      if (!isChatNewShortcut(event, keybindingsRef.current)) return;
+      const projectId =
+        activeThread?.projectId ?? activeDraftThread?.projectId ?? projectsRef.current[0]?.id;
       if (!projectId) return;
       event.preventDefault();
       void handleNewThread(projectId, {
@@ -1533,7 +1652,7 @@ export default function Sidebar() {
       });
     };
     const onMouseDown = (event: globalThis.MouseEvent) => {
-      if (selectedThreadIds.size === 0) return;
+      if (selectedThreadCountRef.current === 0) return;
       const target = event.target instanceof HTMLElement ? event.target : null;
       if (!shouldClearThreadSelectionOnMouseDown(target)) return;
       clearSelection();
@@ -1547,14 +1666,9 @@ export default function Sidebar() {
     clearSelection,
     getDraftThread,
     handleNewThread,
-    keybindings,
-    projects,
-    routeThreadId,
-    setSelectionAnchor,
-    selectedThreadIds.size,
-    threads,
-    navigate,
-    visibleSidebarThreadIds,
+    navigateHistory,
+    navigateToThreadFromShortcut,
+    router,
   ]);
 
   useEffect(() => {
