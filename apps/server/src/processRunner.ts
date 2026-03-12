@@ -94,6 +94,14 @@ function killChild(child: ChildProcessHandle, signal: NodeJS.Signals = "SIGTERM"
       // fallback to direct kill
     }
   }
+  if (child.pid !== undefined) {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {
+      // fall through to direct kill when the process group is unavailable
+    }
+  }
   child.kill(signal);
 }
 
@@ -138,6 +146,7 @@ export async function runProcess(
     const child = spawn(command, args, {
       cwd: options.cwd,
       env: options.env,
+      detached: process.platform !== "win32",
       stdio: "pipe",
       shell: process.platform === "win32",
     });
