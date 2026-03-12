@@ -263,6 +263,17 @@ interface ChatViewProps {
   threadId: ThreadId;
 }
 
+function isComposerTextboxFocused(target: EventTarget | null): boolean {
+  const activeElement =
+    target instanceof HTMLElement
+      ? target
+      : document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+  if (!activeElement) return false;
+  return activeElement.closest('[data-testid="composer-editor"]') !== null;
+}
+
 export default function ChatView({ threadId }: ChatViewProps) {
   const threads = useStore((store) => store.threads);
   const projects = useStore((store) => store.projects);
@@ -3619,6 +3630,31 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [isLocalDraftThread, scheduleComposerFocus, setDraftThreadContext, threadId],
   );
+  const canToggleComposerEnvMode =
+    isLocalDraftThread && !envLocked && !activeWorktreePath && !isComposerApprovalState;
+
+  useEffect(() => {
+    const handleComposerEnvModeShortcut = (event: globalThis.KeyboardEvent) => {
+      if (event.defaultPrevented || !canToggleComposerEnvMode) {
+        return;
+      }
+      if (!isComposerTextboxFocused(event.target)) {
+        return;
+      }
+
+      const usesMod = isMacPlatform(navigator.platform) ? event.metaKey : event.ctrlKey;
+      if (event.key.toLowerCase() !== "w" || !usesMod || !event.shiftKey || event.altKey) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      onEnvModeChange(envMode === "local" ? "worktree" : "local");
+    };
+
+    window.addEventListener("keydown", handleComposerEnvModeShortcut);
+    return () => window.removeEventListener("keydown", handleComposerEnvModeShortcut);
+  }, [canToggleComposerEnvMode, envMode, onEnvModeChange]);
 
   const applyPromptReplacement = useCallback(
     (
