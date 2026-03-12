@@ -12,6 +12,7 @@ import {
   MODEL_PROVIDER_SETTINGS,
   normalizeCustomModelSlugs,
   patchCustomModels,
+  normalizeSkillRootPaths,
   resolveAppModelSelection,
 } from "./appSettings";
 
@@ -67,6 +68,20 @@ describe("getAppModelOptions", () => {
     expect(options.some((option) => option.slug === "claude/custom-opus" && option.isCustom)).toBe(
       true,
     );
+  });
+});
+
+describe("normalizeSkillRootPaths", () => {
+  it("trims, deduplicates, and drops blank skill root values", () => {
+    expect(
+      normalizeSkillRootPaths([
+        " /Users/me/.codex/skills ",
+        "",
+        " /Users/me/.codex/skills ",
+        null,
+        "/tmp/custom-skills",
+      ]),
+    ).toEqual(["/Users/me/.codex/skills", "/tmp/custom-skills"]);
   });
 });
 

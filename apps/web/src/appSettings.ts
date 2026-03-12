@@ -27,7 +27,8 @@ export type ProviderCustomModelConfig = {
   placeholder: string;
   example: string;
 };
-
+const MAX_SKILL_ROOT_COUNT = 32;
+const MAX_SKILL_ROOT_LENGTH = 4096;
 const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
   codex: new Set(getModelOptions("codex").map((option) => option.slug)),
   claudeAgent: new Set(getModelOptions("claudeAgent").map((option) => option.slug)),
@@ -50,6 +51,9 @@ export const AppSettingsSchema = Schema.Struct({
   codexBinaryPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(withDefaults(() => "")),
   codexHomePath: Schema.String.check(Schema.isMaxLength(4096)).pipe(withDefaults(() => "")),
   defaultThreadEnvMode: EnvMode.pipe(withDefaults(() => "local" as const satisfies EnvMode)),
+  extraSkillRoots: Schema.Array(Schema.String.check(Schema.isMaxLength(MAX_SKILL_ROOT_LENGTH)))
+    .pipe(withDefaults(() => []))
+    .check(Schema.isMaxLength(MAX_SKILL_ROOT_COUNT)),
   confirmThreadDelete: Schema.Boolean.pipe(withDefaults(() => true)),
   enableAssistantStreaming: Schema.Boolean.pipe(withDefaults(() => false)),
   timestampFormat: TimestampFormat.pipe(withDefaults(() => DEFAULT_TIMESTAMP_FORMAT)),
@@ -116,9 +120,30 @@ export function normalizeCustomModelSlugs(
   return normalizedModels;
 }
 
+export function normalizeSkillRootPaths(roots: Iterable<string | null | undefined>): string[] {
+  const normalizedRoots: string[] = [];
+  const seen = new Set<string>();
+
+  for (const candidate of roots) {
+    const normalized = candidate?.trim();
+    if (!normalized || normalized.length > MAX_SKILL_ROOT_LENGTH || seen.has(normalized)) {
+      continue;
+    }
+
+    seen.add(normalized);
+    normalizedRoots.push(normalized);
+    if (normalizedRoots.length >= MAX_SKILL_ROOT_COUNT) {
+      break;
+    }
+  }
+
+  return normalizedRoots;
+}
+
 function normalizeAppSettings(settings: AppSettings): AppSettings {
   return {
     ...settings,
+    extraSkillRoots: normalizeSkillRootPaths(settings.extraSkillRoots),
     customCodexModels: normalizeCustomModelSlugs(settings.customCodexModels, "codex"),
     customClaudeModels: normalizeCustomModelSlugs(settings.customClaudeModels, "claudeAgent"),
   };
@@ -230,7 +255,14 @@ export function useAppSettings() {
 
   const updateSettings = useCallback(
     (patch: Partial<AppSettings>) => {
-      setSettings((prev) => normalizeAppSettings({ ...prev, ...patch }));
+      setSettings((prev) =>
+        normalizeAppSettings(
+          Schema.decodeSync(AppSettingsSchema)({
+            ...prev,
+            ...patch,
+          }),
+        ),
+      );
     },
     [setSettings],
   );
