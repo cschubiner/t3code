@@ -94,7 +94,7 @@ interface MountedChatView {
   router: ReturnType<typeof getRouter>;
 }
 
-function steerShortcutModifiers(): Pick<KeyboardEventInit, "ctrlKey" | "metaKey" | "shiftKey"> {
+function modShiftShortcutModifiers(): Pick<KeyboardEventInit, "ctrlKey" | "metaKey" | "shiftKey"> {
   return isMacPlatform(navigator.platform)
     ? { metaKey: true, shiftKey: true }
     : { ctrlKey: true, shiftKey: true };
@@ -614,9 +614,11 @@ async function waitForQueuedRow(queuedTurnId: string): Promise<HTMLElement> {
 }
 
 function findButtonByText(scope: ParentNode, text: string): HTMLButtonElement | null {
-  return Array.from(scope.querySelectorAll("button")).find(
-    (button) => button.textContent?.trim() === text,
-  ) as HTMLButtonElement | null;
+  return (
+    (Array.from(scope.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === text,
+    ) as HTMLButtonElement | undefined) ?? null
+  );
 }
 
 function listDispatchCommandsByType(type: string) {
@@ -1406,6 +1408,84 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("toggles worktree mode with Mod+Shift+W only while the composer is focused", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+        },
+      },
+      queuedTurnsByThreadId: {},
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+    });
+
+    try {
+      const initialEnvButton = await waitForElement(
+        () => findButtonByText(document, "Local"),
+        "Unable to find Local env mode button.",
+      );
+      expect(initialEnvButton.textContent?.trim()).toBe("Local");
+      initialEnvButton.focus();
+
+      initialEnvButton.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "w",
+          bubbles: true,
+          cancelable: true,
+          ...modShiftShortcutModifiers(),
+        }),
+      );
+      await waitForLayout();
+
+      expect(findButtonByText(document, "New worktree")).toBeNull();
+
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "w",
+          bubbles: true,
+          cancelable: true,
+          ...modShiftShortcutModifiers(),
+        }),
+      );
+
+      await waitForElement(
+        () => findButtonByText(document, "New worktree"),
+        "Unable to find New worktree env mode button.",
+      );
+
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "w",
+          bubbles: true,
+          cancelable: true,
+          ...modShiftShortcutModifiers(),
+        }),
+      );
+
+      await waitForElement(
+        () => findButtonByText(document, "Local"),
+        "Unable to find Local env mode button after toggling back.",
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("queues with Tab during a running turn by dispatching a server queue command", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
@@ -1459,7 +1539,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           key: "Enter",
           bubbles: true,
           cancelable: true,
-          ...steerShortcutModifiers(),
+          ...modShiftShortcutModifiers(),
         }),
       );
 
