@@ -1094,8 +1094,10 @@ export default function Sidebar() {
       clearSelection();
     };
 
+    window.addEventListener("keydown", onWindowKeyDown);
     window.addEventListener("mousedown", onMouseDown);
     return () => {
+      window.removeEventListener("keydown", onWindowKeyDown);
       window.removeEventListener("mousedown", onMouseDown);
     };
   }, [
