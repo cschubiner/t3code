@@ -1,4 +1,5 @@
 import {
+  ArrowDownToLineIcon,
   ArrowLeftIcon,
   ChevronRightIcon,
   FolderIcon,
@@ -65,6 +66,7 @@ import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
 import { Button } from "./ui/button";
 import { Collapsible, CollapsibleContent } from "./ui/collapsible";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { ImportFromCodexDialog } from "./ImportFromCodexDialog";
 import {
   SidebarContent,
   SidebarFooter,
@@ -302,6 +304,7 @@ export default function Sidebar() {
   const dragInProgressRef = useRef(false);
   const suppressProjectClickAfterDragRef = useRef(false);
   const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
+  const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const selectedThreadIds = useThreadSelectionStore((s) => s.selectedThreadIds);
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
   const rangeSelectTo = useThreadSelectionStore((s) => s.rangeSelectTo);
@@ -1321,26 +1324,43 @@ export default function Sidebar() {
             <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
               Projects
             </span>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <button
-                    type="button"
-                    aria-label="Add project"
-                    aria-pressed={shouldShowProjectPathEntry}
-                    className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
-                    onClick={handleStartAddProject}
+            <div className="flex items-center gap-1">
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      aria-label="Import from Codex"
+                      className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+                      onClick={() => setIsImportDialogOpen(true)}
+                    />
+                  }
+                >
+                  <ArrowDownToLineIcon className="size-3.5" />
+                </TooltipTrigger>
+                <TooltipPopup side="right">Import from Codex</TooltipPopup>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      aria-label="Add project"
+                      aria-pressed={shouldShowProjectPathEntry}
+                      className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+                      onClick={handleStartAddProject}
+                    />
+                  }
+                >
+                  <PlusIcon
+                    className={`size-3.5 transition-transform duration-150 ${
+                      shouldShowProjectPathEntry ? "rotate-45" : "rotate-0"
+                    }`}
                   />
-                }
-              >
-                <PlusIcon
-                  className={`size-3.5 transition-transform duration-150 ${
-                    shouldShowProjectPathEntry ? "rotate-45" : "rotate-0"
-                  }`}
-                />
-              </TooltipTrigger>
-              <TooltipPopup side="right">Add project</TooltipPopup>
-            </Tooltip>
+                </TooltipTrigger>
+                <TooltipPopup side="right">Add project</TooltipPopup>
+              </Tooltip>
+            </div>
           </div>
 
           {shouldShowProjectPathEntry && (
@@ -1735,6 +1755,12 @@ export default function Sidebar() {
           )}
         </SidebarGroup>
       </SidebarContent>
+
+      <ImportFromCodexDialog
+        open={isImportDialogOpen}
+        codexHomePath={appSettings.codexHomePath}
+        onOpenChange={setIsImportDialogOpen}
+      />
 
       <SidebarSeparator />
       <SidebarFooter className="p-2">

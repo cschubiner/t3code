@@ -49,6 +49,14 @@ import type {
   OrchestrationEvent,
   OrchestrationReadModel,
 } from "./orchestration";
+import type {
+  CodexImportImportSessionsInput,
+  CodexImportImportSessionsResult,
+  CodexImportListSessionsInput,
+  CodexImportPeekSessionInput,
+  CodexImportPeekSessionResult,
+  CodexImportSessionSummary,
+} from "./codexImport";
 import { EditorId } from "./editor";
 
 export interface ContextMenuItem<T extends string = string> {
@@ -98,12 +106,7 @@ export interface DesktopUpdateActionResult {
   state: DesktopUpdateState;
 }
 
-export type DesktopRemoteAccessState =
-  | "disabled"
-  | "starting"
-  | "ready"
-  | "unavailable"
-  | "error";
+export type DesktopRemoteAccessState = "disabled" | "starting" | "ready" | "unavailable" | "error";
 
 export interface DesktopRemoteAccessStatus {
   enabled: boolean;
@@ -185,6 +188,15 @@ export interface NativeApi {
       input: ServerGenerateSecretUrlInput,
     ) => Promise<ServerGenerateSecretUrlResult>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
+  };
+  codexImport: {
+    listSessions: (
+      input: CodexImportListSessionsInput,
+    ) => Promise<ReadonlyArray<CodexImportSessionSummary>>;
+    peekSession: (input: CodexImportPeekSessionInput) => Promise<CodexImportPeekSessionResult>;
+    importSessions: (
+      input: CodexImportImportSessionsInput,
+    ) => Promise<CodexImportImportSessionsResult>;
   };
   orchestration: {
     getSnapshot: () => Promise<OrchestrationReadModel>;

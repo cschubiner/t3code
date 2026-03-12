@@ -79,6 +79,7 @@ import { expandHomePath } from "./os-jank.ts";
 import { makeServerPushBus } from "./wsServer/pushBus.ts";
 import { makeServerReadiness } from "./wsServer/readiness.ts";
 import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
+import { CodexImport } from "./codexImport/Services/CodexImport.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -340,6 +341,7 @@ export type ServerCoreRuntimeServices =
   | ProjectionSnapshotQuery
   | CheckpointDiffQuery
   | OrchestrationReactor
+  | CodexImport
   | ProviderService
   | ProviderHealth;
 
@@ -389,6 +391,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const terminalManager = yield* TerminalManager;
   const keybindingsManager = yield* Keybindings;
   const providerHealth = yield* ProviderHealth;
+  const codexImport = yield* CodexImport;
   const git = yield* GitCore;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -1191,6 +1194,27 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return { keybindings: keybindingsConfig, issues: [] };
       }
 
+      case WS_METHODS.codexImportListSessions: {
+        const body = stripRequestTag(request.body);
+        return yield* codexImport
+          .listSessions(body)
+          .pipe(Effect.mapError((error) => new RouteRequestError({ message: error.message })));
+      }
+
+      case WS_METHODS.codexImportPeekSession: {
+        const body = stripRequestTag(request.body);
+        return yield* codexImport
+          .peekSession(body)
+          .pipe(Effect.mapError((error) => new RouteRequestError({ message: error.message })));
+      }
+
+      case WS_METHODS.codexImportImportSessions: {
+        const body = stripRequestTag(request.body);
+        return yield* codexImport
+          .importSessions(body)
+          .pipe(Effect.mapError((error) => new RouteRequestError({ message: error.message })));
+      }
+
       default: {
         const _exhaustiveCheck: never = request.body;
         return yield* new RouteRequestError({
@@ -1307,7 +1331,9 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           if (parsed.body?._tag?.startsWith("server.")) {
             void runPromise(
               handleMessage(ws, raw).pipe(
-                Effect.catch((error) => Effect.logError("Error handling local server message", error)),
+                Effect.catch((error) =>
+                  Effect.logError("Error handling local server message", error),
+                ),
               ),
             );
             return;
