@@ -1,9 +1,15 @@
 import { ThreadId, type ResolvedKeybindingsConfig } from "@t3tools/contracts";
-import { Outlet, createFileRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { Outlet, createFileRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { useEffect } from "react";
 
 import ThreadSidebar from "../components/Sidebar";
+import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { isTerminalFocused } from "../lib/terminalFocus";
+import { serverConfigQueryOptions } from "../lib/serverReactQuery";
+import { resolveShortcutCommand } from "../keybindings";
+import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
+import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useThreadNavigationHistoryStore } from "../threadNavigationHistoryStore";
 import { Sidebar, SidebarProvider } from "~/components/ui/sidebar";
 import { resolveSidebarNewThreadEnvMode } from "~/components/Sidebar.logic";
