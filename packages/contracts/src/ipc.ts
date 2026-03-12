@@ -24,7 +24,11 @@ import type {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project";
-import type { ServerConfig } from "./server";
+import type {
+  ServerConfig,
+  ServerGenerateSecretUrlInput,
+  ServerGenerateSecretUrlResult,
+} from "./server";
 import type {
   TerminalClearInput,
   TerminalCloseInput,
@@ -45,6 +49,14 @@ import type {
   OrchestrationEvent,
   OrchestrationReadModel,
 } from "./orchestration";
+import type {
+  CodexImportImportSessionsInput,
+  CodexImportImportSessionsResult,
+  CodexImportListSessionsInput,
+  CodexImportPeekSessionInput,
+  CodexImportPeekSessionResult,
+  CodexImportSessionSummary,
+} from "./codexImport";
 import { EditorId } from "./editor";
 
 export interface ContextMenuItem<T extends string = string> {
@@ -94,6 +106,17 @@ export interface DesktopUpdateActionResult {
   state: DesktopUpdateState;
 }
 
+export type DesktopRemoteAccessState = "disabled" | "starting" | "ready" | "unavailable" | "error";
+
+export interface DesktopRemoteAccessStatus {
+  enabled: boolean;
+  state: DesktopRemoteAccessState;
+  provider: "tailscale";
+  preferredUrl: string | null;
+  urls: readonly string[];
+  message: string | null;
+}
+
 export interface DesktopBridge {
   getWsUrl: () => string | null;
   pickFolder: () => Promise<string | null>;
@@ -109,6 +132,9 @@ export interface DesktopBridge {
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
+  getRemoteAccessStatus: () => Promise<DesktopRemoteAccessStatus>;
+  setRemoteAccessEnabled: (enabled: boolean) => Promise<DesktopRemoteAccessStatus>;
+  onRemoteAccessStatus: (listener: (status: DesktopRemoteAccessStatus) => void) => () => void;
 }
 
 export interface NativeApi {
@@ -158,7 +184,19 @@ export interface NativeApi {
   };
   server: {
     getConfig: () => Promise<ServerConfig>;
+    generateSecretUrl: (
+      input: ServerGenerateSecretUrlInput,
+    ) => Promise<ServerGenerateSecretUrlResult>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
+  };
+  codexImport: {
+    listSessions: (
+      input: CodexImportListSessionsInput,
+    ) => Promise<ReadonlyArray<CodexImportSessionSummary>>;
+    peekSession: (input: CodexImportPeekSessionInput) => Promise<CodexImportPeekSessionResult>;
+    importSessions: (
+      input: CodexImportImportSessionsInput,
+    ) => Promise<CodexImportImportSessionsResult>;
   };
   orchestration: {
     getSnapshot: () => Promise<OrchestrationReadModel>;

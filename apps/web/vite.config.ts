@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
@@ -6,6 +8,7 @@ import { version } from "./package.json" with { type: "json" };
 
 const port = Number(process.env.PORT ?? 5733);
 const sourcemapEnv = process.env.T3CODE_WEB_SOURCEMAP?.trim().toLowerCase();
+const isVitestRun = process.env.VITEST === "true";
 
 const buildSourcemap =
   sourcemapEnv === "0" || sourcemapEnv === "false"
@@ -25,7 +28,9 @@ export default defineConfig({
     tailwindcss(),
   ],
   optimizeDeps: {
-    include: ["@pierre/diffs", "@pierre/diffs/react", "@pierre/diffs/worker/worker.js"],
+    include: isVitestRun
+      ? ["@pierre/diffs", "@pierre/diffs/worker/worker.js"]
+      : ["@pierre/diffs", "@pierre/diffs/react", "@pierre/diffs/worker/worker.js"],
   },
   define: {
     // In dev mode, tell the web app where the WebSocket server lives
@@ -33,6 +38,14 @@ export default defineConfig({
     "import.meta.env.APP_VERSION": JSON.stringify(version),
   },
   resolve: {
+    alias: {
+      "@t3tools/contracts": path.resolve(__dirname, "../../packages/contracts/src/index.ts"),
+      "@t3tools/shared/model": path.resolve(__dirname, "../../packages/shared/src/model.ts"),
+      "@t3tools/shared/git": path.resolve(__dirname, "../../packages/shared/src/git.ts"),
+      "@t3tools/shared/logging": path.resolve(__dirname, "../../packages/shared/src/logging.ts"),
+      "@t3tools/shared/shell": path.resolve(__dirname, "../../packages/shared/src/shell.ts"),
+      "@t3tools/shared/Net": path.resolve(__dirname, "../../packages/shared/src/Net.ts"),
+    },
     tsconfigPaths: true,
   },
   server: {
