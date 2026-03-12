@@ -43,7 +43,12 @@ import { isElectron } from "../env";
 import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { isMacPlatform, newCommandId, newProjectId, newThreadId } from "../lib/utils";
 import { useStore } from "../store";
-import { isChatNewLocalShortcut, isChatNewShortcut, shortcutLabelForCommand } from "../keybindings";
+import {
+  isChatNewLocalShortcut,
+  isChatNewShortcut,
+  resolveShortcutCommand,
+  shortcutLabelForCommand,
+} from "../keybindings";
 import { derivePendingApprovals, derivePendingUserInputs } from "../session-logic";
 import { gitRemoveWorktreeMutationOptions, gitStatusQueryOptions } from "../lib/gitReactQuery";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
@@ -85,7 +90,15 @@ import {
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
-import { resolveThreadStatusPill, shouldClearThreadSelectionOnMouseDown } from "./Sidebar.logic";
+import {
+  isTypingInSidebarTextEntry,
+  resolveSidebarThreadNavigationTarget,
+  resolveThreadStatusPill,
+  shouldClearThreadSelectionOnMouseDown,
+  sortThreadsForSidebar,
+  visibleThreadIdsForSidebar,
+  visibleThreadsForSidebar,
+} from "./Sidebar.logic";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
@@ -316,6 +329,16 @@ export default function Sidebar() {
   const projectCwdById = useMemo(
     () => new Map(projects.map((project) => [project.id, project.cwd] as const)),
     [projects],
+  );
+  const visibleSidebarThreadIds = useMemo(
+    () =>
+      visibleThreadIdsForSidebar({
+        projects,
+        threads,
+        expandedThreadListsByProject,
+        threadPreviewLimit: THREAD_PREVIEW_LIMIT,
+      }),
+    [expandedThreadListsByProject, projects, threads],
   );
   const threadGitTargets = useMemo(
     () =>
@@ -1027,9 +1050,35 @@ export default function Sidebar() {
 
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+
       if (event.key === "Escape" && selectedThreadIds.size > 0) {
         event.preventDefault();
         clearSelection();
+        return;
+      }
+
+      const resolvedCommand = resolveShortcutCommand(event, keybindings);
+      if (
+        resolvedCommand === "sidebar.thread.previous" ||
+        resolvedCommand === "sidebar.thread.next"
+      ) {
+        if (isTypingInSidebarTextEntry(event.target)) return;
+
+        const destinationThreadId = resolveSidebarThreadNavigationTarget({
+          orderedVisibleThreadIds: visibleSidebarThreadIds,
+          currentThreadId: routeThreadId,
+          direction: resolvedCommand === "sidebar.thread.previous" ? "previous" : "next",
+        });
+        if (!destinationThreadId) return;
+
+        event.preventDefault();
+        clearSelection();
+        setSelectionAnchor(destinationThreadId);
+        void navigate({
+          to: "/$threadId",
+          params: { threadId: destinationThreadId },
+        });
         return;
       }
 
@@ -1077,8 +1126,11 @@ export default function Sidebar() {
     keybindings,
     projects,
     routeThreadId,
+    setSelectionAnchor,
     selectedThreadIds.size,
     threads,
+    navigate,
+    visibleSidebarThreadIds,
   ]);
 
   useEffect(() => {
@@ -1428,20 +1480,14 @@ export default function Sidebar() {
                 strategy={verticalListSortingStrategy}
               >
                 {projects.map((project) => {
-                  const projectThreads = threads
-                    .filter((thread) => thread.projectId === project.id)
-                    .toSorted((a, b) => {
-                      const byDate =
-                        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-                      if (byDate !== 0) return byDate;
-                      return b.id.localeCompare(a.id);
-                    });
+                  const projectThreads = sortThreadsForSidebar(project.id, threads);
                   const isThreadListExpanded = expandedThreadListsByProject.has(project.id);
                   const hasHiddenThreads = projectThreads.length > THREAD_PREVIEW_LIMIT;
-                  const visibleThreads =
-                    hasHiddenThreads && !isThreadListExpanded
-                      ? projectThreads.slice(0, THREAD_PREVIEW_LIMIT)
-                      : projectThreads;
+                  const visibleThreads = visibleThreadsForSidebar({
+                    projectThreads,
+                    isThreadListExpanded,
+                    threadPreviewLimit: THREAD_PREVIEW_LIMIT,
+                  });
                   const orderedProjectThreadIds = projectThreads.map((t) => t.id);
 
                   return (
