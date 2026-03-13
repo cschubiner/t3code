@@ -15,6 +15,8 @@ const STATIC_KEYBINDING_COMMANDS = [
   "diff.toggle",
   "sidebar.history.previous",
   "sidebar.history.next",
+  "thread.search",
+  "threads.search",
   "sidebar.thread.previous",
   "sidebar.thread.next",
   "sidebar.project.previous",
