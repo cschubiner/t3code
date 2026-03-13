@@ -225,7 +225,6 @@ function createSnapshotForTargetUser(options: {
         updatedAt: NOW_ISO,
         deletedAt: null,
         messages,
-        queuedTurns: [],
         activities: [],
         proposedPlans: [],
         checkpoints: [],
@@ -280,7 +279,6 @@ function addThreadToSnapshot(
         updatedAt: NOW_ISO,
         deletedAt: null,
         messages: [],
-        queuedTurns: [],
         activities: [],
         proposedPlans: [],
         checkpoints: [],
@@ -306,25 +304,6 @@ function createDraftOnlySnapshot(): OrchestrationReadModel {
   return {
     ...snapshot,
     threads: [],
-  };
-}
-
-function createQueuedTurn(
-  overrides: Partial<OrchestrationReadModel["threads"][number]["queuedTurns"][number]> = {},
-): OrchestrationReadModel["threads"][number]["queuedTurns"][number] {
-  return {
-    messageId: "msg-user-queued-1" as MessageId,
-    text: "Queued follow-up",
-    attachments: [],
-    provider: "codex",
-    model: "gpt-5",
-    modelOptions: null,
-    providerOptions: null,
-    assistantDeliveryMode: "buffered",
-    runtimeMode: "full-access",
-    interactionMode: "default",
-    queuedAt: NOW_ISO,
-    ...overrides,
   };
 }
 
@@ -403,6 +382,24 @@ function createRunningSnapshot(): OrchestrationReadModel {
   return {
     ...snapshot,
     threads: nextThreads,
+  };
+}
+
+function createQueuedFollowUp(input: {
+  id: string;
+  text: string;
+  interactionMode?: "default" | "plan";
+}) {
+  return {
+    id: input.id,
+    queuedAt: NOW_ISO,
+    text: input.text,
+    images: [],
+    provider: "codex" as const,
+    model: "gpt-5",
+    runtimeMode: "full-access" as const,
+    interactionMode: input.interactionMode ?? "default",
+    modelOptions: null,
   };
 }
 
@@ -1187,7 +1184,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("queues with Tab during a running turn by dispatching a server queue command", async () => {
+  it("queues with Enter during a running turn and auto-sends when the thread becomes ready", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createRunningSnapshot(),
@@ -1201,7 +1198,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       composerEditor.focus();
       composerEditor.dispatchEvent(
         new KeyboardEvent("keydown", {
-          key: "Tab",
+          key: "Enter",
           bubbles: true,
           cancelable: true,
         }),
@@ -1209,11 +1206,36 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(
         () => {
-          const queueRequest = listDispatchCommandsByType("thread.turn.queue.enqueue").at(-1);
-          expect(queueRequest?.command?.message?.text).toBe("Queue this when ready");
+          expect(useComposerDraftStore.getState().queuedTurnsByThreadId[THREAD_ID]).toHaveLength(1);
           expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.prompt ?? "").toBe(
             "",
           );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const runningSnapshot = createRunningSnapshot();
+      const readySnapshot: OrchestrationReadModel = {
+        ...runningSnapshot,
+        threads: [
+          {
+            ...runningSnapshot.threads[0]!,
+            session: runningSnapshot.threads[0]!.session
+              ? {
+                  ...runningSnapshot.threads[0]!.session!,
+                  status: "ready",
+                  activeTurnId: null,
+                }
+              : null,
+          },
+        ],
+      };
+      useStore.getState().syncServerReadModel(readySnapshot);
+
+      await vi.waitFor(
+        () => {
+          const turnStartRequest = listDispatchCommandsByType("thread.turn.start")[0];
+          expect(turnStartRequest?.command?.message?.text).toBe("Queue this when ready");
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -1252,7 +1274,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
-      expect(listDispatchCommandsByType("thread.turn.queue.enqueue")).toHaveLength(0);
+      expect(useComposerDraftStore.getState().queuedTurnsByThreadId[THREAD_ID]).toBeUndefined();
     } finally {
       await mounted.cleanup();
     }
@@ -1265,33 +1287,19 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      const queuedSnapshot = createRunningSnapshot();
-      const queuedMessageId = "msg-user-queued-b" as MessageId;
-      useStore.getState().syncServerReadModel({
-        ...queuedSnapshot,
-        threads: [
-          {
-            ...queuedSnapshot.threads[0]!,
-            queuedTurns: [
-              createQueuedTurn({
-                messageId: "msg-user-queued-a" as MessageId,
-                text: "First queued",
-                queuedAt: isoAt(40),
-              }),
-              createQueuedTurn({
-                messageId: queuedMessageId,
-                text: "Second queued",
-                queuedAt: isoAt(41),
-              }),
-              createQueuedTurn({
-                messageId: "msg-user-queued-c" as MessageId,
-                text: "Third queued",
-                queuedAt: isoAt(42),
-              }),
-            ],
-          },
-        ],
-      });
+      const store = useComposerDraftStore.getState();
+      store.enqueueQueuedTurn(
+        THREAD_ID,
+        createQueuedFollowUp({ id: "queued-a", text: "First queued" }),
+      );
+      store.enqueueQueuedTurn(
+        THREAD_ID,
+        createQueuedFollowUp({ id: "queued-b", text: "Second queued" }),
+      );
+      store.enqueueQueuedTurn(
+        THREAD_ID,
+        createQueuedFollowUp({ id: "queued-c", text: "Third queued" }),
+      );
 
       await vi.waitFor(
         () => {
@@ -1300,15 +1308,18 @@ describe("ChatView timeline estimator parity (full app)", () => {
         { timeout: 8_000, interval: 16 },
       );
 
-      const secondRow = await waitForQueuedRow(String(queuedMessageId));
-      findButtonByText(secondRow, "Delete")?.click();
+      const secondRow = await waitForQueuedRow("queued-b");
+      const deleteButton = findButtonByText(secondRow, "Delete");
+      expect(deleteButton).toBeTruthy();
+      deleteButton?.click();
 
       await vi.waitFor(
         () => {
-          const removeRequest = listDispatchCommandsByType("thread.turn.queue.remove").at(-1);
-          expect((removeRequest?.command as { messageId?: string } | undefined)?.messageId).toBe(
-            queuedMessageId,
-          );
+          expect(
+            useComposerDraftStore
+              .getState()
+              .queuedTurnsByThreadId[THREAD_ID]?.map((turn) => turn.id),
+          ).toEqual(["queued-a", "queued-c"]);
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -1317,49 +1328,51 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("edits a queued follow-up and dispatches queue.update with trimmed text", async () => {
+  it("edits a queued follow-up and dispatches the edited text when the thread becomes ready", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createRunningSnapshot(),
     });
 
     try {
-      const queuedMessageId = "msg-user-queued-edit" as MessageId;
-      const queuedSnapshot = createRunningSnapshot();
-      useStore.getState().syncServerReadModel({
-        ...queuedSnapshot,
-        threads: [
-          {
-            ...queuedSnapshot.threads[0]!,
-            queuedTurns: [
-              createQueuedTurn({
-                messageId: queuedMessageId,
-                text: "Before edit",
-                queuedAt: isoAt(50),
-              }),
-            ],
-          },
-        ],
-      });
+      useComposerDraftStore
+        .getState()
+        .enqueueQueuedTurn(
+          THREAD_ID,
+          createQueuedFollowUp({ id: "queued-edit", text: "Before edit" }),
+        );
 
-      const row = await waitForQueuedRow(String(queuedMessageId));
+      const row = await waitForQueuedRow("queued-edit");
       findButtonByText(row, "Edit")?.click();
 
       await expect
-        .element(page.getByTestId("queued-follow-up-editor-msg-user-queued-edit"))
-        .toBeVisible();
-      await page.getByTestId("queued-follow-up-editor-msg-user-queued-edit").fill("  After edit  ");
+        .element(page.getByTestId("queued-follow-up-editor-queued-edit"))
+        .toBeInTheDocument();
+      await page.getByTestId("queued-follow-up-editor-queued-edit").fill("  After edit  ");
       findButtonByText(row, "Save")?.click();
 
+      const runningSnapshot = createRunningSnapshot();
+      const readySnapshot: OrchestrationReadModel = {
+        ...runningSnapshot,
+        threads: [
+          {
+            ...runningSnapshot.threads[0]!,
+            session: runningSnapshot.threads[0]!.session
+              ? {
+                  ...runningSnapshot.threads[0]!.session!,
+                  status: "ready",
+                  activeTurnId: null,
+                }
+              : null,
+          },
+        ],
+      };
+      useStore.getState().syncServerReadModel(readySnapshot);
+
       await vi.waitFor(
         () => {
-          const updateRequest = listDispatchCommandsByType("thread.turn.queue.update").at(-1);
-          expect((updateRequest?.command as { messageId?: string } | undefined)?.messageId).toBe(
-            queuedMessageId,
-          );
-          expect((updateRequest?.command as { text?: string } | undefined)?.text).toBe(
-            "After edit",
-          );
+          const turnStarts = listDispatchCommandsByType("thread.turn.start");
+          expect(turnStarts.at(-1)?.command?.message?.text).toBe("After edit");
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -1368,45 +1381,61 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("sends a queued follow-up now through queue.send-now", async () => {
+  it("uses the reordered first queued follow-up for auto-flush", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createRunningSnapshot(),
     });
 
     try {
-      const queuedSnapshot = createRunningSnapshot();
-      const queuedMessageId = "msg-user-queued-send-now" as MessageId;
-      useStore.getState().syncServerReadModel({
-        ...queuedSnapshot,
-        threads: [
-          {
-            ...queuedSnapshot.threads[0]!,
-            queuedTurns: [
-              createQueuedTurn({
-                messageId: "msg-user-queued-a" as MessageId,
-                text: "First queued",
-                queuedAt: isoAt(70),
-              }),
-              createQueuedTurn({
-                messageId: queuedMessageId,
-                text: "Send this now",
-                queuedAt: isoAt(71),
-              }),
-            ],
-          },
-        ],
-      });
-
-      const row = await waitForQueuedRow(String(queuedMessageId));
-      findButtonByText(row, "Send now")?.click();
+      const store = useComposerDraftStore.getState();
+      store.enqueueQueuedTurn(
+        THREAD_ID,
+        createQueuedFollowUp({ id: "queued-a", text: "First queued" }),
+      );
+      store.enqueueQueuedTurn(
+        THREAD_ID,
+        createQueuedFollowUp({ id: "queued-b", text: "Second queued" }),
+      );
+      store.enqueueQueuedTurn(
+        THREAD_ID,
+        createQueuedFollowUp({ id: "queued-c", text: "Third queued" }),
+      );
+      store.moveQueuedTurn(THREAD_ID, "queued-c", "queued-a");
 
       await vi.waitFor(
         () => {
-          const sendNowRequest = listDispatchCommandsByType("thread.turn.queue.send-now").at(-1);
-          expect((sendNowRequest?.command as { messageId?: string } | undefined)?.messageId).toBe(
-            queuedMessageId,
-          );
+          expect(
+            useComposerDraftStore
+              .getState()
+              .queuedTurnsByThreadId[THREAD_ID]?.map((turn) => turn.id),
+          ).toEqual(["queued-c", "queued-a", "queued-b"]);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const runningSnapshot = createRunningSnapshot();
+      const readySnapshot: OrchestrationReadModel = {
+        ...runningSnapshot,
+        threads: [
+          {
+            ...runningSnapshot.threads[0]!,
+            session: runningSnapshot.threads[0]!.session
+              ? {
+                  ...runningSnapshot.threads[0]!.session!,
+                  status: "ready",
+                  activeTurnId: null,
+                }
+              : null,
+          },
+        ],
+      };
+      useStore.getState().syncServerReadModel(readySnapshot);
+
+      await vi.waitFor(
+        () => {
+          const turnStarts = listDispatchCommandsByType("thread.turn.start");
+          expect(turnStarts.at(-1)?.command?.message?.text).toBe("Third queued");
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -1415,34 +1444,150 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("clears all queued follow-ups via queue.remove", async () => {
+  it("sends a selected queued follow-up immediately and removes only that item", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createRunningSnapshot(),
     });
 
     try {
-      const queuedSnapshot = createRunningSnapshot();
-      useStore.getState().syncServerReadModel({
-        ...queuedSnapshot,
+      const store = useComposerDraftStore.getState();
+      store.enqueueQueuedTurn(
+        THREAD_ID,
+        createQueuedFollowUp({ id: "queued-a", text: "First queued" }),
+      );
+      store.enqueueQueuedTurn(
+        THREAD_ID,
+        createQueuedFollowUp({ id: "queued-b", text: "Second queued" }),
+      );
+
+      const secondRow = await waitForQueuedRow("queued-b");
+      findButtonByText(secondRow, "Send now")?.click();
+
+      await vi.waitFor(
+        () => {
+          const turnStarts = listDispatchCommandsByType("thread.turn.start");
+          expect(turnStarts.at(-1)?.command?.message?.text).toBe("Second queued");
+          expect(
+            useComposerDraftStore
+              .getState()
+              .queuedTurnsByThreadId[THREAD_ID]?.map((turn) => turn.id),
+          ).toEqual(["queued-a"]);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("restores a send-now queued follow-up to its original position when dispatch fails", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshot(),
+    });
+
+    try {
+      dispatchCommandErrorsByType.set("thread.turn.start", "send-now failed");
+      const store = useComposerDraftStore.getState();
+      store.enqueueQueuedTurn(
+        THREAD_ID,
+        createQueuedFollowUp({ id: "queued-a", text: "First queued" }),
+      );
+      store.enqueueQueuedTurn(
+        THREAD_ID,
+        createQueuedFollowUp({ id: "queued-b", text: "Second queued" }),
+      );
+      store.enqueueQueuedTurn(
+        THREAD_ID,
+        createQueuedFollowUp({ id: "queued-c", text: "Third queued" }),
+      );
+
+      const secondRow = await waitForQueuedRow("queued-b");
+      findButtonByText(secondRow, "Send now")?.click();
+
+      await vi.waitFor(
+        () => {
+          expect(
+            useComposerDraftStore
+              .getState()
+              .queuedTurnsByThreadId[THREAD_ID]?.map((turn) => turn.id),
+          ).toEqual(["queued-a", "queued-b", "queued-c"]);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("restores the front queued follow-up when auto-flush dispatch fails", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshot(),
+    });
+
+    try {
+      dispatchCommandErrorsByType.set("thread.turn.start", "auto-flush failed");
+      const store = useComposerDraftStore.getState();
+      store.enqueueQueuedTurn(
+        THREAD_ID,
+        createQueuedFollowUp({ id: "queued-a", text: "First queued" }),
+      );
+      store.enqueueQueuedTurn(
+        THREAD_ID,
+        createQueuedFollowUp({ id: "queued-b", text: "Second queued" }),
+      );
+
+      const runningSnapshot = createRunningSnapshot();
+      const readySnapshot: OrchestrationReadModel = {
+        ...runningSnapshot,
         threads: [
           {
-            ...queuedSnapshot.threads[0]!,
-            queuedTurns: [
-              createQueuedTurn({
-                messageId: "msg-user-queued-a" as MessageId,
-                text: "First queued",
-                queuedAt: isoAt(80),
-              }),
-              createQueuedTurn({
-                messageId: "msg-user-queued-b" as MessageId,
-                text: "Second queued",
-                queuedAt: isoAt(81),
-              }),
-            ],
+            ...runningSnapshot.threads[0]!,
+            session: runningSnapshot.threads[0]!.session
+              ? {
+                  ...runningSnapshot.threads[0]!.session!,
+                  status: "ready",
+                  activeTurnId: null,
+                }
+              : null,
           },
         ],
-      });
+      };
+      useStore.getState().syncServerReadModel(readySnapshot);
+
+      await vi.waitFor(
+        () => {
+          expect(
+            useComposerDraftStore
+              .getState()
+              .queuedTurnsByThreadId[THREAD_ID]?.map((turn) => turn.id),
+          ).toEqual(["queued-a", "queued-b"]);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("clears all queued follow-ups from the panel", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshot(),
+    });
+
+    try {
+      const store = useComposerDraftStore.getState();
+      store.enqueueQueuedTurn(
+        THREAD_ID,
+        createQueuedFollowUp({ id: "queued-a", text: "First queued" }),
+      );
+      store.enqueueQueuedTurn(
+        THREAD_ID,
+        createQueuedFollowUp({ id: "queued-b", text: "Second queued" }),
+      );
 
       const clearAllButton = await waitForElement(
         () => findButtonByText(document, "Clear all"),
@@ -1452,11 +1597,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(
         () => {
-          const removeRequests = listDispatchCommandsByType("thread.turn.queue.remove");
-          const messageIds = removeRequests
-            .map((request) => (request.command as { messageId?: string } | undefined)?.messageId)
-            .filter(Boolean);
-          expect(messageIds).toEqual(["msg-user-queued-a", "msg-user-queued-b"]);
+          expect(useComposerDraftStore.getState().queuedTurnsByThreadId[THREAD_ID]).toBeUndefined();
         },
         { timeout: 8_000, interval: 16 },
       );

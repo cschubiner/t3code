@@ -19,7 +19,6 @@ github:hwanseoc
 github:jamesx0416
 github:jasonLaster
 github:JoeEverest
-github:maria-rcks
 github:nmggithub
 github:Noojuno
 github:notkainoa

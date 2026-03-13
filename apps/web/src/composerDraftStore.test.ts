@@ -7,6 +7,20 @@ import {
   useComposerDraftStore,
 } from "./composerDraftStore";
 
+function makeQueuedTurn(input: { id: string; text?: string; images?: ComposerImageAttachment[] }) {
+  return {
+    id: input.id,
+    queuedAt: "2026-03-08T12:00:00.000Z",
+    text: input.text ?? input.id,
+    images: input.images ?? [],
+    provider: "codex" as const,
+    model: "gpt-5.4",
+    runtimeMode: "full-access" as const,
+    interactionMode: "default" as const,
+    modelOptions: null,
+  };
+}
+
 function makeImage(input: {
   id: string;
   previewUrl: string;
@@ -196,7 +210,6 @@ describe("composerDraftStore queued turns", () => {
       model: "gpt-5.4",
       runtimeMode: "full-access",
       interactionMode: "default",
-      serviceTier: null,
       modelOptions: null,
     });
 
@@ -221,7 +234,6 @@ describe("composerDraftStore queued turns", () => {
       model: "gpt-5.4",
       runtimeMode: "full-access",
       interactionMode: "default",
-      serviceTier: null,
       modelOptions: null,
     });
 
@@ -229,6 +241,80 @@ describe("composerDraftStore queued turns", () => {
 
     expect(useComposerDraftStore.getState().queuedTurnsByThreadId[threadId]).toBeUndefined();
     expect(revokeSpy).toHaveBeenCalledWith("blob:queued-remove");
+  });
+
+  it("takes queued turns without revoking previews when removing by id", () => {
+    const image = makeImage({
+      id: "img-queued-take",
+      previewUrl: "blob:queued-take",
+    });
+    const store = useComposerDraftStore.getState();
+    store.enqueueQueuedTurn(
+      threadId,
+      makeQueuedTurn({
+        id: "queued-take",
+        images: [image],
+      }),
+    );
+
+    const removed = store.takeQueuedTurn(threadId, "queued-take");
+
+    expect(removed?.id).toBe("queued-take");
+    expect(useComposerDraftStore.getState().queuedTurnsByThreadId[threadId]).toBeUndefined();
+    expect(revokeSpy).not.toHaveBeenCalledWith("blob:queued-take");
+  });
+
+  it("updates queued turn text without revoking retained previews", () => {
+    const image = makeImage({
+      id: "img-queued-update",
+      previewUrl: "blob:queued-update",
+    });
+    const store = useComposerDraftStore.getState();
+    store.enqueueQueuedTurn(
+      threadId,
+      makeQueuedTurn({
+        id: "queued-update",
+        text: "Before",
+        images: [image],
+      }),
+    );
+
+    store.updateQueuedTurn(threadId, "queued-update", (turn) => ({
+      ...turn,
+      text: "After",
+    }));
+
+    expect(useComposerDraftStore.getState().queuedTurnsByThreadId[threadId]?.[0]?.text).toBe(
+      "After",
+    );
+    expect(revokeSpy).not.toHaveBeenCalledWith("blob:queued-update");
+  });
+
+  it("moves queued turns by id and keeps missing ids as no-ops", () => {
+    const store = useComposerDraftStore.getState();
+    store.enqueueQueuedTurn(threadId, makeQueuedTurn({ id: "queued-a" }));
+    store.enqueueQueuedTurn(threadId, makeQueuedTurn({ id: "queued-b" }));
+    store.enqueueQueuedTurn(threadId, makeQueuedTurn({ id: "queued-c" }));
+
+    store.moveQueuedTurn(threadId, "queued-c", "queued-a");
+    store.moveQueuedTurn(threadId, "missing", "queued-b");
+
+    expect(
+      useComposerDraftStore.getState().queuedTurnsByThreadId[threadId]?.map((turn) => turn.id),
+    ).toEqual(["queued-c", "queued-a", "queued-b"]);
+  });
+
+  it("inserts queued turns at a clamped index", () => {
+    const store = useComposerDraftStore.getState();
+    store.enqueueQueuedTurn(threadId, makeQueuedTurn({ id: "queued-a" }));
+    store.enqueueQueuedTurn(threadId, makeQueuedTurn({ id: "queued-c" }));
+
+    store.insertQueuedTurnAt(threadId, 1, makeQueuedTurn({ id: "queued-b" }));
+    store.insertQueuedTurnAt(threadId, 999, makeQueuedTurn({ id: "queued-d" }));
+
+    expect(
+      useComposerDraftStore.getState().queuedTurnsByThreadId[threadId]?.map((turn) => turn.id),
+    ).toEqual(["queued-a", "queued-b", "queued-c", "queued-d"]);
   });
 });
 

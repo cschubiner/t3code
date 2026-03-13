@@ -8,7 +8,6 @@ import { version } from "./package.json" with { type: "json" };
 
 const port = Number(process.env.PORT ?? 5733);
 const sourcemapEnv = process.env.T3CODE_WEB_SOURCEMAP?.trim().toLowerCase();
-const isVitestRun = process.env.VITEST === "true";
 
 const buildSourcemap =
   sourcemapEnv === "0" || sourcemapEnv === "false"
@@ -28,9 +27,7 @@ export default defineConfig({
     tailwindcss(),
   ],
   optimizeDeps: {
-    include: isVitestRun
-      ? ["@pierre/diffs", "@pierre/diffs/worker/worker.js"]
-      : ["@pierre/diffs", "@pierre/diffs/react", "@pierre/diffs/worker/worker.js"],
+    include: ["@pierre/diffs", "@pierre/diffs/react", "@pierre/diffs/worker/worker.js"],
   },
   define: {
     // In dev mode, tell the web app where the WebSocket server lives

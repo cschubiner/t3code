@@ -1,5 +1,4 @@
 import type {
-  AssistantDeliveryMode,
   OrchestrationLatestTurn,
   OrchestrationProposedPlanId,
   OrchestrationSessionStatus,
@@ -12,8 +11,6 @@ import type {
   CheckpointRef,
   ProviderKind,
   ProviderInteractionMode,
-  ProviderModelOptions,
-  ProviderStartOptions,
   RuntimeMode,
 } from "@t3tools/contracts";
 
@@ -50,20 +47,6 @@ export interface ChatMessage {
   createdAt: string;
   completedAt?: string | undefined;
   streaming: boolean;
-}
-
-export interface ThreadQueuedTurn {
-  messageId: MessageId;
-  text: string;
-  attachments: ChatAttachment[];
-  provider: ProviderKind | null;
-  model: string | null;
-  modelOptions: ProviderModelOptions | null;
-  providerOptions: ProviderStartOptions | null;
-  assistantDeliveryMode: AssistantDeliveryMode;
-  runtimeMode: RuntimeMode;
-  interactionMode: ProviderInteractionMode;
-  queuedAt: string;
 }
 
 export interface ProposedPlan {
@@ -110,7 +93,6 @@ export interface Thread {
   interactionMode: ProviderInteractionMode;
   session: ThreadSession | null;
   messages: ChatMessage[];
-  queuedTurns: ThreadQueuedTurn[];
   proposedPlans: ProposedPlan[];
   error: string | null;
   createdAt: string;

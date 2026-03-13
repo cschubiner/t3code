@@ -5,8 +5,6 @@ import {
   NonNegativeInt,
   OrchestrationCheckpointFile,
   OrchestrationReadModel,
-  ProviderModelOptions,
-  ProviderStartOptions,
   ProjectScript,
   TurnId,
   type OrchestrationCheckpointSummary,
@@ -34,7 +32,6 @@ import { ProjectionState } from "../../persistence/Services/ProjectionState.ts";
 import { ProjectionThreadActivity } from "../../persistence/Services/ProjectionThreadActivities.ts";
 import { ProjectionThreadMessage } from "../../persistence/Services/ProjectionThreadMessages.ts";
 import { ProjectionThreadProposedPlan } from "../../persistence/Services/ProjectionThreadProposedPlans.ts";
-import { ProjectionThreadQueuedTurn } from "../../persistence/Services/ProjectionThreadQueuedTurns.ts";
 import { ProjectionThreadSession } from "../../persistence/Services/ProjectionThreadSessions.ts";
 import { ProjectionThread } from "../../persistence/Services/ProjectionThreads.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
@@ -53,13 +50,6 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
   Struct.assign({
     isStreaming: Schema.Number,
     attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
-  }),
-);
-const ProjectionThreadQueuedTurnDbRowSchema = ProjectionThreadQueuedTurn.mapFields(
-  Struct.assign({
-    attachments: Schema.fromJsonString(Schema.Array(ChatAttachment)),
-    modelOptions: Schema.NullOr(Schema.fromJsonString(ProviderModelOptions)),
-    providerOptions: Schema.NullOr(Schema.fromJsonString(ProviderStartOptions)),
   }),
 );
 const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan;
@@ -91,7 +81,6 @@ const REQUIRED_SNAPSHOT_PROJECTORS = [
   ORCHESTRATION_PROJECTOR_NAMES.projects,
   ORCHESTRATION_PROJECTOR_NAMES.threads,
   ORCHESTRATION_PROJECTOR_NAMES.threadMessages,
-  ORCHESTRATION_PROJECTOR_NAMES.threadQueuedTurns,
   ORCHESTRATION_PROJECTOR_NAMES.threadProposedPlans,
   ORCHESTRATION_PROJECTOR_NAMES.threadActivities,
   ORCHESTRATION_PROJECTOR_NAMES.threadSessions,
@@ -198,31 +187,6 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           updated_at AS "updatedAt"
         FROM projection_thread_messages
         ORDER BY thread_id ASC, created_at ASC, message_id ASC
-      `,
-  });
-
-  const listThreadQueuedTurnRows = SqlSchema.findAll({
-    Request: Schema.Void,
-    Result: ProjectionThreadQueuedTurnDbRowSchema,
-    execute: () =>
-      sql`
-        SELECT
-          message_id AS "messageId",
-          thread_id AS "threadId",
-          sort_order AS "sortOrder",
-          text,
-          attachments_json AS "attachments",
-          provider,
-          model,
-          service_tier AS "serviceTier",
-          model_options_json AS "modelOptions",
-          provider_options_json AS "providerOptions",
-          assistant_delivery_mode AS "assistantDeliveryMode",
-          runtime_mode AS "runtimeMode",
-          interaction_mode AS "interactionMode",
-          queued_at AS "queuedAt"
-        FROM projection_thread_queued_turns
-        ORDER BY thread_id ASC, sort_order ASC, queued_at ASC, message_id ASC
       `,
   });
 
@@ -348,7 +312,6 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             projectRows,
             threadRows,
             messageRows,
-            queuedTurnRows,
             proposedPlanRows,
             activityRows,
             sessionRows,
@@ -377,14 +340,6 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 toPersistenceSqlOrDecodeError(
                   "ProjectionSnapshotQuery.getSnapshot:listThreadMessages:query",
                   "ProjectionSnapshotQuery.getSnapshot:listThreadMessages:decodeRows",
-                ),
-              ),
-            ),
-            listThreadQueuedTurnRows(undefined).pipe(
-              Effect.mapError(
-                toPersistenceSqlOrDecodeError(
-                  "ProjectionSnapshotQuery.getSnapshot:listThreadQueuedTurns:query",
-                  "ProjectionSnapshotQuery.getSnapshot:listThreadQueuedTurns:decodeRows",
                 ),
               ),
             ),
@@ -439,10 +394,6 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           ]);
 
           const messagesByThread = new Map<string, Array<OrchestrationMessage>>();
-          const queuedTurnsByThread = new Map<
-            string,
-            Array<OrchestrationThread["queuedTurns"][number]>
-          >();
           const proposedPlansByThread = new Map<string, Array<OrchestrationProposedPlan>>();
           const activitiesByThread = new Map<string, Array<OrchestrationThreadActivity>>();
           const checkpointsByThread = new Map<string, Array<OrchestrationCheckpointSummary>>();
@@ -475,26 +426,6 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               updatedAt: row.updatedAt,
             });
             messagesByThread.set(row.threadId, threadMessages);
-          }
-
-          for (const row of queuedTurnRows) {
-            updatedAt = maxIso(updatedAt, row.queuedAt);
-            const threadQueuedTurns = queuedTurnsByThread.get(row.threadId) ?? [];
-            threadQueuedTurns.push({
-              messageId: row.messageId,
-              text: row.text,
-              attachments: row.attachments,
-              provider: row.provider,
-              model: row.model,
-              serviceTier: row.serviceTier,
-              modelOptions: row.modelOptions,
-              providerOptions: row.providerOptions,
-              assistantDeliveryMode: row.assistantDeliveryMode,
-              runtimeMode: row.runtimeMode,
-              interactionMode: row.interactionMode,
-              queuedAt: row.queuedAt,
-            });
-            queuedTurnsByThread.set(row.threadId, threadQueuedTurns);
           }
 
           for (const row of proposedPlanRows) {
@@ -607,7 +538,6 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             updatedAt: row.updatedAt,
             deletedAt: row.deletedAt,
             messages: messagesByThread.get(row.threadId) ?? [],
-            queuedTurns: queuedTurnsByThread.get(row.threadId) ?? [],
             proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
             activities: activitiesByThread.get(row.threadId) ?? [],
             checkpoints: checkpointsByThread.get(row.threadId) ?? [],

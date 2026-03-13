@@ -7,7 +7,6 @@ import {
   type ProviderModelOptions,
   type ProviderKind,
   type ProviderInteractionMode,
-  type ProviderServiceTier,
   type RuntimeMode,
 } from "@t3tools/contracts";
 import { normalizeModelSlug } from "@t3tools/shared/model";
@@ -82,7 +81,6 @@ export interface QueuedComposerTurn {
   model: string | null;
   runtimeMode: RuntimeMode;
   interactionMode: ProviderInteractionMode;
-  serviceTier: ProviderServiceTier | null;
   modelOptions: ProviderModelOptions | null;
 }
 
@@ -196,6 +194,18 @@ interface ComposerDraftStoreState {
   enqueueQueuedTurn: (threadId: ThreadId, turn: QueuedComposerTurn) => void;
   prependQueuedTurn: (threadId: ThreadId, turn: QueuedComposerTurn) => void;
   consumeQueuedTurn: (threadId: ThreadId, queuedTurnId: string) => void;
+  takeQueuedTurn: (threadId: ThreadId, queuedTurnId: string) => QueuedComposerTurn | null;
+  insertQueuedTurnAt: (threadId: ThreadId, index: number, turn: QueuedComposerTurn) => void;
+  updateQueuedTurn: (
+    threadId: ThreadId,
+    queuedTurnId: string,
+    updater: (turn: QueuedComposerTurn) => QueuedComposerTurn,
+  ) => void;
+  moveQueuedTurn: (
+    threadId: ThreadId,
+    activeQueuedTurnId: string,
+    targetQueuedTurnId: string,
+  ) => void;
   removeQueuedTurn: (threadId: ThreadId, queuedTurnId: string) => void;
   clearQueuedTurns: (threadId: ThreadId) => void;
   clearComposerContent: (threadId: ThreadId) => void;
@@ -286,6 +296,56 @@ function revokeQueuedTurnImages(turn: QueuedComposerTurn): void {
   for (const image of turn.images) {
     revokeObjectPreviewUrl(image.previewUrl);
   }
+}
+
+function revokeRemovedQueuedTurnImages(
+  previousTurn: QueuedComposerTurn,
+  nextTurn: QueuedComposerTurn,
+): void {
+  const retainedImageIds = new Set(nextTurn.images.map((image) => image.id));
+  for (const image of previousTurn.images) {
+    if (!retainedImageIds.has(image.id)) {
+      revokeObjectPreviewUrl(image.previewUrl);
+    }
+  }
+}
+
+function removeQueuedTurnById(
+  existing: QueuedComposerTurn[] | undefined,
+  queuedTurnId: string,
+): {
+  nextQueuedTurns: QueuedComposerTurn[] | undefined;
+  removed: QueuedComposerTurn | null;
+  index: number;
+} {
+  if (!existing) {
+    return { nextQueuedTurns: existing, removed: null, index: -1 };
+  }
+  const index = existing.findIndex((turn) => turn.id === queuedTurnId);
+  if (index < 0) {
+    return { nextQueuedTurns: existing, removed: null, index };
+  }
+  const removed = existing[index] ?? null;
+  if (!removed) {
+    return { nextQueuedTurns: existing, removed: null, index: -1 };
+  }
+  const nextQueuedTurns = existing.filter((turn) => turn.id !== queuedTurnId);
+  return {
+    nextQueuedTurns: nextQueuedTurns.length > 0 ? nextQueuedTurns : undefined,
+    removed,
+    index,
+  };
+}
+
+function insertQueuedTurn(
+  existing: QueuedComposerTurn[] | undefined,
+  index: number,
+  turn: QueuedComposerTurn,
+): QueuedComposerTurn[] {
+  const nextQueuedTurns = [...(existing ?? EMPTY_QUEUED_TURNS)];
+  const clampedIndex = Math.max(0, Math.min(index, nextQueuedTurns.length));
+  nextQueuedTurns.splice(clampedIndex, 0, turn);
+  return nextQueuedTurns;
 }
 
 function normalizePersistedAttachment(value: unknown): PersistedComposerImageAttachment | null {
@@ -1202,20 +1262,128 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
         }
         set((state) => {
           const existing = state.queuedTurnsByThreadId[threadId];
-          if (!existing) {
+          const { nextQueuedTurns } = removeQueuedTurnById(existing, queuedTurnId);
+          if (nextQueuedTurns === existing) {
             return state;
           }
-          const nextQueuedTurns = existing.filter((turn) => turn.id !== queuedTurnId);
           const nextQueuedTurnsByThreadId = { ...state.queuedTurnsByThreadId };
-          if (nextQueuedTurns.length === existing.length) {
-            return state;
-          }
-          if (nextQueuedTurns.length === 0) {
+          if (!nextQueuedTurns) {
             delete nextQueuedTurnsByThreadId[threadId];
           } else {
             nextQueuedTurnsByThreadId[threadId] = nextQueuedTurns;
           }
           return { queuedTurnsByThreadId: nextQueuedTurnsByThreadId };
+        });
+      },
+      takeQueuedTurn: (threadId, queuedTurnId) => {
+        if (threadId.length === 0 || queuedTurnId.length === 0) {
+          return null;
+        }
+        let removed: QueuedComposerTurn | null = null;
+        set((state) => {
+          const existing = state.queuedTurnsByThreadId[threadId];
+          const result = removeQueuedTurnById(existing, queuedTurnId);
+          removed = result.removed;
+          if (result.nextQueuedTurns === existing) {
+            return state;
+          }
+          const nextQueuedTurnsByThreadId = { ...state.queuedTurnsByThreadId };
+          if (!result.nextQueuedTurns) {
+            delete nextQueuedTurnsByThreadId[threadId];
+          } else {
+            nextQueuedTurnsByThreadId[threadId] = result.nextQueuedTurns;
+          }
+          return { queuedTurnsByThreadId: nextQueuedTurnsByThreadId };
+        });
+        return removed;
+      },
+      insertQueuedTurnAt: (threadId, index, turn) => {
+        if (threadId.length === 0) {
+          return;
+        }
+        set((state) => ({
+          queuedTurnsByThreadId: {
+            ...state.queuedTurnsByThreadId,
+            [threadId]: insertQueuedTurn(state.queuedTurnsByThreadId[threadId], index, turn),
+          },
+        }));
+      },
+      updateQueuedTurn: (threadId, queuedTurnId, updater) => {
+        if (threadId.length === 0 || queuedTurnId.length === 0) {
+          return;
+        }
+        const existing = get().queuedTurnsByThreadId[threadId];
+        const index = existing?.findIndex((turn) => turn.id === queuedTurnId) ?? -1;
+        if (index < 0 || !existing) {
+          return;
+        }
+        const previousTurn = existing[index];
+        if (!previousTurn) {
+          return;
+        }
+        const nextTurn = updater(previousTurn);
+        if (nextTurn === previousTurn) {
+          return;
+        }
+        revokeRemovedQueuedTurnImages(previousTurn, nextTurn);
+        set((state) => {
+          const current = state.queuedTurnsByThreadId[threadId];
+          if (!current) {
+            return state;
+          }
+          const currentIndex = current.findIndex((turn) => turn.id === queuedTurnId);
+          if (currentIndex < 0) {
+            return state;
+          }
+          const currentTurn = current[currentIndex];
+          if (!currentTurn) {
+            return state;
+          }
+          const updatedTurn = currentTurn === previousTurn ? nextTurn : updater(currentTurn);
+          if (currentTurn !== previousTurn && updatedTurn !== currentTurn) {
+            revokeRemovedQueuedTurnImages(currentTurn, updatedTurn);
+          }
+          const nextQueuedTurns = [...current];
+          nextQueuedTurns[currentIndex] = updatedTurn;
+          return {
+            queuedTurnsByThreadId: {
+              ...state.queuedTurnsByThreadId,
+              [threadId]: nextQueuedTurns,
+            },
+          };
+        });
+      },
+      moveQueuedTurn: (threadId, activeQueuedTurnId, targetQueuedTurnId) => {
+        if (
+          threadId.length === 0 ||
+          activeQueuedTurnId.length === 0 ||
+          targetQueuedTurnId.length === 0 ||
+          activeQueuedTurnId === targetQueuedTurnId
+        ) {
+          return;
+        }
+        set((state) => {
+          const existing = state.queuedTurnsByThreadId[threadId];
+          if (!existing) {
+            return state;
+          }
+          const activeIndex = existing.findIndex((turn) => turn.id === activeQueuedTurnId);
+          const targetIndex = existing.findIndex((turn) => turn.id === targetQueuedTurnId);
+          if (activeIndex < 0 || targetIndex < 0 || activeIndex === targetIndex) {
+            return state;
+          }
+          const nextQueuedTurns = [...existing];
+          const [movedTurn] = nextQueuedTurns.splice(activeIndex, 1);
+          if (!movedTurn) {
+            return state;
+          }
+          nextQueuedTurns.splice(targetIndex, 0, movedTurn);
+          return {
+            queuedTurnsByThreadId: {
+              ...state.queuedTurnsByThreadId,
+              [threadId]: nextQueuedTurns,
+            },
+          };
         });
       },
       removeQueuedTurn: (threadId, queuedTurnId) => {

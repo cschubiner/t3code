@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import type { ThreadQueuedTurn } from "../types";
+import type { QueuedComposerTurn } from "../composerDraftStore";
 import { cn } from "../lib/utils";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -28,16 +28,16 @@ import { Textarea } from "./ui/textarea";
 
 const QUEUED_TURN_PREVIEW_MAX_CHARS = 72;
 
-function summarizeQueuedTurn(turn: ThreadQueuedTurn): string {
+function summarizeQueuedTurn(turn: QueuedComposerTurn): string {
   const trimmed = turn.text.trim();
   if (trimmed.length > 0) {
     return trimmed.length > QUEUED_TURN_PREVIEW_MAX_CHARS
       ? `${trimmed.slice(0, QUEUED_TURN_PREVIEW_MAX_CHARS - 1).trimEnd()}...`
       : trimmed;
   }
-  const attachmentCount = turn.attachments.length;
-  if (attachmentCount > 0) {
-    return attachmentCount === 1 ? "1 image attachment" : `${attachmentCount} image attachments`;
+  const imageCount = turn.images.length;
+  if (imageCount > 0) {
+    return imageCount === 1 ? "1 image attachment" : `${imageCount} image attachments`;
   }
   return "Queued follow-up";
 }
@@ -60,7 +60,7 @@ function SortableQueuedFollowUpRow({
   onDelete,
   onSendNow,
 }: {
-  queuedTurn: ThreadQueuedTurn;
+  queuedTurn: QueuedComposerTurn;
   index: number;
   isEditing: boolean;
   isBusy: boolean;
@@ -74,10 +74,10 @@ function SortableQueuedFollowUpRow({
   onSendNow: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: queuedTurn.messageId,
+    id: queuedTurn.id,
     disabled: isInteractionDisabled || isEditing,
   });
-  const canSave = draftText.trim().length > 0 || queuedTurn.attachments.length > 0;
+  const canSave = draftText.trim().length > 0 || queuedTurn.images.length > 0;
   const preview = summarizeQueuedTurn(queuedTurn);
 
   return (
@@ -92,7 +92,7 @@ function SortableQueuedFollowUpRow({
         isDragging && "z-20 opacity-85 shadow-lg",
         isBusy && "ring-1 ring-primary/35",
       )}
-      data-testid={`queued-follow-up-row-${queuedTurn.messageId}`}
+      data-testid={`queued-follow-up-row-${queuedTurn.id}`}
     >
       <div className="flex min-w-0 gap-3">
         <button
@@ -122,11 +122,9 @@ function SortableQueuedFollowUpRow({
             <Badge variant="outline" className="rounded-full px-2 text-[11px]">
               {interactionModeLabel(queuedTurn.interactionMode)}
             </Badge>
-            {queuedTurn.attachments.length > 0 ? (
+            {queuedTurn.images.length > 0 ? (
               <Badge variant="outline" className="rounded-full px-2 text-[11px]">
-                {queuedTurn.attachments.length === 1
-                  ? "1 image"
-                  : `${queuedTurn.attachments.length} images`}
+                {queuedTurn.images.length === 1 ? "1 image" : `${queuedTurn.images.length} images`}
               </Badge>
             ) : null}
           </div>
@@ -139,7 +137,7 @@ function SortableQueuedFollowUpRow({
                 rows={3}
                 autoFocus
                 className="w-full"
-                data-testid={`queued-follow-up-editor-${queuedTurn.messageId}`}
+                data-testid={`queued-follow-up-editor-${queuedTurn.id}`}
               />
               <div className="flex flex-wrap items-center justify-end gap-2">
                 <Button type="button" size="sm" variant="ghost" onClick={onCancel}>
@@ -215,29 +213,24 @@ export default function QueuedFollowUpsPanel({
   onSendNow,
   onReorder,
 }: {
-  queuedTurns: ThreadQueuedTurn[];
-  busyQueuedTurnId: ThreadQueuedTurn["messageId"] | null;
+  queuedTurns: QueuedComposerTurn[];
+  busyQueuedTurnId: string | null;
   isQueueInteractionDisabled: boolean;
-  onDelete: (queuedTurnId: ThreadQueuedTurn["messageId"]) => void;
+  onDelete: (queuedTurnId: string) => void;
   onClearAll: () => void;
-  onSaveEdit: (queuedTurnId: ThreadQueuedTurn["messageId"], text: string) => void;
-  onSendNow: (queuedTurnId: ThreadQueuedTurn["messageId"]) => void;
-  onReorder: (
-    activeQueuedTurnId: ThreadQueuedTurn["messageId"],
-    targetQueuedTurnId: ThreadQueuedTurn["messageId"],
-  ) => void;
+  onSaveEdit: (queuedTurnId: string, text: string) => void;
+  onSendNow: (queuedTurnId: string) => void;
+  onReorder: (activeQueuedTurnId: string, targetQueuedTurnId: string) => void;
 }) {
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { distance: 6 },
     }),
   );
-  const [editingQueuedTurnId, setEditingQueuedTurnId] = useState<
-    ThreadQueuedTurn["messageId"] | null
-  >(null);
+  const [editingQueuedTurnId, setEditingQueuedTurnId] = useState<string | null>(null);
   const [draftText, setDraftText] = useState("");
   const queuedTurnById = useMemo(
-    () => new Map(queuedTurns.map((queuedTurn) => [queuedTurn.messageId, queuedTurn] as const)),
+    () => new Map(queuedTurns.map((queuedTurn) => [queuedTurn.id, queuedTurn] as const)),
     [queuedTurns],
   );
 
@@ -291,35 +284,30 @@ export default function QueuedFollowUpsPanel({
           if (!over || active.id === over.id) {
             return;
           }
-          onReorder(
-            String(active.id) as ThreadQueuedTurn["messageId"],
-            String(over.id) as ThreadQueuedTurn["messageId"],
-          );
+          onReorder(String(active.id), String(over.id));
         }}
       >
         <SortableContext
-          items={queuedTurns.map((queuedTurn) => queuedTurn.messageId)}
+          items={queuedTurns.map((queuedTurn) => queuedTurn.id)}
           strategy={verticalListSortingStrategy}
         >
           <ol className="mt-2 space-y-2">
             {queuedTurns.map((queuedTurn, index) => (
               <SortableQueuedFollowUpRow
-                key={queuedTurn.messageId}
+                key={queuedTurn.id}
                 queuedTurn={queuedTurn}
                 index={index}
-                isEditing={editingQueuedTurnId === queuedTurn.messageId}
-                isBusy={busyQueuedTurnId === queuedTurn.messageId}
+                isEditing={editingQueuedTurnId === queuedTurn.id}
+                isBusy={busyQueuedTurnId === queuedTurn.id}
                 isInteractionDisabled={interactionDisabled}
-                draftText={
-                  editingQueuedTurnId === queuedTurn.messageId ? draftText : queuedTurn.text
-                }
+                draftText={editingQueuedTurnId === queuedTurn.id ? draftText : queuedTurn.text}
                 onDraftTextChange={setDraftText}
                 onEdit={() => {
-                  setEditingQueuedTurnId(queuedTurn.messageId);
+                  setEditingQueuedTurnId(queuedTurn.id);
                   setDraftText(queuedTurn.text);
                 }}
                 onSave={() => {
-                  onSaveEdit(queuedTurn.messageId, draftText);
+                  onSaveEdit(queuedTurn.id, draftText);
                   setEditingQueuedTurnId(null);
                   setDraftText("");
                 }}
@@ -328,13 +316,13 @@ export default function QueuedFollowUpsPanel({
                   setDraftText("");
                 }}
                 onDelete={() => {
-                  onDelete(queuedTurn.messageId);
-                  if (editingQueuedTurnId === queuedTurn.messageId) {
+                  onDelete(queuedTurn.id);
+                  if (editingQueuedTurnId === queuedTurn.id) {
                     setEditingQueuedTurnId(null);
                     setDraftText("");
                   }
                 }}
-                onSendNow={() => onSendNow(queuedTurn.messageId)}
+                onSendNow={() => onSendNow(queuedTurn.id)}
               />
             ))}
           </ol>
