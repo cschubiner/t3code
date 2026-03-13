@@ -767,7 +767,6 @@ export default function Sidebar() {
       clearProjectDraftThreadById,
       clearTerminalState,
       copyToClipboard,
-      deleteThread,
       markThreadUnread,
       navigate,
       projects,
