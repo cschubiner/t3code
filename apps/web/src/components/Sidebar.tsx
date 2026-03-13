@@ -90,6 +90,7 @@ import {
 } from "./ui/sidebar";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useThreadNavigationHistoryStore } from "../threadNavigationHistoryStore";
+import { useThreadActivityStore } from "../threadActivityStore";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 import {
   isTypingInSidebarTextEntry,
@@ -362,6 +363,7 @@ export default function Sidebar() {
       }),
     [expandedThreadListsByProject, projects, threads],
   );
+  const transientWorkByThreadId = useThreadActivityStore((state) => state.transientWorkByThreadId);
   const sidebarProjectTargets = useMemo(
     () =>
       projectNavigationTargetsForSidebar({
@@ -1580,6 +1582,7 @@ export default function Sidebar() {
                                     derivePendingApprovals(thread.activities).length > 0,
                                   hasPendingUserInput:
                                     derivePendingUserInputs(thread.activities).length > 0,
+                                  hasTransientWork: Boolean(transientWorkByThreadId[thread.id]),
                                 });
                                 const prStatus = prStatusIndicator(
                                   prByThreadId.get(thread.id) ?? null,
