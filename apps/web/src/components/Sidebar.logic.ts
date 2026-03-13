@@ -1,4 +1,5 @@
-import type { Thread } from "../types";
+import type { Project, Thread } from "../types";
+import type { ThreadId } from "@t3tools/contracts";
 import { cn } from "../lib/utils";
 import { findLatestProposedPlan, isLatestTurnSettled } from "../session-logic";
 
@@ -22,6 +23,150 @@ type ThreadStatusInput = Pick<
   Thread,
   "interactionMode" | "latestTurn" | "lastVisitedAt" | "proposedPlans" | "session"
 >;
+
+export type SidebarNavigationDirection = "previous" | "next";
+export interface SidebarProjectNavigationTarget {
+  projectId: Project["id"];
+  threadId: ThreadId;
+}
+
+export function sortThreadsForSidebar(
+  projectId: Project["id"],
+  threads: readonly Thread[],
+): Thread[] {
+  return threads
+    .filter((thread) => thread.projectId === projectId)
+    .toSorted((a, b) => {
+      const byDate = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      if (byDate !== 0) return byDate;
+      return b.id.localeCompare(a.id);
+    });
+}
+
+export function visibleThreadsForSidebar(input: {
+  projectThreads: readonly Thread[];
+  isThreadListExpanded: boolean;
+  threadPreviewLimit: number;
+}): Thread[] {
+  const { projectThreads, isThreadListExpanded, threadPreviewLimit } = input;
+  if (projectThreads.length <= threadPreviewLimit || isThreadListExpanded) {
+    return [...projectThreads];
+  }
+  return projectThreads.slice(0, threadPreviewLimit);
+}
+
+export function visibleThreadIdsForSidebar(input: {
+  projects: readonly Project[];
+  threads: readonly Thread[];
+  expandedThreadListsByProject: ReadonlySet<Project["id"]>;
+  threadPreviewLimit: number;
+}): ThreadId[] {
+  const visibleThreadIds: ThreadId[] = [];
+
+  for (const project of input.projects) {
+    if (!project.expanded) continue;
+    const projectThreads = sortThreadsForSidebar(project.id, input.threads);
+    const visibleThreads = visibleThreadsForSidebar({
+      projectThreads,
+      isThreadListExpanded: input.expandedThreadListsByProject.has(project.id),
+      threadPreviewLimit: input.threadPreviewLimit,
+    });
+    for (const thread of visibleThreads) {
+      visibleThreadIds.push(thread.id);
+    }
+  }
+
+  return visibleThreadIds;
+}
+
+export function resolveSidebarThreadNavigationTarget(input: {
+  orderedVisibleThreadIds: readonly ThreadId[];
+  currentThreadId: ThreadId | null;
+  direction: SidebarNavigationDirection;
+}): ThreadId | null {
+  const { orderedVisibleThreadIds, currentThreadId, direction } = input;
+  if (orderedVisibleThreadIds.length === 0) return null;
+
+  if (currentThreadId === null) {
+    return direction === "next"
+      ? (orderedVisibleThreadIds[0] ?? null)
+      : (orderedVisibleThreadIds.at(-1) ?? null);
+  }
+
+  const currentIndex = orderedVisibleThreadIds.indexOf(currentThreadId);
+  if (currentIndex === -1) {
+    return direction === "next"
+      ? (orderedVisibleThreadIds[0] ?? null)
+      : (orderedVisibleThreadIds.at(-1) ?? null);
+  }
+
+  if (direction === "previous") {
+    return orderedVisibleThreadIds[currentIndex - 1] ?? null;
+  }
+
+  return orderedVisibleThreadIds[currentIndex + 1] ?? null;
+}
+
+export function projectNavigationTargetsForSidebar(input: {
+  projects: readonly Project[];
+  threads: readonly Thread[];
+}): SidebarProjectNavigationTarget[] {
+  const targets: SidebarProjectNavigationTarget[] = [];
+
+  for (const project of input.projects) {
+    const newestThread = sortThreadsForSidebar(project.id, input.threads)[0];
+    if (!newestThread) continue;
+    targets.push({
+      projectId: project.id,
+      threadId: newestThread.id,
+    });
+  }
+
+  return targets;
+}
+
+export function resolveSidebarProjectNavigationTarget(input: {
+  orderedProjectTargets: readonly SidebarProjectNavigationTarget[];
+  currentProjectId: Project["id"] | null;
+  direction: SidebarNavigationDirection;
+}): SidebarProjectNavigationTarget | null {
+  const { orderedProjectTargets, currentProjectId, direction } = input;
+  if (orderedProjectTargets.length === 0) return null;
+
+  if (currentProjectId === null) {
+    return direction === "next"
+      ? (orderedProjectTargets[0] ?? null)
+      : (orderedProjectTargets.at(-1) ?? null);
+  }
+
+  const currentIndex = orderedProjectTargets.findIndex(
+    (target) => target.projectId === currentProjectId,
+  );
+  if (currentIndex === -1) {
+    return direction === "next"
+      ? (orderedProjectTargets[0] ?? null)
+      : (orderedProjectTargets.at(-1) ?? null);
+  }
+
+  if (direction === "previous") {
+    return orderedProjectTargets[currentIndex - 1] ?? null;
+  }
+
+  return orderedProjectTargets[currentIndex + 1] ?? null;
+}
+
+export function isTypingInSidebarTextEntry(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement
+  ) {
+    return true;
+  }
+  if (target.isContentEditable) return true;
+  return Boolean(target.closest("input, textarea, select, [contenteditable]"));
+}
 
 export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   if (!thread.latestTurn?.completedAt) return false;

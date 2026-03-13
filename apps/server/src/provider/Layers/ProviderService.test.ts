@@ -573,6 +573,56 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("merges dormant binding defaults when startSession input omits resume state", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const directory = yield* ProviderSessionDirectory;
+
+      yield* directory.upsert({
+        threadId: asThreadId("thread-imported"),
+        provider: "codex",
+        status: "stopped",
+        runtimeMode: "full-access",
+        resumeCursor: { threadId: "codex-session-1" },
+        runtimePayload: {
+          cwd: "/tmp/imported-project",
+          providerOptions: {
+            codex: {
+              homePath: "/tmp/codex-home",
+            },
+          },
+        },
+      });
+
+      routing.codex.startSession.mockClear();
+
+      yield* provider.startSession(asThreadId("thread-imported"), {
+        threadId: asThreadId("thread-imported"),
+        runtimeMode: "full-access",
+      });
+
+      assert.equal(routing.codex.startSession.mock.calls.length, 1);
+      const mergedStartInput = routing.codex.startSession.mock.calls[0]?.[0];
+      assert.equal(typeof mergedStartInput === "object" && mergedStartInput !== null, true);
+      if (mergedStartInput && typeof mergedStartInput === "object") {
+        const startPayload = mergedStartInput as {
+          provider?: string;
+          cwd?: string;
+          resumeCursor?: unknown;
+          providerOptions?: unknown;
+        };
+        assert.equal(startPayload.provider, "codex");
+        assert.equal(startPayload.cwd, "/tmp/imported-project");
+        assert.deepEqual(startPayload.resumeCursor, { threadId: "codex-session-1" });
+        assert.deepEqual(startPayload.providerOptions, {
+          codex: {
+            homePath: "/tmp/codex-home",
+          },
+        });
+      }
+    }),
+  );
+
   it.effect("lists no sessions after adapter runtime clears", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService;
@@ -599,10 +649,11 @@ routing.layer("ProviderServiceLive routing", (it) => {
     Effect.gen(function* () {
       const provider = yield* ProviderService;
       const runtimeRepository = yield* ProviderSessionRuntimeRepository;
+      const threadId = asThreadId("thread-runtime-status");
 
-      const session = yield* provider.startSession(asThreadId("thread-1"), {
+      const session = yield* provider.startSession(threadId, {
         provider: "codex",
-        threadId: asThreadId("thread-1"),
+        threadId,
         runtimeMode: "full-access",
       });
       yield* provider.sendTurn({

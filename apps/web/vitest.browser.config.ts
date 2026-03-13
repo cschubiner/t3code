@@ -11,6 +11,9 @@ export default mergeConfig(
   defineConfig({
     resolve: {
       alias: {
+        "@pierre/diffs/react": fileURLToPath(
+          new URL("./src/test/diffReact.browser-shim.tsx", import.meta.url),
+        ),
         "~": srcPath,
       },
     },
@@ -18,6 +21,7 @@ export default mergeConfig(
       include: [
         "src/components/ChatView.browser.tsx",
         "src/components/KeybindingsToast.browser.tsx",
+        "src/components/Sidebar.browser.tsx",
       ],
       browser: {
         enabled: true,

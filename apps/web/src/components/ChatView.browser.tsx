@@ -8,6 +8,7 @@ import {
   type ProjectId,
   type ServerConfig,
   type ThreadId,
+  type TurnId,
   type WsWelcomePayload,
   WS_CHANNELS,
   WS_METHODS,
@@ -32,6 +33,7 @@ const PROJECT_ID = "project-1" as ProjectId;
 const NOW_ISO = "2026-03-04T12:00:00.000Z";
 const BASE_TIME_MS = Date.parse(NOW_ISO);
 const ATTACHMENT_SVG = "<svg xmlns='http://www.w3.org/2000/svg' width='120' height='300'></svg>";
+const dispatchCommandErrorsByType = new Map<string, string>();
 
 interface WsRequestEnvelope {
   id: string;
@@ -89,6 +91,12 @@ interface MountedChatView {
   measureUserRow: (targetMessageId: MessageId) => Promise<UserRowMeasurement>;
   setViewport: (viewport: ViewportSpec) => Promise<void>;
   router: ReturnType<typeof getRouter>;
+}
+
+function modShiftShortcutModifiers(): Pick<KeyboardEventInit, "ctrlKey" | "metaKey" | "shiftKey"> {
+  return isMacPlatform(navigator.platform)
+    ? { metaKey: true, shiftKey: true }
+    : { ctrlKey: true, shiftKey: true };
 }
 
 function isoAt(offsetSeconds: number): string {
@@ -219,6 +227,7 @@ function createSnapshotForTargetUser(options: {
         updatedAt: NOW_ISO,
         deletedAt: null,
         messages,
+        queuedTurns: [],
         activities: [],
         proposedPlans: [],
         checkpoints: [],
@@ -273,6 +282,7 @@ function addThreadToSnapshot(
         updatedAt: NOW_ISO,
         deletedAt: null,
         messages: [],
+        queuedTurns: [],
         activities: [],
         proposedPlans: [],
         checkpoints: [],
@@ -298,6 +308,25 @@ function createDraftOnlySnapshot(): OrchestrationReadModel {
   return {
     ...snapshot,
     threads: [],
+  };
+}
+
+function createQueuedTurn(
+  overrides: Partial<OrchestrationReadModel["threads"][number]["queuedTurns"][number]> = {},
+): OrchestrationReadModel["threads"][number]["queuedTurns"][number] {
+  return {
+    messageId: "msg-user-queued-1" as MessageId,
+    text: "Queued follow-up",
+    attachments: [],
+    provider: "codex",
+    model: "gpt-5",
+    modelOptions: null,
+    providerOptions: null,
+    assistantDeliveryMode: "buffered",
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    queuedAt: NOW_ISO,
+    ...overrides,
   };
 }
 
@@ -353,6 +382,29 @@ function createSnapshotWithLongProposedPlan(): OrchestrationReadModel {
           })
         : thread,
     ),
+  };
+}
+
+function createRunningSnapshot(): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-running-target" as MessageId,
+    targetText: "running thread",
+  });
+  const nextThreads = snapshot.threads.slice();
+  const firstThread = nextThreads[0];
+  if (firstThread?.session) {
+    nextThreads[0] = {
+      ...firstThread,
+      session: {
+        ...firstThread.session,
+        status: "running",
+        activeTurnId: "turn-running" as TurnId,
+      },
+    };
+  }
+  return {
+    ...snapshot,
+    threads: nextThreads,
   };
 }
 
@@ -437,6 +489,27 @@ const worker = setupWorker(
       const method = request.body?._tag;
       if (typeof method !== "string") return;
       wsRequests.push(request.body);
+      if (
+        method === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+        typeof request.body.command === "object" &&
+        request.body.command !== null &&
+        "type" in request.body.command
+      ) {
+        const commandType = (request.body.command as { type?: string }).type;
+        const errorMessage =
+          typeof commandType === "string" ? dispatchCommandErrorsByType.get(commandType) : null;
+        if (errorMessage) {
+          client.send(
+            JSON.stringify({
+              id: request.id,
+              error: {
+                message: errorMessage,
+              },
+            }),
+          );
+          return;
+        }
+      }
       client.send(
         JSON.stringify({
           id: request.id,
@@ -529,6 +602,33 @@ async function waitForComposerEditor(): Promise<HTMLElement> {
     () => document.querySelector<HTMLElement>('[contenteditable="true"]'),
     "Unable to find composer editor.",
   );
+}
+
+async function waitForQueuedRow(queuedTurnId: string): Promise<HTMLElement> {
+  return waitForElement(
+    () =>
+      document.querySelector<HTMLElement>(`[data-testid="queued-follow-up-row-${queuedTurnId}"]`),
+    `Unable to find queued row ${queuedTurnId}.`,
+  );
+}
+
+function findButtonByText(scope: ParentNode, text: string): HTMLButtonElement | null {
+  return (
+    (Array.from(scope.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === text,
+    ) as HTMLButtonElement | undefined) ?? null
+  );
+}
+
+function listDispatchCommandsByType(type: string) {
+  return wsRequests.filter(
+    (request) =>
+      request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+      typeof request.command === "object" &&
+      request.command !== null &&
+      "type" in request.command &&
+      (request.command as { type?: string }).type === type,
+  ) as Array<{ command?: { type?: string; message?: { text?: string } } }>;
 }
 
 async function waitForInteractionModeButton(
@@ -716,10 +816,12 @@ describe("ChatView timeline estimator parity (full app)", () => {
     localStorage.clear();
     document.body.innerHTML = "";
     wsRequests.length = 0;
+    dispatchCommandErrorsByType.clear();
     useComposerDraftStore.setState({
       draftsByThreadId: {},
       draftThreadsByThreadId: {},
       projectDraftThreadIdByProjectId: {},
+      queuedTurnsByThreadId: {},
     });
     useStore.setState({
       projects: [],
@@ -902,6 +1004,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           envMode: "local",
         },
       },
+      queuedTurnsByThreadId: {},
       projectDraftThreadIdByProjectId: {
         [PROJECT_ID]: THREAD_ID,
       },
@@ -1029,6 +1132,62 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       expect(getComputedStyle(stopButton).cursor).toBe("pointer");
     } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("deletes the current thread when /delete is submitted", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-target-delete" as MessageId,
+        targetText: "delete target",
+      }),
+    });
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "/delete");
+      await waitForLayout();
+
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          const closeRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.terminalClose,
+          );
+          expect(closeRequest).toMatchObject({
+            _tag: WS_METHODS.terminalClose,
+            threadId: THREAD_ID,
+            deleteHistory: true,
+          });
+          const deleteRequest = listDispatchCommandsByType("thread.delete").at(-1);
+          expect((deleteRequest?.command as { threadId?: string } | undefined)?.threadId).toBe(
+            THREAD_ID,
+          );
+          expect(confirmSpy).toHaveBeenCalledWith(
+            'Delete thread "Browser test thread"?\nThis permanently clears conversation history for this thread.',
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await waitForURL(
+        mounted.router,
+        (path) => path === "/",
+        "Route should navigate home after deleting the last thread.",
+      );
+    } finally {
+      confirmSpy.mockRestore();
       await mounted.cleanup();
     }
   });
@@ -1240,6 +1399,362 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await vi.waitFor(
         () => {
           expect(document.body.textContent).toContain("deep hidden detail only after expand");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("toggles worktree mode with Mod+Shift+W only while the composer is focused", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+        },
+      },
+      queuedTurnsByThreadId: {},
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+    });
+
+    try {
+      const initialEnvButton = await waitForElement(
+        () => findButtonByText(document, "Local"),
+        "Unable to find Local env mode button.",
+      );
+      expect(initialEnvButton.textContent?.trim()).toBe("Local");
+      initialEnvButton.focus();
+
+      initialEnvButton.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "w",
+          bubbles: true,
+          cancelable: true,
+          ...modShiftShortcutModifiers(),
+        }),
+      );
+      await waitForLayout();
+
+      expect(findButtonByText(document, "New worktree")).toBeNull();
+
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "w",
+          bubbles: true,
+          cancelable: true,
+          ...modShiftShortcutModifiers(),
+        }),
+      );
+
+      await waitForElement(
+        () => findButtonByText(document, "New worktree"),
+        "Unable to find New worktree env mode button.",
+      );
+
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "w",
+          bubbles: true,
+          cancelable: true,
+          ...modShiftShortcutModifiers(),
+        }),
+      );
+
+      await waitForElement(
+        () => findButtonByText(document, "Local"),
+        "Unable to find Local env mode button after toggling back.",
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("queues with Tab during a running turn by dispatching a server queue command", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshot(),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Queue this when ready");
+      await waitForLayout();
+
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Tab",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          const queueRequest = listDispatchCommandsByType("thread.turn.queue.enqueue").at(-1);
+          expect(queueRequest?.command?.message?.text).toBe("Queue this when ready");
+          expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.prompt ?? "").toBe(
+            "",
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("steers immediately with the dedicated shortcut during a running turn", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshot(),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Steer this right now");
+      await waitForLayout();
+
+      const beforeCount = listDispatchCommandsByType("thread.turn.start").length;
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+          ...modShiftShortcutModifiers(),
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          const turnStarts = listDispatchCommandsByType("thread.turn.start");
+          expect(turnStarts.length).toBeGreaterThan(beforeCount);
+          expect(turnStarts.at(-1)?.command?.message?.text).toBe("Steer this right now");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      expect(listDispatchCommandsByType("thread.turn.queue.enqueue")).toHaveLength(0);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("renders the queued follow-ups panel and deletes a middle queued turn", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshot(),
+    });
+
+    try {
+      const queuedSnapshot = createRunningSnapshot();
+      const queuedMessageId = "msg-user-queued-b" as MessageId;
+      useStore.getState().syncServerReadModel({
+        ...queuedSnapshot,
+        threads: [
+          {
+            ...queuedSnapshot.threads[0]!,
+            queuedTurns: [
+              createQueuedTurn({
+                messageId: "msg-user-queued-a" as MessageId,
+                text: "First queued",
+                queuedAt: isoAt(40),
+              }),
+              createQueuedTurn({
+                messageId: queuedMessageId,
+                text: "Second queued",
+                queuedAt: isoAt(41),
+              }),
+              createQueuedTurn({
+                messageId: "msg-user-queued-c" as MessageId,
+                text: "Third queued",
+                queuedAt: isoAt(42),
+              }),
+            ],
+          },
+        ],
+      });
+
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain("3 queued follow-ups");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const secondRow = await waitForQueuedRow(String(queuedMessageId));
+      findButtonByText(secondRow, "Delete")?.click();
+
+      await vi.waitFor(
+        () => {
+          const removeRequest = listDispatchCommandsByType("thread.turn.queue.remove").at(-1);
+          expect((removeRequest?.command as { messageId?: string } | undefined)?.messageId).toBe(
+            queuedMessageId,
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("edits a queued follow-up and dispatches queue.update with trimmed text", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshot(),
+    });
+
+    try {
+      const queuedMessageId = "msg-user-queued-edit" as MessageId;
+      const queuedSnapshot = createRunningSnapshot();
+      useStore.getState().syncServerReadModel({
+        ...queuedSnapshot,
+        threads: [
+          {
+            ...queuedSnapshot.threads[0]!,
+            queuedTurns: [
+              createQueuedTurn({
+                messageId: queuedMessageId,
+                text: "Before edit",
+                queuedAt: isoAt(50),
+              }),
+            ],
+          },
+        ],
+      });
+
+      const row = await waitForQueuedRow(String(queuedMessageId));
+      findButtonByText(row, "Edit")?.click();
+
+      await expect
+        .element(page.getByTestId("queued-follow-up-editor-msg-user-queued-edit"))
+        .toBeVisible();
+      await page.getByTestId("queued-follow-up-editor-msg-user-queued-edit").fill("  After edit  ");
+      findButtonByText(row, "Save")?.click();
+
+      await vi.waitFor(
+        () => {
+          const updateRequest = listDispatchCommandsByType("thread.turn.queue.update").at(-1);
+          expect((updateRequest?.command as { messageId?: string } | undefined)?.messageId).toBe(
+            queuedMessageId,
+          );
+          expect((updateRequest?.command as { text?: string } | undefined)?.text).toBe(
+            "After edit",
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("sends a queued follow-up now through queue.send-now", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshot(),
+    });
+
+    try {
+      const queuedSnapshot = createRunningSnapshot();
+      const queuedMessageId = "msg-user-queued-send-now" as MessageId;
+      useStore.getState().syncServerReadModel({
+        ...queuedSnapshot,
+        threads: [
+          {
+            ...queuedSnapshot.threads[0]!,
+            queuedTurns: [
+              createQueuedTurn({
+                messageId: "msg-user-queued-a" as MessageId,
+                text: "First queued",
+                queuedAt: isoAt(70),
+              }),
+              createQueuedTurn({
+                messageId: queuedMessageId,
+                text: "Send this now",
+                queuedAt: isoAt(71),
+              }),
+            ],
+          },
+        ],
+      });
+
+      const row = await waitForQueuedRow(String(queuedMessageId));
+      findButtonByText(row, "Send now")?.click();
+
+      await vi.waitFor(
+        () => {
+          const sendNowRequest = listDispatchCommandsByType("thread.turn.queue.send-now").at(-1);
+          expect((sendNowRequest?.command as { messageId?: string } | undefined)?.messageId).toBe(
+            queuedMessageId,
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("clears all queued follow-ups via queue.remove", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshot(),
+    });
+
+    try {
+      const queuedSnapshot = createRunningSnapshot();
+      useStore.getState().syncServerReadModel({
+        ...queuedSnapshot,
+        threads: [
+          {
+            ...queuedSnapshot.threads[0]!,
+            queuedTurns: [
+              createQueuedTurn({
+                messageId: "msg-user-queued-a" as MessageId,
+                text: "First queued",
+                queuedAt: isoAt(80),
+              }),
+              createQueuedTurn({
+                messageId: "msg-user-queued-b" as MessageId,
+                text: "Second queued",
+                queuedAt: isoAt(81),
+              }),
+            ],
+          },
+        ],
+      });
+
+      const clearAllButton = await waitForElement(
+        () => findButtonByText(document, "Clear all"),
+        "Unable to find Clear all button.",
+      );
+      clearAllButton.click();
+
+      await vi.waitFor(
+        () => {
+          const removeRequests = listDispatchCommandsByType("thread.turn.queue.remove");
+          const messageIds = removeRequests
+            .map((request) => (request.command as { messageId?: string } | undefined)?.messageId)
+            .filter(Boolean);
+          expect(messageIds).toEqual(["msg-user-queued-a", "msg-user-queued-b"]);
         },
         { timeout: 8_000, interval: 16 },
       );
