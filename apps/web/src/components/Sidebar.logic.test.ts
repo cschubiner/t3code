@@ -67,10 +67,11 @@ function makeThread(id: Thread["id"], projectId: Thread["projectId"], createdAt:
 function makeLatestTurn(overrides?: {
   completedAt?: string | null;
   startedAt?: string | null;
-}): Parameters<typeof hasUnseenCompletion>[0]["latestTurn"] {
+  state?: "completed" | "running" | "interrupted" | "error";
+}): NonNullable<Parameters<typeof hasUnseenCompletion>[0]["latestTurn"]> {
   return {
     turnId: "turn-1" as never,
-    state: "completed",
+    state: overrides?.state ?? "completed",
     assistantMessageId: null,
     requestedAt: "2026-03-09T10:00:00.000Z",
     startedAt: overrides?.startedAt ?? "2026-03-09T10:00:00.000Z",
@@ -473,6 +474,7 @@ describe("resolveThreadStatusPill", () => {
         thread: baseThread,
         hasPendingApprovals: true,
         hasPendingUserInput: true,
+        hasTransientWork: true,
       }),
     ).toMatchObject({ label: "Pending Approval", pulse: false });
   });
@@ -483,6 +485,7 @@ describe("resolveThreadStatusPill", () => {
         thread: baseThread,
         hasPendingApprovals: false,
         hasPendingUserInput: true,
+        hasTransientWork: true,
       }),
     ).toMatchObject({ label: "Awaiting Input", pulse: false });
   });
@@ -493,6 +496,44 @@ describe("resolveThreadStatusPill", () => {
         thread: baseThread,
         hasPendingApprovals: false,
         hasPendingUserInput: false,
+        hasTransientWork: false,
+      }),
+    ).toMatchObject({ label: "Working", pulse: true });
+  });
+
+  it("shows working while the latest turn is still running even after the session flips ready", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          latestTurn: makeLatestTurn({ completedAt: null, state: "running" }),
+          session: {
+            ...baseThread.session,
+            status: "ready",
+            orchestrationStatus: "ready",
+          },
+        },
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+        hasTransientWork: false,
+      }),
+    ).toMatchObject({ label: "Working", pulse: true });
+  });
+
+  it("shows working while local send state is active before the session flips to running", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          session: {
+            ...baseThread.session,
+            status: "ready",
+            orchestrationStatus: "ready",
+          },
+        },
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+        hasTransientWork: true,
       }),
     ).toMatchObject({ label: "Working", pulse: true });
   });
@@ -522,6 +563,7 @@ describe("resolveThreadStatusPill", () => {
         },
         hasPendingApprovals: false,
         hasPendingUserInput: false,
+        hasTransientWork: false,
       }),
     ).toMatchObject({ label: "Plan Ready", pulse: false });
   });
@@ -571,6 +613,7 @@ describe("resolveThreadStatusPill", () => {
         },
         hasPendingApprovals: false,
         hasPendingUserInput: false,
+        hasTransientWork: false,
       }),
     ).toMatchObject({ label: "Completed", pulse: false });
   });
