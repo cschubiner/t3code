@@ -195,20 +195,6 @@ const extendReplacementRangeForTrailingSpace = (
   }
   return text[rangeEnd] === " " ? rangeEnd + 1 : rangeEnd;
 };
-
-function summarizeQueuedTurn(turn: ThreadQueuedTurn): string {
-  const trimmed = turn.text.trim();
-  if (trimmed.length > 0) {
-    return trimmed;
-  }
-  if (turn.attachments.length > 0) {
-    return turn.attachments.length === 1
-      ? "1 image attachment"
-      : `${turn.attachments.length} image attachments`;
-  }
-  return "Queued follow-up";
-}
-
 type ComposerSubmissionDisposition = "queue" | "steer";
 interface ChatViewProps {
   threadId: ThreadId;
