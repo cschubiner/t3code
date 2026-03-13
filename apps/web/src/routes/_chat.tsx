@@ -14,12 +14,6 @@ import { useThreadNavigationHistoryStore } from "../threadNavigationHistoryStore
 import { Sidebar, SidebarProvider } from "~/components/ui/sidebar";
 import { resolveSidebarNewThreadEnvMode } from "~/components/Sidebar.logic";
 import { useAppSettings } from "~/appSettings";
-import { useHandleNewThread } from "~/hooks/useHandleNewThread";
-import { resolveShortcutCommand } from "~/keybindings";
-import { serverConfigQueryOptions } from "~/lib/serverReactQuery";
-import { isTerminalFocused } from "~/lib/terminalFocus";
-import { selectThreadTerminalState, useTerminalStateStore } from "~/terminalStateStore";
-import { useThreadSelectionStore } from "~/threadSelectionStore";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 
