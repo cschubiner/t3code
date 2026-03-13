@@ -642,17 +642,41 @@ describe("Sidebar navigation keybindings", () => {
     }
   });
 
-  it("ignores the shortcut while the composer contenteditable is focused", async () => {
+  it("continues sidebar thread navigation while the composer contenteditable is focused", async () => {
     const mounted = await mountApp(`/${THREAD_A5}`);
 
     try {
-      const composerEditor = await waitForComposerEditor();
+      let composerEditor = await waitForComposerEditor();
       composerEditor.focus();
 
       dispatchSidebarShortcut({ key: "ArrowDown", altKey: true }, composerEditor);
-      await new Promise((resolve) => window.setTimeout(resolve, 150));
+      await waitForPath(mounted.router, `/${THREAD_A4}`);
 
-      expect(mounted.router.state.location.pathname).toBe(`/${THREAD_A5}`);
+      composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+
+      dispatchSidebarShortcut({ key: "ArrowDown", altKey: true }, composerEditor);
+      await waitForPath(mounted.router, `/${THREAD_A3}`);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("continues history navigation while the composer contenteditable is focused", async () => {
+    const mounted = await mountApp(`/${THREAD_A5}`);
+
+    try {
+      let composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+
+      dispatchSidebarShortcut({ key: "ArrowDown", altKey: true }, composerEditor);
+      await waitForPath(mounted.router, `/${THREAD_A4}`);
+
+      composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+
+      dispatchSidebarShortcut({ key: "[" }, composerEditor);
+      await waitForPath(mounted.router, `/${THREAD_A5}`);
     } finally {
       await mounted.cleanup();
     }
