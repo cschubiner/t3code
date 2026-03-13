@@ -91,6 +91,7 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useThreadNavigationHistoryStore } from "../threadNavigationHistoryStore";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 import {
+  resolveSidebarNewThreadEnvMode,
   isTypingInSidebarTextEntry,
   projectNavigationTargetsForSidebar,
   resolveSidebarProjectNavigationTarget,
@@ -102,6 +103,7 @@ import {
   visibleThreadIdsForSidebar,
   visibleThreadsForSidebar,
 } from "./Sidebar.logic";
+import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import {
   confirmAndDeleteThreadWithSidebarBehavior,
   deleteThreadWithSidebarBehavior,
@@ -109,13 +111,6 @@ import {
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
-
-async function copyTextToClipboard(text: string): Promise<void> {
-  if (typeof navigator === "undefined" || navigator.clipboard?.writeText === undefined) {
-    throw new Error("Clipboard API unavailable.");
-  }
-  await navigator.clipboard.writeText(text);
-}
 
 function formatRelativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -538,7 +533,9 @@ export default function Sidebar() {
           defaultModel: DEFAULT_MODEL_BY_PROVIDER.codex,
           createdAt,
         });
-        await handleNewThread(projectId).catch(() => undefined);
+        await handleNewThread(projectId, {
+          envMode: appSettings.defaultThreadEnvMode,
+        }).catch(() => undefined);
       } catch (error) {
         const description =
           error instanceof Error ? error.message : "An error occurred while adding the project.";
@@ -562,6 +559,7 @@ export default function Sidebar() {
       isAddingProject,
       projects,
       shouldBrowseForProjectImmediately,
+      appSettings.defaultThreadEnvMode,
     ],
   );
 
@@ -687,6 +685,22 @@ export default function Sidebar() {
     ],
   );
 
+  const { copyToClipboard } = useCopyToClipboard<{ threadId: ThreadId }>({
+    onCopy: (ctx) => {
+      toastManager.add({
+        type: "success",
+        title: "Thread ID copied",
+        description: ctx.threadId,
+      });
+    },
+    onError: (error) => {
+      toastManager.add({
+        type: "error",
+        title: "Failed to copy thread ID",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      });
+    },
+  });
   const handleThreadContextMenu = useCallback(
     async (threadId: ThreadId, position: { x: number; y: number }) => {
       const api = readNativeApi();
@@ -715,20 +729,7 @@ export default function Sidebar() {
         return;
       }
       if (clicked === "copy-thread-id") {
-        try {
-          await copyTextToClipboard(threadId);
-          toastManager.add({
-            type: "success",
-            title: "Thread ID copied",
-            description: threadId,
-          });
-        } catch (error) {
-          toastManager.add({
-            type: "error",
-            title: "Failed to copy thread ID",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          });
-        }
+        copyToClipboard(threadId, { threadId });
         return;
       }
       if (clicked !== "delete") return;
@@ -760,6 +761,7 @@ export default function Sidebar() {
       clearComposerDraftForThread,
       clearProjectDraftThreadById,
       clearTerminalState,
+      copyToClipboard,
       markThreadUnread,
       navigate,
       projects,
@@ -1513,7 +1515,11 @@ export default function Sidebar() {
                                     onClick={(event) => {
                                       event.preventDefault();
                                       event.stopPropagation();
-                                      void handleNewThread(project.id);
+                                      void handleNewThread(project.id, {
+                                        envMode: resolveSidebarNewThreadEnvMode({
+                                          defaultEnvMode: appSettings.defaultThreadEnvMode,
+                                        }),
+                                      });
                                     }}
                                   >
                                     <SquarePenIcon className="size-3.5" />

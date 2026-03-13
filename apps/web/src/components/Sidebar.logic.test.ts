@@ -4,6 +4,7 @@ import { ProjectId, ThreadId } from "@t3tools/contracts";
 import {
   hasUnseenCompletion,
   isTypingInSidebarTextEntry,
+  resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
   projectNavigationTargetsForSidebar,
   resolveSidebarProjectNavigationTarget,
@@ -115,6 +116,25 @@ describe("shouldClearThreadSelectionOnMouseDown", () => {
     } as unknown as HTMLElement;
 
     expect(shouldClearThreadSelectionOnMouseDown(unrelated)).toBe(true);
+  });
+});
+
+describe("resolveSidebarNewThreadEnvMode", () => {
+  it("uses the app default when the caller does not request a specific mode", () => {
+    expect(
+      resolveSidebarNewThreadEnvMode({
+        defaultEnvMode: "worktree",
+      }),
+    ).toBe("worktree");
+  });
+
+  it("preserves an explicit requested mode over the app default", () => {
+    expect(
+      resolveSidebarNewThreadEnvMode({
+        requestedEnvMode: "local",
+        defaultEnvMode: "worktree",
+      }),
+    ).toBe("local");
   });
 });
 

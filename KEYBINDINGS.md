@@ -65,7 +65,7 @@ Invalid rules are ignored. Invalid config files are ignored. Warnings are logged
 - `sidebar.project.previous`: move to the previous project in the left sidebar
 - `sidebar.project.next`: move to the next project in the left sidebar
 - `chat.new`: create a new chat thread preserving the active thread's branch/worktree state
-- `chat.newLocal`: create a new local chat thread for the active project (no worktree context)
+- `chat.newLocal`: create a new chat thread for the active project in a new environment (local/worktree determined by app settings (default `local`))
 - `editor.openFavorite`: open current project/worktree in the last-used editor
 - `script.{id}.run`: run a project script by id (for example `script.test.run`)
 
