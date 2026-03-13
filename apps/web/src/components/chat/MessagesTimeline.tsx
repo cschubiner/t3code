@@ -10,20 +10,7 @@ import { AUTO_SCROLL_BOTTOM_THRESHOLD_PX } from "../../chat-scroll";
 import { type TurnDiffSummary } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
 import ChatMarkdown from "../ChatMarkdown";
-import {
-  BotIcon,
-  CheckIcon,
-  CircleAlertIcon,
-  EyeIcon,
-  GlobeIcon,
-  HammerIcon,
-  type LucideIcon,
-  SquarePenIcon,
-  TerminalIcon,
-  Undo2Icon,
-  WrenchIcon,
-  ZapIcon,
-} from "lucide-react";
+import { Undo2Icon } from "lucide-react";
 import { Button } from "../ui/button";
 import { clamp } from "effect/Number";
 import { estimateTimelineMessageHeight } from "../timelineHeight";
@@ -34,7 +21,7 @@ import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
-import { computeMessageDurationStart, normalizeCompactToolLabel } from "./MessagesTimeline.logic";
+import { computeMessageDurationStart } from "./MessagesTimeline.logic";
 import { type TimestampFormat } from "../../appSettings";
 import { formatTimestamp } from "../../timestampFormat";
 
@@ -528,7 +515,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                       )}
                     </div>
                     <p className="text-right text-[10px] text-muted-foreground/30">
-                      {formatTimestamp(row.message.createdAt)}
+                      {formatTimestamp(row.message.createdAt, timestampFormat)}
                     </p>
                   </div>
                 </div>
@@ -628,32 +615,32 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             );
           })()}
 
-      {row.kind === "proposed-plan" && (
-        <div className="min-w-0 px-1 py-0.5">
-          <ProposedPlanCard
-            planMarkdown={row.proposedPlan.planMarkdown}
-            cwd={markdownCwd}
-            workspaceRoot={workspaceRoot}
-          />
-        </div>
-      )}
-
-      {row.kind === "working" && (
-        <div className="py-0.5 pl-1.5">
-          <div className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground/70">
-            <span className="inline-flex items-center gap-[3px]">
-              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse" />
-              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:200ms]" />
-              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:400ms]" />
-            </span>
-            <span>
-              {row.createdAt
-                ? `Working for ${formatWorkingTimer(row.createdAt, nowIso) ?? "0s"}`
-                : "Working..."}
-            </span>
+        {row.kind === "proposed-plan" && (
+          <div className="min-w-0 px-1 py-0.5">
+            <ProposedPlanCard
+              planMarkdown={row.proposedPlan.planMarkdown}
+              cwd={markdownCwd}
+              workspaceRoot={workspaceRoot}
+            />
           </div>
-        </div>
-      )}
+        )}
+
+        {row.kind === "working" && (
+          <div className="py-0.5 pl-1.5">
+            <div className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground/70">
+              <span className="inline-flex items-center gap-[3px]">
+                <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse" />
+                <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:200ms]" />
+                <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:400ms]" />
+              </span>
+              <span>
+                {row.createdAt
+                  ? `Working for ${formatWorkingTimer(row.createdAt, nowIso) ?? "0s"}`
+                  : "Working..."}
+              </span>
+            </div>
+          </div>
+        )}
       </div>
     );
   };
@@ -766,148 +753,9 @@ function formatMessageMeta(
   return `${formatTimestamp(createdAt, timestampFormat)} • ${duration}`;
 }
 
-function workToneIcon(tone: TimelineWorkEntry["tone"]): {
-  icon: LucideIcon;
-  className: string;
-} {
-  if (tone === "error") {
-    return {
-      icon: CircleAlertIcon,
-      className: "text-foreground/92",
-    };
-  }
-  if (tone === "thinking") {
-    return {
-      icon: BotIcon,
-      className: "text-foreground/92",
-    };
-  }
-  if (tone === "info") {
-    return {
-      icon: CheckIcon,
-      className: "text-foreground/92",
-    };
-  }
-  return {
-    icon: ZapIcon,
-    className: "text-foreground/92",
-  };
-}
-
 function workToneClass(tone: "thinking" | "tool" | "info" | "error"): string {
   if (tone === "error") return "text-rose-300/50 dark:text-rose-300/50";
   if (tone === "tool") return "text-muted-foreground/70";
   if (tone === "thinking") return "text-muted-foreground/50";
   return "text-muted-foreground/40";
 }
-
-function workEntryPreview(
-  workEntry: Pick<TimelineWorkEntry, "detail" | "command" | "changedFiles">,
-) {
-  if (workEntry.command) return workEntry.command;
-  if (workEntry.detail) return workEntry.detail;
-  if ((workEntry.changedFiles?.length ?? 0) === 0) return null;
-  const [firstPath] = workEntry.changedFiles ?? [];
-  if (!firstPath) return null;
-  return workEntry.changedFiles!.length === 1
-    ? firstPath
-    : `${firstPath} +${workEntry.changedFiles!.length - 1} more`;
-}
-
-function workEntryIcon(workEntry: TimelineWorkEntry): LucideIcon {
-  if (workEntry.requestKind === "command") return TerminalIcon;
-  if (workEntry.requestKind === "file-read") return EyeIcon;
-  if (workEntry.requestKind === "file-change") return SquarePenIcon;
-
-  if (workEntry.itemType === "command_execution" || workEntry.command) {
-    return TerminalIcon;
-  }
-  if (workEntry.itemType === "file_change" || (workEntry.changedFiles?.length ?? 0) > 0) {
-    return SquarePenIcon;
-  }
-  if (workEntry.itemType === "web_search") return GlobeIcon;
-  if (workEntry.itemType === "image_view") return EyeIcon;
-
-  switch (workEntry.itemType) {
-    case "mcp_tool_call":
-      return WrenchIcon;
-    case "dynamic_tool_call":
-    case "collab_agent_tool_call":
-      return HammerIcon;
-  }
-
-  return workToneIcon(workEntry.tone).icon;
-}
-
-function capitalizePhrase(value: string): string {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    return value;
-  }
-  return `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}`;
-}
-
-function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
-  if (!workEntry.toolTitle) {
-    return capitalizePhrase(normalizeCompactToolLabel(workEntry.label));
-  }
-  return capitalizePhrase(normalizeCompactToolLabel(workEntry.toolTitle));
-}
-
-const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
-  workEntry: TimelineWorkEntry;
-}) {
-  const { workEntry } = props;
-  const iconConfig = workToneIcon(workEntry.tone);
-  const EntryIcon = workEntryIcon(workEntry);
-  const heading = toolWorkEntryHeading(workEntry);
-  const preview = workEntryPreview(workEntry);
-  const displayText = preview ? `${heading} - ${preview}` : heading;
-  const hasChangedFiles = (workEntry.changedFiles?.length ?? 0) > 0;
-  const previewIsChangedFiles = hasChangedFiles && !workEntry.command && !workEntry.detail;
-
-  return (
-    <div className="rounded-lg px-1 py-1">
-      <div className="flex items-center gap-2 transition-[opacity,translate] duration-200">
-        <span
-          className={cn("flex size-5 shrink-0 items-center justify-center", iconConfig.className)}
-        >
-          <EntryIcon className="size-3" />
-        </span>
-        <div className="min-w-0 flex-1 overflow-hidden">
-          <p
-            className={cn(
-              "truncate text-[11px] leading-5",
-              workToneClass(workEntry.tone),
-              preview ? "text-muted-foreground/70" : "",
-            )}
-            title={displayText}
-          >
-            <span className={cn("text-foreground/80", workToneClass(workEntry.tone))}>
-              {heading}
-            </span>
-            {preview && <span className="text-muted-foreground/55"> - {preview}</span>}
-          </p>
-        </div>
-      </div>
-      {hasChangedFiles && !previewIsChangedFiles && (
-        <div className="mt-1 flex flex-wrap gap-1 pl-6">
-          {workEntry.changedFiles?.slice(0, 4).map((filePath) => (
-            <span
-              key={`${workEntry.id}:${filePath}`}
-              className="rounded-md border border-border/55 bg-background/75 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/75"
-              title={filePath}
-            >
-              {filePath}
-            </span>
-          ))}
-          {(workEntry.changedFiles?.length ?? 0) > 4 && (
-            <span className="px-1 text-[10px] text-muted-foreground/55">
-              +{(workEntry.changedFiles?.length ?? 0) - 4}
-            </span>
-          )}
-        </div>
-      )}
-    </div>
-  );
-});
