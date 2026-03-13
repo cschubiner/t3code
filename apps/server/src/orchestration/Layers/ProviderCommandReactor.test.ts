@@ -355,6 +355,7 @@ describe("ProviderCommandReactor", () => {
           attachments: [],
         },
         provider: "codex",
+        model: "gpt-5-codex",
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         createdAt: now,
