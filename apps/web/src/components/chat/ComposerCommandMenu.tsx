@@ -103,7 +103,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
     <CommandItem
       value={props.item.id}
       className={cn(
-        "cursor-pointer select-none gap-2",
+        "cursor-pointer select-none items-start gap-2",
         props.isActive && "bg-accent text-accent-foreground",
       )}
       onMouseDown={(event) => {
@@ -121,33 +121,37 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         />
       ) : null}
       {props.item.type === "slash-command" ? (
-        <BotIcon className="size-4 text-muted-foreground/80" />
+        <BotIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground/80" />
       ) : null}
       {props.item.type === "skill" ? (
         <>
-          <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+          <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">
             skill
           </Badge>
           {props.item.source === "workspace" ? (
-            <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+            <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">
               local
             </Badge>
           ) : props.item.source === "extra-root" ? (
-            <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+            <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">
               custom
             </Badge>
           ) : null}
         </>
       ) : null}
       {props.item.type === "model" ? (
-        <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+        <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">
           model
         </Badge>
       ) : null}
-      <span className="flex min-w-0 items-center gap-1.5 truncate">
-        <span className="truncate">{props.item.label}</span>
-      </span>
-      <span className="truncate text-muted-foreground/70 text-xs">{props.item.description}</span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm leading-tight">{props.item.label}</p>
+        {props.item.description ? (
+          <p className="truncate text-muted-foreground/70 text-xs leading-tight">
+            {props.item.description}
+          </p>
+        ) : null}
+      </div>
     </CommandItem>
   );
 });
