@@ -97,6 +97,7 @@ import {
 } from "./ui/sidebar";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useThreadNavigationHistoryStore } from "../threadNavigationHistoryStore";
+import { useThreadActivityStore } from "../threadActivityStore";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 import {
   getVisibleThreadsForProject,
@@ -483,6 +484,7 @@ export default function Sidebar() {
       threads,
     ],
   );
+  const transientWorkByThreadId = useThreadActivityStore((state) => state.transientWorkByThreadId);
   const sidebarProjectTargets = useMemo(
     () =>
       projectNavigationTargetsForSidebar({
@@ -1160,6 +1162,7 @@ export default function Sidebar() {
           thread,
           hasPendingApprovals: derivePendingApprovals(thread.activities).length > 0,
           hasPendingUserInput: derivePendingUserInputs(thread.activities).length > 0,
+          hasTransientWork: Boolean(transientWorkByThreadId[thread.id]),
         }),
       ),
     );
@@ -1186,6 +1189,7 @@ export default function Sidebar() {
         thread,
         hasPendingApprovals: derivePendingApprovals(thread.activities).length > 0,
         hasPendingUserInput: derivePendingUserInputs(thread.activities).length > 0,
+        hasTransientWork: Boolean(transientWorkByThreadId[thread.id]),
       });
       const prStatus = prStatusIndicator(prByThreadId.get(thread.id) ?? null);
       const terminalStatus = terminalStatusFromRunningIds(
@@ -1996,10 +2000,10 @@ export default function Sidebar() {
                 strategy={verticalListSortingStrategy}
               >
                 {sortedProjects.map((project) => (
-                    <SortableProjectItem key={project.id} projectId={project.id}>
-                      {(dragHandleProps) => renderProjectItem(project, dragHandleProps)}
-                    </SortableProjectItem>
-                  ))}
+                  <SortableProjectItem key={project.id} projectId={project.id}>
+                    {(dragHandleProps) => renderProjectItem(project, dragHandleProps)}
+                  </SortableProjectItem>
+                ))}
                 </SortableContext>
               </SidebarMenu>
             </DndContext>
