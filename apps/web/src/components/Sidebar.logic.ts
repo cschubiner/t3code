@@ -157,15 +157,21 @@ export function resolveSidebarProjectNavigationTarget(input: {
 
 export function isTypingInSidebarTextEntry(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
-  if (
+
+  const editableTarget =
     target instanceof HTMLInputElement ||
     target instanceof HTMLTextAreaElement ||
-    target instanceof HTMLSelectElement
-  ) {
-    return true;
-  }
-  if (target.isContentEditable) return true;
-  return Boolean(target.closest("input, textarea, select, [contenteditable]"));
+    target instanceof HTMLSelectElement ||
+    target.isContentEditable
+      ? target
+      : target.closest<HTMLElement>("input, textarea, select, [contenteditable]");
+
+  if (!editableTarget) return false;
+
+  return (
+    editableTarget.closest("[data-sidebar='sidebar']") !== null ||
+    editableTarget.closest("[data-slot='sidebar']") !== null
+  );
 }
 
 export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
