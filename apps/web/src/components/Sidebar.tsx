@@ -92,6 +92,7 @@ import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
 import { Button } from "./ui/button";
 import { Menu, MenuGroup, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { GlobalThreadSearchDialog } from "./GlobalThreadSearchDialog";
 import {
   SidebarContent,
   SidebarFooter,
@@ -738,6 +739,8 @@ export default function Sidebar() {
   const suppressProjectClickAfterDragRef = useRef(false);
   const suppressProjectClickForContextMenuRef = useRef(false);
   const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
+  const [isGlobalThreadSearchOpen, setIsGlobalThreadSearchOpen] = useState(false);
+  const [globalThreadSearchFocusRequestId, setGlobalThreadSearchFocusRequestId] = useState(0);
   const selectedThreadIds = useThreadSelectionStore((s) => s.selectedThreadIds);
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
   const rangeSelectTo = useThreadSelectionStore((s) => s.rangeSelectTo);
@@ -1530,6 +1533,19 @@ export default function Sidebar() {
         platform,
         context: getShortcutContext(),
       });
+      if (command === "threads.search") {
+        if (
+          document.querySelector("[data-slot='dialog-popup']") !== null ||
+          document.querySelector("[data-slot='command-dialog-popup']") !== null
+        ) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        setIsGlobalThreadSearchOpen(true);
+        setGlobalThreadSearchFocusRequestId((current) => current + 1);
+        return;
+      }
       const traversalDirection = threadTraversalDirectionFromCommand(command);
       if (traversalDirection !== null) {
         const targetThreadId = resolveAdjacentThreadId({
@@ -2186,6 +2202,12 @@ export default function Sidebar() {
           </SidebarContent>
 
           <SidebarSeparator />
+          <GlobalThreadSearchDialog
+            open={isGlobalThreadSearchOpen}
+            onOpenChange={setIsGlobalThreadSearchOpen}
+            activeThreadId={routeThreadId}
+            focusRequestId={globalThreadSearchFocusRequestId}
+          />
           <SidebarFooter className="p-2">
             <SidebarUpdatePill />
             <SidebarMenu>

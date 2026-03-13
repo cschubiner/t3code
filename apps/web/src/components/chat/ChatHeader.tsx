@@ -13,6 +13,7 @@ import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScr
 import { Toggle } from "../ui/toggle";
 import { SidebarTrigger } from "../ui/sidebar";
 import { OpenInPicker } from "./OpenInPicker";
+import { buildHighlightSegments, findTextOccurrences } from "../../lib/threadSearch";
 
 interface ChatHeaderProps {
   activeThreadId: ThreadId;
@@ -30,6 +31,8 @@ interface ChatHeaderProps {
   diffToggleShortcutLabel: string | null;
   gitCwd: string | null;
   diffOpen: boolean;
+  titleSearchQuery?: string | null;
+  titleSearchHighlighted?: boolean;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
@@ -54,6 +57,8 @@ export const ChatHeader = memo(function ChatHeader({
   diffToggleShortcutLabel,
   gitCwd,
   diffOpen,
+  titleSearchQuery,
+  titleSearchHighlighted = false,
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
@@ -61,6 +66,12 @@ export const ChatHeader = memo(function ChatHeader({
   onToggleTerminal,
   onToggleDiff,
 }: ChatHeaderProps) {
+  const titleOccurrences =
+    titleSearchHighlighted && titleSearchQuery
+      ? findTextOccurrences(activeThreadTitle, titleSearchQuery)
+      : [];
+  const titleSegments = buildHighlightSegments(activeThreadTitle, titleOccurrences);
+
   return (
     <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
@@ -69,7 +80,18 @@ export const ChatHeader = memo(function ChatHeader({
           className="min-w-0 shrink truncate text-sm font-medium text-foreground"
           title={activeThreadTitle}
         >
-          {activeThreadTitle}
+          {titleSegments.map((segment) =>
+            segment.highlighted ? (
+              <mark
+                key={`thread-title-highlight:${segment.key}`}
+                className="rounded bg-amber-400/35 px-0.5 text-foreground"
+              >
+                {segment.text}
+              </mark>
+            ) : (
+              <span key={`thread-title-segment:${segment.key}`}>{segment.text}</span>
+            ),
+          )}
         </h2>
         {activeProjectName && (
           <Badge variant="outline" className="min-w-0 shrink overflow-hidden">

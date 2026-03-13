@@ -22,7 +22,15 @@ import {
 } from "@t3tools/contracts";
 import { applyClaudePromptEffortPrefix, normalizeModelSlug } from "@t3tools/shared/model";
 import { truncate } from "@t3tools/shared/String";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useNavigate, useSearch } from "@tanstack/react-router";
@@ -158,6 +166,7 @@ import QueuedFollowUpsPanel from "./QueuedFollowUpsPanel";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
 import { ContextWindowMeter } from "./chat/ContextWindowMeter";
+import { ThreadSearchBar } from "./chat/ThreadSearchBar";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { AVAILABLE_PROVIDER_OPTIONS, ProviderModelPicker } from "./chat/ProviderModelPicker";
 import { ComposerCommandItem, ComposerCommandMenu } from "./chat/ComposerCommandMenu";
@@ -199,6 +208,8 @@ import {
   type QueuedTurnDraft,
   useQueuedTurnStore,
 } from "../queuedTurnStore";
+import { buildThreadSearchMatches, buildThreadSearchSources } from "../lib/threadSearch";
+import { useThreadSearchNavigationStore } from "../threadSearchNavigationStore";
 import {
   useServerAvailableEditors,
   useServerConfig,
@@ -490,6 +501,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const clearProjectDraftThreadId = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadId,
   );
+  const pendingThreadSearchNavigation = useThreadSearchNavigationStore(
+    (store) => store.pendingNavigation,
+  );
   const draftThread = useComposerDraftStore(
     (store) => store.draftThreadsByThreadId[threadId] ?? null,
   );
@@ -548,6 +562,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
   const [pullRequestDialogState, setPullRequestDialogState] =
     useState<PullRequestDialogState | null>(null);
+  const [isThreadSearchOpen, setIsThreadSearchOpen] = useState(false);
+  const [threadSearchQuery, setThreadSearchQuery] = useState("");
+  const [activeThreadSearchMatchIndex, setActiveThreadSearchMatchIndex] = useState(0);
+  const [titleSearchHighlightQuery, setTitleSearchHighlightQuery] = useState<string | null>(null);
+  const [titleSearchHighlighted, setTitleSearchHighlighted] = useState(false);
   const [pendingPullRequestSetupRequest, setPendingPullRequestSetupRequest] =
     useState<PendingPullRequestSetupRequest | null>(null);
   const [busyQueuedTurnId, setBusyQueuedTurnId] = useState<string | null>(null);
@@ -579,6 +598,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   } | null>(null);
   const pendingInteractionAnchorFrameRef = useRef<number | null>(null);
   const composerEditorRef = useRef<ComposerPromptEditorHandle>(null);
+  const threadSearchInputRef = useRef<HTMLInputElement | null>(null);
   const composerFormRef = useRef<HTMLFormElement>(null);
   const composerFormHeightRef = useRef(0);
   const composerFooterRef = useRef<HTMLDivElement>(null);
@@ -595,6 +615,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const queuedDispatchInFlightRef = useRef(false);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
+  const pendingThreadSearchRestoreRef = useRef<{
+    sourceKind: "message" | "proposed-plan";
+    sourceId: string;
+    occurrenceIndexInSource: number;
+  } | null>(null);
   const setMessagesScrollContainerRef = useCallback((element: HTMLDivElement | null) => {
     messagesScrollRef.current = element;
     setMessagesScrollElement(element);
@@ -710,6 +735,49 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = useProjectById(activeThread?.projectId);
+  const deferredThreadSearchQuery = useDeferredValue(threadSearchQuery);
+  const threadSearchSources = useMemo(
+    () =>
+      activeThread
+        ? buildThreadSearchSources(activeThread, {
+            includeTitle: false,
+          }).filter((source) => source.sourceKind !== "title")
+        : [],
+    [activeThread],
+  );
+  const threadSearchMatches = useMemo(
+    () =>
+      buildThreadSearchMatches(threadSearchSources, deferredThreadSearchQuery).toSorted(
+        (left, right) => {
+          const byCreatedAt = left.sourceCreatedAt.localeCompare(right.sourceCreatedAt);
+          if (byCreatedAt !== 0) return byCreatedAt;
+          const bySourceId = left.sourceId.localeCompare(right.sourceId);
+          if (bySourceId !== 0) return bySourceId;
+          return left.occurrenceIndexInSource - right.occurrenceIndexInSource;
+        },
+      ),
+    [deferredThreadSearchQuery, threadSearchSources],
+  );
+  const activeThreadSearchMatch =
+    threadSearchMatches[
+      Math.min(activeThreadSearchMatchIndex, Math.max(threadSearchMatches.length - 1, 0))
+    ] ?? null;
+  const threadSearchOccurrencesBySourceId = useMemo(() => {
+    const matchesBySourceId = new Map<
+      string,
+      Array<{ start: number; end: number; occurrenceIndexInSource: number }>
+    >();
+    for (const match of threadSearchMatches) {
+      const existing = matchesBySourceId.get(match.sourceId) ?? [];
+      existing.push({
+        start: match.matchStart,
+        end: match.matchEnd,
+        occurrenceIndexInSource: match.occurrenceIndexInSource,
+      });
+      matchesBySourceId.set(match.sourceId, existing);
+    }
+    return matchesBySourceId;
+  }, [threadSearchMatches]);
 
   const openPullRequestDialog = useCallback(
     (reference?: string) => {
@@ -1485,6 +1553,158 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const focusComposer = useCallback(() => {
     composerEditorRef.current?.focusAtEnd();
   }, []);
+  const focusThreadSearchInput = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      threadSearchInputRef.current?.focus();
+      threadSearchInputRef.current?.select();
+    });
+  }, []);
+  const closeThreadSearch = useCallback(() => {
+    setIsThreadSearchOpen(false);
+    setThreadSearchQuery("");
+    setActiveThreadSearchMatchIndex(0);
+    pendingThreadSearchRestoreRef.current = null;
+  }, []);
+  const openThreadSearch = useCallback(
+    (query?: string) => {
+      setIsThreadSearchOpen(true);
+      if (typeof query === "string") {
+        setThreadSearchQuery(query);
+      }
+      focusThreadSearchInput();
+    },
+    [focusThreadSearchInput],
+  );
+  const selectNextThreadSearchMatch = useCallback(() => {
+    if (threadSearchMatches.length === 0) {
+      return;
+    }
+    setActiveThreadSearchMatchIndex((current) => (current + 1) % threadSearchMatches.length);
+  }, [threadSearchMatches.length]);
+  const selectPreviousThreadSearchMatch = useCallback(() => {
+    if (threadSearchMatches.length === 0) {
+      return;
+    }
+    setActiveThreadSearchMatchIndex(
+      (current) => (current - 1 + threadSearchMatches.length) % threadSearchMatches.length,
+    );
+  }, [threadSearchMatches.length]);
+  const onThreadSearchInputKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeThreadSearch();
+        focusComposer();
+        return;
+      }
+      if (event.key !== "Enter") {
+        return;
+      }
+      event.preventDefault();
+      if (event.shiftKey) {
+        selectPreviousThreadSearchMatch();
+        return;
+      }
+      selectNextThreadSearchMatch();
+    },
+    [
+      closeThreadSearch,
+      focusComposer,
+      selectNextThreadSearchMatch,
+      selectPreviousThreadSearchMatch,
+    ],
+  );
+  useEffect(() => {
+    setActiveThreadSearchMatchIndex(0);
+  }, [deferredThreadSearchQuery]);
+  useEffect(() => {
+    if (threadSearchMatches.length === 0) {
+      setActiveThreadSearchMatchIndex(0);
+      return;
+    }
+    setActiveThreadSearchMatchIndex((current) =>
+      Math.min(current, Math.max(threadSearchMatches.length - 1, 0)),
+    );
+  }, [threadSearchMatches.length]);
+  useEffect(() => {
+    if (!pendingThreadSearchRestoreRef.current) {
+      return;
+    }
+    const target = pendingThreadSearchRestoreRef.current;
+    const nextIndex = threadSearchMatches.findIndex(
+      (match) =>
+        match.sourceKind === target.sourceKind &&
+        match.sourceId === target.sourceId &&
+        match.occurrenceIndexInSource === target.occurrenceIndexInSource,
+    );
+    pendingThreadSearchRestoreRef.current = null;
+    if (nextIndex >= 0) {
+      setActiveThreadSearchMatchIndex(nextIndex);
+    }
+  }, [threadSearchMatches]);
+  useEffect(() => {
+    if (!titleSearchHighlighted) {
+      return;
+    }
+    const timeout = window.setTimeout(() => {
+      setTitleSearchHighlighted(false);
+      setTitleSearchHighlightQuery(null);
+    }, 2200);
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [titleSearchHighlighted]);
+  useEffect(() => {
+    if (!isThreadSearchOpen || !activeThreadSearchMatch) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      const activeMatchSelector =
+        activeThreadSearchMatch.sourceKind === "message"
+          ? `[data-thread-search-source-id="${activeThreadSearchMatch.sourceId}"] [data-thread-search-occurrence-index="${String(activeThreadSearchMatch.occurrenceIndexInSource)}"]`
+          : `[data-thread-search-source-id="${activeThreadSearchMatch.sourceId}"]`;
+      const activeElement =
+        document.querySelector<HTMLElement>(activeMatchSelector) ??
+        document.querySelector<HTMLElement>(
+          `[data-thread-search-source-id="${activeThreadSearchMatch.sourceId}"]`,
+        );
+      activeElement?.scrollIntoView({
+        block: "center",
+        behavior: "smooth",
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [activeThreadSearchMatch, isThreadSearchOpen]);
+  useEffect(() => {
+    closeThreadSearch();
+    setTitleSearchHighlighted(false);
+    setTitleSearchHighlightQuery(null);
+  }, [closeThreadSearch, threadId]);
+  useEffect(() => {
+    const pendingNavigation = useThreadSearchNavigationStore
+      .getState()
+      .consumePendingNavigation(threadId);
+    if (!pendingNavigation) {
+      return;
+    }
+
+    if (pendingNavigation.kind === "content-match") {
+      pendingThreadSearchRestoreRef.current = {
+        sourceKind: pendingNavigation.sourceKind,
+        sourceId: pendingNavigation.sourceId,
+        occurrenceIndexInSource: pendingNavigation.occurrenceIndexInSource,
+      };
+      openThreadSearch(pendingNavigation.query);
+      return;
+    }
+
+    setTitleSearchHighlightQuery(pendingNavigation.query);
+    setTitleSearchHighlighted(true);
+  }, [openThreadSearch, pendingThreadSearchNavigation, threadId]);
   const scheduleComposerFocus = useCallback(() => {
     window.requestAnimationFrame(() => {
       focusComposer();
@@ -2509,6 +2729,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return;
       }
 
+      if (command === "thread.search") {
+        event.preventDefault();
+        event.stopPropagation();
+        openThreadSearch();
+        return;
+      }
+
       const scriptId = projectScriptIdFromCommand(command);
       if (!scriptId || !activeProject) return;
       const script = activeProject.scripts.find((entry) => entry.id === scriptId);
@@ -2530,6 +2757,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     runProjectScript,
     splitTerminal,
     keybindings,
+    openThreadSearch,
     onToggleDiff,
     toggleTerminalVisibility,
   ]);
@@ -4087,6 +4315,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
           diffToggleShortcutLabel={diffPanelShortcutLabel}
           gitCwd={gitCwd}
           diffOpen={diffOpen}
+          titleSearchQuery={titleSearchHighlightQuery}
+          titleSearchHighlighted={titleSearchHighlighted}
           onRunProjectScript={(script) => {
             void runProjectScript(script);
           }}
@@ -4096,6 +4326,22 @@ export default function ChatView({ threadId }: ChatViewProps) {
           onToggleTerminal={toggleTerminalVisibility}
           onToggleDiff={onToggleDiff}
         />
+        {isThreadSearchOpen && (
+          <ThreadSearchBar
+            inputRef={threadSearchInputRef}
+            query={threadSearchQuery}
+            activeMatchIndex={activeThreadSearchMatch ? activeThreadSearchMatchIndex : 0}
+            totalMatches={threadSearchMatches.length}
+            onQueryChange={setThreadSearchQuery}
+            onPrevious={selectPreviousThreadSearchMatch}
+            onNext={selectNextThreadSearchMatch}
+            onClose={() => {
+              closeThreadSearch();
+              focusComposer();
+            }}
+            onKeyDown={onThreadSearchInputKeyDown}
+          />
+        )}
       </header>
 
       {/* Error banner */}
@@ -4148,6 +4394,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 resolvedTheme={resolvedTheme}
                 timestampFormat={timestampFormat}
                 workspaceRoot={activeProject?.cwd ?? undefined}
+                threadSearchQuery={deferredThreadSearchQuery}
+                threadSearchOccurrencesBySourceId={threadSearchOccurrencesBySourceId}
+                activeThreadSearchSourceId={activeThreadSearchMatch?.sourceId ?? null}
+                activeThreadSearchOccurrenceIndex={
+                  activeThreadSearchMatch?.occurrenceIndexInSource ?? null
+                }
               />
             </div>
 

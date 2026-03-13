@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 import { Button } from "../ui/button";
 import { clamp } from "effect/Number";
+import { buildHighlightSegments } from "../../lib/threadSearch";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
@@ -85,6 +86,13 @@ interface MessagesTimelineProps {
   resolvedTheme: "light" | "dark";
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
+  threadSearchQuery: string;
+  threadSearchOccurrencesBySourceId: Map<
+    string,
+    Array<{ start: number; end: number; occurrenceIndexInSource: number }>
+  >;
+  activeThreadSearchSourceId: string | null;
+  activeThreadSearchOccurrenceIndex: number | null;
   onVirtualizerSnapshot?: (snapshot: {
     totalSize: number;
     measurements: ReadonlyArray<{
@@ -120,6 +128,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   resolvedTheme,
   timestampFormat,
   workspaceRoot,
+  threadSearchQuery,
+  threadSearchOccurrencesBySourceId,
+  activeThreadSearchSourceId,
+  activeThreadSearchOccurrenceIndex,
   onVirtualizerSnapshot,
 }: MessagesTimelineProps) {
   const timelineRootRef = useRef<HTMLDivElement | null>(null);
@@ -160,8 +172,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       }),
     [timelineEntries, completionDividerBeforeEntryId, isWorking, activeTurnStartedAt],
   );
+  const searchActive = threadSearchQuery.trim().length > 0;
 
   const firstUnvirtualizedRowIndex = useMemo(() => {
+    if (searchActive) {
+      return 0;
+    }
     const firstTailRowIndex = Math.max(rows.length - ALWAYS_UNVIRTUALIZED_TAIL_ROWS, 0);
     if (!activeTurnInProgress) return firstTailRowIndex;
 
@@ -197,7 +213,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }
 
     return Math.min(firstCurrentTurnRowIndex, firstTailRowIndex);
-  }, [activeTurnInProgress, activeTurnStartedAt, rows]);
+  }, [activeTurnInProgress, activeTurnStartedAt, rows, searchActive]);
 
   const virtualizedRowCount = clamp(firstUnvirtualizedRowIndex, {
     minimum: 0,
@@ -303,14 +319,77 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }));
   }, []);
 
-  const renderRowContent = (row: TimelineRow) => (
-    <div
-      className="pb-4"
-      data-timeline-row-id={row.id}
-      data-timeline-row-kind={row.kind}
-      data-message-id={row.kind === "message" ? row.message.id : undefined}
-      data-message-role={row.kind === "message" ? row.message.role : undefined}
-    >
+  const renderHighlightedUserText = useCallback(
+    (
+      messageId: string,
+      text: string,
+      occurrences: Array<{ start: number; end: number; occurrenceIndexInSource: number }>,
+      rowHasActiveMatch: boolean,
+    ) => {
+      const segments = buildHighlightSegments(
+        text,
+        occurrences.map((occurrence) => ({
+          start: occurrence.start,
+          end: occurrence.end,
+        })),
+      );
+      let occurrenceIndex = 0;
+      return segments.map((segment) => {
+        if (!segment.highlighted) {
+          return (
+            <span key={`thread-search-user-segment:${messageId}:${segment.key}`}>
+              {segment.text}
+            </span>
+          );
+        }
+
+        const occurrence = occurrences[occurrenceIndex];
+        occurrenceIndex += 1;
+        return (
+          <mark
+            key={`thread-search-user-highlight:${messageId}:${segment.key}`}
+            data-thread-search-occurrence-index={occurrence?.occurrenceIndexInSource}
+            className={cn(
+              "rounded bg-amber-400/40 px-0.5 text-foreground",
+              occurrence?.occurrenceIndexInSource === activeThreadSearchOccurrenceIndex &&
+                rowHasActiveMatch &&
+                "bg-amber-300/70 ring-1 ring-amber-500/45",
+            )}
+          >
+            {segment.text}
+          </mark>
+        );
+      });
+    },
+    [activeThreadSearchOccurrenceIndex],
+  );
+
+  const renderRowContent = (row: TimelineRow) => {
+    const sourceId =
+      row.kind === "message"
+        ? row.message.id
+        : row.kind === "proposed-plan"
+          ? row.proposedPlan.id
+          : null;
+    const sourceMatches = sourceId ? (threadSearchOccurrencesBySourceId.get(sourceId) ?? []) : [];
+    const rowHasSearchMatch = sourceMatches.length > 0;
+    const rowHasActiveSearchMatch =
+      rowHasSearchMatch && sourceId !== null && sourceId === activeThreadSearchSourceId;
+
+    return (
+      <div
+        className={cn(
+          "pb-4",
+          rowHasSearchMatch && "mx-[-0.5rem] rounded-xl bg-amber-400/6 px-2 py-1",
+          rowHasActiveSearchMatch && "ring-1 ring-amber-400/35 bg-amber-400/10",
+        )}
+        data-timeline-row-id={row.id}
+        data-timeline-row-kind={row.kind}
+        data-message-id={row.kind === "message" ? row.message.id : undefined}
+        data-message-role={row.kind === "message" ? row.message.role : undefined}
+        data-thread-search-source-id={sourceId ?? undefined}
+        data-thread-search-active={rowHasActiveSearchMatch ? "true" : undefined}
+      >
       {row.kind === "work" &&
         (() => {
           const groupId = row.id;
@@ -398,12 +477,22 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                   </div>
                 )}
                 {(displayedUserMessage.visibleText.trim().length > 0 ||
-                  terminalContexts.length > 0) && (
-                  <UserMessageBody
-                    text={displayedUserMessage.visibleText}
-                    terminalContexts={terminalContexts}
-                  />
-                )}
+                  terminalContexts.length > 0) &&
+                  (terminalContexts.length === 0 && sourceMatches.length > 0 ? (
+                    <pre className="whitespace-pre-wrap wrap-break-word font-mono text-sm leading-relaxed text-foreground">
+                      {renderHighlightedUserText(
+                        row.message.id,
+                        displayedUserMessage.visibleText,
+                        sourceMatches,
+                        rowHasActiveSearchMatch,
+                      )}
+                    </pre>
+                  ) : (
+                    <UserMessageBody
+                      text={displayedUserMessage.visibleText}
+                      terminalContexts={terminalContexts}
+                    />
+                  ))}
                 <div className="mt-1.5 flex items-center justify-end gap-2">
                   <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
                     {displayedUserMessage.copyText && (
@@ -549,8 +638,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           </div>
         </div>
       )}
-    </div>
-  );
+      </div>
+    );
+  };
 
   if (!hasMessages && !isWorking) {
     return (
