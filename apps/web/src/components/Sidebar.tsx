@@ -79,6 +79,7 @@ import { Collapsible, CollapsibleContent } from "./ui/collapsible";
 import { Menu, MenuGroup, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ImportFromCodexDialog } from "./ImportFromCodexDialog";
+import { GlobalThreadSearchDialog } from "./GlobalThreadSearchDialog";
 import {
   SidebarContent,
   SidebarFooter,
@@ -441,6 +442,8 @@ export default function Sidebar() {
   const suppressProjectClickAfterDragRef = useRef(false);
   const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
+  const [isGlobalThreadSearchOpen, setIsGlobalThreadSearchOpen] = useState(false);
+  const [globalThreadSearchFocusRequestId, setGlobalThreadSearchFocusRequestId] = useState(0);
   const selectedThreadIds = useThreadSelectionStore((s) => s.selectedThreadIds);
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
   const rangeSelectTo = useThreadSelectionStore((s) => s.rangeSelectTo);
@@ -1487,6 +1490,22 @@ export default function Sidebar() {
   );
 
   useEffect(() => {
+    const isTerminalFocused = (): boolean => {
+      const activeElement = document.activeElement;
+      if (!(activeElement instanceof HTMLElement)) return false;
+      if (activeElement.classList.contains("xterm-helper-textarea")) return true;
+      return activeElement.closest(".thread-terminal-drawer .xterm") !== null;
+    };
+    const isAnotherDialogOpen = (): boolean => {
+      if (isGlobalThreadSearchOpen) {
+        return false;
+      }
+      return (
+        document.querySelector("[data-slot='dialog-popup']") !== null ||
+        document.querySelector("[data-slot='command-dialog-popup']") !== null
+      );
+    };
+
     const onWindowKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
 
@@ -1496,7 +1515,11 @@ export default function Sidebar() {
         return;
       }
 
-      const resolvedCommand = resolveShortcutCommand(event, keybindingsRef.current);
+      const resolvedCommand = resolveShortcutCommand(event, keybindingsRef.current, {
+        context: {
+          terminalFocus: isTerminalFocused(),
+        },
+      });
       const currentRouteThreadId =
         threadIdFromSidebarPathname(router.state.location.pathname) ?? routeThreadIdRef.current;
       const currentThreads = threadsRef.current;
@@ -1530,6 +1553,15 @@ export default function Sidebar() {
         return;
       }
 
+      if (resolvedCommand === "threads.search") {
+        if (isAnotherDialogOpen()) {
+          return;
+        }
+        event.preventDefault();
+        setIsGlobalThreadSearchOpen(true);
+        setGlobalThreadSearchFocusRequestId((current) => current + 1);
+        return;
+      }
       if (
         resolvedCommand === "sidebar.thread.previous" ||
         resolvedCommand === "sidebar.thread.next"
@@ -1604,6 +1636,7 @@ export default function Sidebar() {
     navigateHistory,
     navigateToThreadFromShortcut,
     router,
+    isGlobalThreadSearchOpen,
   ]);
 
   useEffect(() => {
@@ -1992,6 +2025,12 @@ export default function Sidebar() {
         open={isImportDialogOpen}
         codexHomePath={appSettings.codexHomePath}
         onOpenChange={setIsImportDialogOpen}
+      />
+      <GlobalThreadSearchDialog
+        open={isGlobalThreadSearchOpen}
+        onOpenChange={setIsGlobalThreadSearchOpen}
+        activeThreadId={routeThreadId}
+        focusRequestId={globalThreadSearchFocusRequestId}
       />
 
       <SidebarSeparator />

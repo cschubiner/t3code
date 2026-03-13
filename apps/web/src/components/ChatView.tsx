@@ -28,7 +28,15 @@ import {
   normalizeModelSlug,
   resolveModelSlugForProvider,
 } from "@t3tools/shared/model";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useNavigate, useSearch } from "@tanstack/react-router";
@@ -125,7 +133,7 @@ import {
   setupProjectScript,
 } from "~/projectScripts";
 import { SidebarTrigger } from "./ui/sidebar";
-import { newCommandId, newMessageId, newThreadId } from "~/lib/utils";
+import { isMacPlatform, newCommandId, newMessageId, newThreadId } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
 import {
   getCustomModelOptionsByProvider,
@@ -158,6 +166,7 @@ import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
 import { ContextWindowMeter } from "./chat/ContextWindowMeter";
+import { ThreadSearchBar } from "./chat/ThreadSearchBar";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { AVAILABLE_PROVIDER_OPTIONS, ProviderModelPicker } from "./chat/ProviderModelPicker";
 import { ComposerCommandItem, ComposerCommandMenu } from "./chat/ComposerCommandMenu";
@@ -191,6 +200,8 @@ import {
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import QueuedFollowUpsPanel from "./QueuedFollowUpsPanel";
 import { confirmAndDeleteThreadWithSidebarBehavior } from "../lib/threadDeletion";
+import { buildThreadSearchMatches, buildThreadSearchSources } from "../lib/threadSearch";
+import { useThreadSearchNavigationStore } from "../threadSearchNavigationStore";
 
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
@@ -229,7 +240,6 @@ const extendReplacementRangeForTrailingSpace = (
   }
   return text[rangeEnd] === " " ? rangeEnd + 1 : rangeEnd;
 };
-
 const syncTerminalContextsByIds = (
   contexts: ReadonlyArray<TerminalContextDraft>,
   ids: ReadonlyArray<string>,
@@ -259,6 +269,8 @@ function summarizeQueuedTurn(turn: ThreadQueuedTurn): string {
   }
   return "Queued follow-up";
 }
+
+type ComposerSubmissionDisposition = "queue" | "steer";
 interface ChatViewProps {
   threadId: ThreadId;
 }
@@ -281,6 +293,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const syncServerReadModel = useStore((store) => store.syncServerReadModel);
   const setStoreThreadError = useStore((store) => store.setError);
   const setStoreThreadBranch = useStore((store) => store.setThreadBranch);
+  const pendingThreadSearchNavigation = useThreadSearchNavigationStore(
+    (store) => store.pendingNavigation,
+  );
   const { settings } = useAppSettings();
   const setStickyComposerModel = useComposerDraftStore((store) => store.setStickyModel);
   const timestampFormat = settings.timestampFormat;
@@ -353,7 +368,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     (store) => store.draftThreadsByThreadId[threadId] ?? null,
   );
   const promptRef = useRef(prompt);
-  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
@@ -396,6 +410,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
   const [pullRequestDialogState, setPullRequestDialogState] =
     useState<PullRequestDialogState | null>(null);
+  const [isThreadSearchOpen, setIsThreadSearchOpen] = useState(false);
+  const [threadSearchQuery, setThreadSearchQuery] = useState("");
+  const [activeThreadSearchMatchIndex, setActiveThreadSearchMatchIndex] = useState(0);
+  const [titleSearchHighlightQuery, setTitleSearchHighlightQuery] = useState<string | null>(null);
+  const [titleSearchHighlighted, setTitleSearchHighlighted] = useState(false);
   const [attachmentPreviewHandoffByMessageId, setAttachmentPreviewHandoffByMessageId] = useState<
     Record<string, string[]>
   >({});
@@ -424,6 +443,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   } | null>(null);
   const pendingInteractionAnchorFrameRef = useRef<number | null>(null);
   const composerEditorRef = useRef<ComposerPromptEditorHandle>(null);
+  const threadSearchInputRef = useRef<HTMLInputElement | null>(null);
   const composerFormRef = useRef<HTMLFormElement>(null);
   const composerFormHeightRef = useRef(0);
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
@@ -436,6 +456,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const sendInFlightRef = useRef(false);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
+  const pendingThreadSearchRestoreRef = useRef<{
+    sourceKind: "message" | "proposed-plan";
+    sourceId: string;
+    occurrenceIndexInSource: number;
+  } | null>(null);
   const setMessagesScrollContainerRef = useCallback((element: HTMLDivElement | null) => {
     messagesScrollRef.current = element;
     setMessagesScrollElement(element);
@@ -538,6 +563,49 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = projects.find((p) => p.id === activeThread?.projectId);
+  const deferredThreadSearchQuery = useDeferredValue(threadSearchQuery);
+  const threadSearchSources = useMemo(
+    () =>
+      activeThread
+        ? buildThreadSearchSources(activeThread, {
+            includeTitle: false,
+          }).filter((source) => source.sourceKind !== "title")
+        : [],
+    [activeThread],
+  );
+  const threadSearchMatches = useMemo(
+    () =>
+      buildThreadSearchMatches(threadSearchSources, deferredThreadSearchQuery).toSorted(
+        (left, right) => {
+          const byCreatedAt = left.sourceCreatedAt.localeCompare(right.sourceCreatedAt);
+          if (byCreatedAt !== 0) return byCreatedAt;
+          const bySourceId = left.sourceId.localeCompare(right.sourceId);
+          if (bySourceId !== 0) return bySourceId;
+          return left.occurrenceIndexInSource - right.occurrenceIndexInSource;
+        },
+      ),
+    [deferredThreadSearchQuery, threadSearchSources],
+  );
+  const activeThreadSearchMatch =
+    threadSearchMatches[
+      Math.min(activeThreadSearchMatchIndex, Math.max(threadSearchMatches.length - 1, 0))
+    ] ?? null;
+  const threadSearchOccurrencesBySourceId = useMemo(() => {
+    const matchesBySourceId = new Map<
+      string,
+      Array<{ start: number; end: number; occurrenceIndexInSource: number }>
+    >();
+    for (const match of threadSearchMatches) {
+      const existing = matchesBySourceId.get(match.sourceId) ?? [];
+      existing.push({
+        start: match.matchStart,
+        end: match.matchEnd,
+        occurrenceIndexInSource: match.occurrenceIndexInSource,
+      });
+      matchesBySourceId.set(match.sourceId, existing);
+    }
+    return matchesBySourceId;
+  }, [threadSearchMatches]);
 
   const openPullRequestDialog = useCallback(
     (reference?: string) => {
@@ -636,6 +704,76 @@ export default function ChatView({ threadId }: ChatViewProps) {
     latestTurnSettled,
     markThreadVisited,
   ]);
+
+  useEffect(() => {
+    setActiveThreadSearchMatchIndex(0);
+  }, [deferredThreadSearchQuery]);
+
+  useEffect(() => {
+    if (threadSearchMatches.length === 0) {
+      setActiveThreadSearchMatchIndex(0);
+      return;
+    }
+    setActiveThreadSearchMatchIndex((current) =>
+      Math.min(current, Math.max(threadSearchMatches.length - 1, 0)),
+    );
+  }, [threadSearchMatches.length]);
+
+  useEffect(() => {
+    if (!pendingThreadSearchRestoreRef.current) {
+      return;
+    }
+    const target = pendingThreadSearchRestoreRef.current;
+    const nextIndex = threadSearchMatches.findIndex(
+      (match) =>
+        match.sourceKind === target.sourceKind &&
+        match.sourceId === target.sourceId &&
+        match.occurrenceIndexInSource === target.occurrenceIndexInSource,
+    );
+    pendingThreadSearchRestoreRef.current = null;
+    if (nextIndex >= 0) {
+      setActiveThreadSearchMatchIndex(nextIndex);
+    }
+  }, [threadSearchMatches]);
+
+  useEffect(() => {
+    if (!titleSearchHighlighted) {
+      return;
+    }
+    const timeout = window.setTimeout(() => {
+      setTitleSearchHighlighted(false);
+      setTitleSearchHighlightQuery(null);
+    }, 2200);
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [titleSearchHighlighted]);
+
+  useEffect(() => {
+    if (!isThreadSearchOpen || !activeThreadSearchMatch) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      const activeMatchSelector =
+        activeThreadSearchMatch.sourceKind === "message"
+          ? `[data-thread-search-source-id="${activeThreadSearchMatch.sourceId}"] [data-thread-search-occurrence-index="${String(activeThreadSearchMatch.occurrenceIndexInSource)}"]`
+          : `[data-thread-search-source-id="${activeThreadSearchMatch.sourceId}"]`;
+      const activeElement =
+        document.querySelector<HTMLElement>(activeMatchSelector) ??
+        document.querySelector<HTMLElement>(
+          `[data-thread-search-source-id="${activeThreadSearchMatch.sourceId}"]`,
+        );
+      activeElement?.scrollIntoView({
+        block: "center",
+        behavior: "smooth",
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [activeThreadSearchMatch, isThreadSearchOpen]);
 
   const sessionProvider = activeThread?.session?.provider ?? null;
   const selectedProviderByThreadId = composerDraft.provider;
@@ -1290,6 +1428,93 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const focusComposer = useCallback(() => {
     composerEditorRef.current?.focusAtEnd();
   }, []);
+  const focusThreadSearchInput = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      threadSearchInputRef.current?.focus();
+      threadSearchInputRef.current?.select();
+    });
+  }, []);
+  const closeThreadSearch = useCallback(() => {
+    setIsThreadSearchOpen(false);
+    setThreadSearchQuery("");
+    setActiveThreadSearchMatchIndex(0);
+    pendingThreadSearchRestoreRef.current = null;
+  }, []);
+  const openThreadSearch = useCallback(
+    (query?: string) => {
+      setIsThreadSearchOpen(true);
+      if (typeof query === "string") {
+        setThreadSearchQuery(query);
+      }
+      focusThreadSearchInput();
+    },
+    [focusThreadSearchInput],
+  );
+  const selectNextThreadSearchMatch = useCallback(() => {
+    if (threadSearchMatches.length === 0) {
+      return;
+    }
+    setActiveThreadSearchMatchIndex((current) => (current + 1) % threadSearchMatches.length);
+  }, [threadSearchMatches.length]);
+  const selectPreviousThreadSearchMatch = useCallback(() => {
+    if (threadSearchMatches.length === 0) {
+      return;
+    }
+    setActiveThreadSearchMatchIndex(
+      (current) => (current - 1 + threadSearchMatches.length) % threadSearchMatches.length,
+    );
+  }, [threadSearchMatches.length]);
+  const onThreadSearchInputKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeThreadSearch();
+        focusComposer();
+        return;
+      }
+      if (event.key !== "Enter") {
+        return;
+      }
+      event.preventDefault();
+      if (event.shiftKey) {
+        selectPreviousThreadSearchMatch();
+        return;
+      }
+      selectNextThreadSearchMatch();
+    },
+    [
+      closeThreadSearch,
+      focusComposer,
+      selectNextThreadSearchMatch,
+      selectPreviousThreadSearchMatch,
+    ],
+  );
+  useEffect(() => {
+    closeThreadSearch();
+    setTitleSearchHighlighted(false);
+    setTitleSearchHighlightQuery(null);
+  }, [closeThreadSearch, threadId]);
+  useEffect(() => {
+    const pendingNavigation = useThreadSearchNavigationStore
+      .getState()
+      .consumePendingNavigation(threadId);
+    if (!pendingNavigation) {
+      return;
+    }
+
+    if (pendingNavigation.kind === "content-match") {
+      pendingThreadSearchRestoreRef.current = {
+        sourceKind: pendingNavigation.sourceKind,
+        sourceId: pendingNavigation.sourceId,
+        occurrenceIndexInSource: pendingNavigation.occurrenceIndexInSource,
+      };
+      openThreadSearch(pendingNavigation.query);
+      return;
+    }
+
+    setTitleSearchHighlightQuery(pendingNavigation.query);
+    setTitleSearchHighlighted(true);
+  }, [openThreadSearch, pendingThreadSearchNavigation, threadId]);
   const scheduleComposerFocus = useCallback(() => {
     window.requestAnimationFrame(() => {
       focusComposer();
@@ -1896,7 +2121,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
     }
 
-    setShowScrollToBottom(!shouldAutoScrollRef.current);
     lastKnownScrollTopRef.current = currentScrollTop;
   }, []);
   const onMessagesWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
@@ -2255,12 +2479,28 @@ export default function ChatView({ threadId }: ChatViewProps) {
   ]);
 
   const queueComposerTurn = useCallback(
+    async (input?: { text: string; interactionMode: ProviderInteractionMode }) => {
+      const api = readNativeApi();
+      if (
+        !api ||
+        !activeThread ||
+        !isServerThread ||
+        pendingQueuedTurnMessageId !== null ||
+        sendInFlightRef.current
+      ) {
     async (input?: {
       text: string;
       interactionMode: ProviderInteractionMode;
       terminalContexts?: TerminalContextDraft[];
     }) => {
-      if (!activeThread || !isServerThread) {
+      const api = readNativeApi();
+      if (
+        !api ||
+        !activeThread ||
+        !isServerThread ||
+        pendingQueuedTurnMessageId !== null ||
+        sendInFlightRef.current
+      ) {
         return false;
       }
       const trimmed = (input?.text ?? prompt).trim();
@@ -2610,6 +2850,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return;
       }
 
+      if (command === "thread.search") {
+        event.preventDefault();
+        event.stopPropagation();
+        openThreadSearch();
+        return;
+      }
+
       const scriptId = projectScriptIdFromCommand(command);
       if (!scriptId || !activeProject) return;
       const script = activeProject.scripts.find((entry) => entry.id === scriptId);
@@ -2631,6 +2878,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     runProjectScript,
     splitTerminal,
     keybindings,
+    openThreadSearch,
     onToggleDiff,
     toggleTerminalVisibility,
   ]);
@@ -4021,7 +4269,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       <header
         className={cn(
           "border-b border-border px-3 sm:px-5",
-          isElectron ? "drag-region flex h-[52px] items-center" : "py-2 sm:py-3",
+          isElectron
+            ? "drag-region flex min-h-[52px] flex-col justify-center gap-2 py-2"
+            : "py-2 sm:py-3",
         )}
       >
         <ChatHeader
@@ -4042,6 +4292,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
           diffToggleShortcutLabel={diffPanelShortcutLabel}
           gitCwd={gitCwd}
           diffOpen={diffOpen}
+          titleSearchQuery={titleSearchHighlightQuery}
+          titleSearchHighlighted={titleSearchHighlighted}
           onRunProjectScript={(script) => {
             void runProjectScript(script);
           }}
@@ -4051,6 +4303,22 @@ export default function ChatView({ threadId }: ChatViewProps) {
           onToggleTerminal={toggleTerminalVisibility}
           onToggleDiff={onToggleDiff}
         />
+        {isThreadSearchOpen && (
+          <ThreadSearchBar
+            inputRef={threadSearchInputRef}
+            query={threadSearchQuery}
+            activeMatchIndex={activeThreadSearchMatch ? activeThreadSearchMatchIndex : 0}
+            totalMatches={threadSearchMatches.length}
+            onQueryChange={setThreadSearchQuery}
+            onPrevious={selectPreviousThreadSearchMatch}
+            onNext={selectNextThreadSearchMatch}
+            onClose={() => {
+              closeThreadSearch();
+              focusComposer();
+            }}
+            onKeyDown={onThreadSearchInputKeyDown}
+          />
+        )}
       </header>
 
       {/* Error banner */}
@@ -4103,6 +4371,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 resolvedTheme={resolvedTheme}
                 timestampFormat={timestampFormat}
                 workspaceRoot={activeProject?.cwd ?? undefined}
+                threadSearchQuery={deferredThreadSearchQuery}
+                threadSearchOccurrencesBySourceId={threadSearchOccurrencesBySourceId}
+                activeThreadSearchSourceId={activeThreadSearchMatch?.sourceId ?? null}
+                activeThreadSearchOccurrenceIndex={
+                  activeThreadSearchMatch?.occurrenceIndexInSource ?? null
+                }
               />
             </div>
 
@@ -4185,7 +4459,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
                       <ComposerPendingUserInputPanel
                         pendingUserInputs={pendingUserInputs}
-                        respondingRequestIds={respondingRequestIds}
+                        respondingRequestIds={respondingUserInputRequestIds}
                         answers={activePendingDraftAnswers}
                         questionIndex={activePendingQuestionIndex}
                         onSelectOption={onSelectActivePendingUserInputOption}
@@ -4372,6 +4646,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                         {isComposerFooterCompact ? (
                           <CompactComposerControlsMenu
                             activePlan={Boolean(
+                              activePlan || sidebarProposedPlan || planSidebarOpen,
                               activePlan || sidebarProposedPlan || planSidebarOpen,
                             )}
                             interactionMode={interactionMode}
@@ -4603,6 +4878,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                       disabled={isSendBusy || isConnecting}
                                       onClick={() => void onImplementPlanInNewThread()}
                                     >
+                                      Implement in a new thread
                                       Implement in a new thread
                                     </MenuItem>
                                   </MenuPopup>
