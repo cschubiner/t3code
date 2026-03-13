@@ -87,7 +87,7 @@ function ChatRouteGlobalShortcuts() {
     terminalOpen,
     appSettings.defaultThreadEnvMode,
   ]);
- 
+
   return null;
 }
 
