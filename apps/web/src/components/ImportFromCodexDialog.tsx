@@ -18,7 +18,6 @@ import {
   DialogDescription,
   DialogFooter,
   DialogHeader,
-  DialogPanel,
   DialogPopup,
   DialogTitle,
 } from "./ui/dialog";
@@ -253,8 +252,11 @@ export function ImportFromCodexDialog({
             Code with a linked resume binding for the next turn.
           </DialogDescription>
         </DialogHeader>
-        <DialogPanel className="space-y-4">
-          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_12rem_auto]">
+        <div
+          className="min-h-0 flex-1 overflow-y-auto p-6 pt-1 lg:flex lg:h-[min(72vh,42rem)] lg:flex-col lg:overflow-hidden"
+          data-slot="dialog-panel"
+        >
+          <div className="grid gap-3 shrink-0 md:grid-cols-[minmax(0,1fr)_12rem_auto]">
             <Input
               placeholder="Search title, prompt, or cwd"
               type="search"
@@ -286,9 +288,9 @@ export function ImportFromCodexDialog({
             </Button>
           </div>
 
-          <div className="grid min-h-[26rem] gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
-            <div className="overflow-hidden rounded-xl border">
-              <ScrollArea>
+          <div className="mt-4 grid min-h-[26rem] gap-4 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
+            <div className="overflow-hidden rounded-xl border lg:min-h-0">
+              <ScrollArea data-testid="codex-import-session-list">
                 <div className="divide-y">
                   {listQuery.isLoading ? (
                     <div className="p-4 text-sm text-muted-foreground">Loading Codex sessions…</div>
@@ -375,8 +377,8 @@ export function ImportFromCodexDialog({
               </ScrollArea>
             </div>
 
-            <div className="overflow-hidden rounded-xl border">
-              <ScrollArea>
+            <div className="overflow-hidden rounded-xl border lg:min-h-0">
+              <ScrollArea data-testid="codex-import-session-preview">
                 <div className="space-y-4 p-4">
                   {!highlightedSessionId ? (
                     <div className="text-sm text-muted-foreground">
@@ -454,7 +456,7 @@ export function ImportFromCodexDialog({
               </ScrollArea>
             </div>
           </div>
-        </DialogPanel>
+        </div>
         <DialogFooter>
           <div className="mr-auto flex items-center text-sm text-muted-foreground">
             {selectedSessions.length === 0
