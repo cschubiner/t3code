@@ -13,6 +13,9 @@ const buildSourcemap =
     : sourcemapEnv === "hidden"
       ? "hidden"
       : true;
+const reactCompiler = reactCompilerPreset({ compilationMode: "infer", target: "19" });
+reactCompiler.rolldown.filter ??= {};
+reactCompiler.rolldown.filter.id = /\/apps\/web\/src\/.*\.[tj]sx?$/;
 
 export default defineConfig({
   plugins: [

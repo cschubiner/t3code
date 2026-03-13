@@ -232,8 +232,9 @@ export function resolveThreadStatusPill(input: {
   thread: ThreadStatusInput;
   hasPendingApprovals: boolean;
   hasPendingUserInput: boolean;
+  hasTransientWork: boolean;
 }): ThreadStatusPill | null {
-  const { hasPendingApprovals, hasPendingUserInput, thread } = input;
+  const { hasPendingApprovals, hasPendingUserInput, hasTransientWork, thread } = input;
 
   if (hasPendingApprovals) {
     return {
@@ -253,7 +254,12 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (thread.session?.status === "running") {
+  const hasActiveRunningTurn =
+    thread.session?.status === "running" ||
+    thread.session?.orchestrationStatus === "running" ||
+    thread.latestTurn?.state === "running";
+
+  if (hasTransientWork || hasActiveRunningTurn) {
     return {
       label: "Working",
       colorClass: "text-sky-600 dark:text-sky-300/80",
