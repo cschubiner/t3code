@@ -1,8 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useState } from "react";
-import { type ProviderKind } from "@t3tools/contracts";
+import { useCallback, useEffect, useState } from "react";
+import { type DesktopRemoteAccessStatus, type ProviderKind } from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
+import { CopyIcon, ExternalLinkIcon, ShieldIcon } from "lucide-react";
 import { MAX_CUSTOM_MODEL_LENGTH, useAppSettings } from "../appSettings";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { isElectron } from "../env";
@@ -19,7 +20,9 @@ import {
   SelectValue,
 } from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
+import { Textarea } from "../components/ui/textarea";
 import { APP_VERSION } from "../branding";
+import { toastManager } from "~/components/ui/toast";
 import { SidebarInset } from "~/components/ui/sidebar";
 
 const THEME_OPTIONS = [
@@ -92,12 +95,36 @@ function patchCustomModels(provider: ProviderKind, models: string[]) {
   }
 }
 
+function formatSkillRootsForTextarea(roots: readonly string[]): string {
+  return roots.join("\n");
+}
+
+function remoteAccessStateLabel(status: DesktopRemoteAccessStatus | null): string {
+  switch (status?.state) {
+    case "ready":
+      return "Ready";
+    case "starting":
+      return "Starting";
+    case "unavailable":
+      return "Unavailable";
+    case "error":
+      return "Error";
+    case "disabled":
+    default:
+      return "Disabled";
+  }
+}
+
 function SettingsRouteView() {
   const { theme, setTheme, resolvedTheme } = useTheme();
   const { settings, defaults, updateSettings } = useAppSettings();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const [isOpeningKeybindings, setIsOpeningKeybindings] = useState(false);
   const [openKeybindingsError, setOpenKeybindingsError] = useState<string | null>(null);
+  const [remoteAccessStatus, setRemoteAccessStatus] = useState<DesktopRemoteAccessStatus | null>(
+    null,
+  );
+  const [isTogglingRemoteAccess, setIsTogglingRemoteAccess] = useState(false);
   const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
     Record<ProviderKind, string>
   >({
@@ -109,8 +136,33 @@ function SettingsRouteView() {
 
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
+  const extraSkillRoots = settings.extraSkillRoots;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
   const availableEditors = serverConfigQuery.data?.availableEditors;
+
+  useEffect(() => {
+    if (!window.desktopBridge) {
+      return;
+    }
+
+    let disposed = false;
+    void window.desktopBridge.getRemoteAccessStatus().then((status) => {
+      if (!disposed) {
+        setRemoteAccessStatus(status);
+      }
+    });
+
+    const unsubscribe = window.desktopBridge.onRemoteAccessStatus((status) => {
+      if (!disposed) {
+        setRemoteAccessStatus(status);
+      }
+    });
+
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, []);
 
   const openKeybindingsFile = useCallback(() => {
     if (!keybindingsConfigPath) return;
@@ -134,6 +186,68 @@ function SettingsRouteView() {
         setIsOpeningKeybindings(false);
       });
   }, [availableEditors, keybindingsConfigPath]);
+
+  const copyRemoteAccessUrl = useCallback(() => {
+    if (!remoteAccessStatus?.preferredUrl) {
+      return;
+    }
+
+    if (typeof navigator === "undefined" || navigator.clipboard?.writeText === undefined) {
+      toastManager.add({
+        type: "error",
+        title: "Clipboard unavailable",
+        description: "Copy the Tailscale URL manually from the field below.",
+      });
+      return;
+    }
+
+    void navigator.clipboard
+      .writeText(remoteAccessStatus.preferredUrl)
+      .then(() => {
+        toastManager.add({
+          type: "success",
+          title: "Remote URL copied",
+          description: "Open it on a phone connected to the same tailnet.",
+        });
+      })
+      .catch((error) => {
+        toastManager.add({
+          type: "error",
+          title: "Unable to copy remote URL",
+          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+        });
+      });
+  }, [remoteAccessStatus]);
+
+  const openRemoteAccessUrl = useCallback(() => {
+    if (!remoteAccessStatus?.preferredUrl) {
+      return;
+    }
+    const api = ensureNativeApi();
+    void api.shell.openExternal(remoteAccessStatus.preferredUrl).catch((error) => {
+      toastManager.add({
+        type: "error",
+        title: "Unable to open remote URL",
+        description: error instanceof Error ? error.message : "An unexpected error occurred.",
+      });
+    });
+  }, [remoteAccessStatus]);
+
+  const toggleRemoteAccess = useCallback((enabled: boolean) => {
+    if (!window.desktopBridge) {
+      return;
+    }
+
+    setIsTogglingRemoteAccess(true);
+    void window.desktopBridge
+      .setRemoteAccessEnabled(enabled)
+      .then((status) => {
+        setRemoteAccessStatus(status);
+      })
+      .finally(() => {
+        setIsTogglingRemoteAccess(false);
+      });
+  }, []);
 
   const addCustomModel = useCallback(
     (provider: ProviderKind) => {
@@ -219,6 +333,100 @@ function SettingsRouteView() {
               </p>
             </header>
 
+            {isElectron ? (
+              <section className="rounded-2xl border border-border bg-card p-5">
+                <div className="mb-4 flex items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-sm font-medium text-foreground">Private Remote Access</h2>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Expose the full app privately over Tailscale so your phone can control the
+                      same live desktop sessions.
+                    </p>
+                  </div>
+                  <div className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-1 text-[10px] font-semibold tracking-wide text-sky-700 uppercase">
+                    Tailscale
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between gap-4 rounded-xl border border-border bg-background px-4 py-3">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                        <ShieldIcon className="size-4" />
+                        Private remote access
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Only devices connected to your tailnet can open the remote URL.
+                      </p>
+                    </div>
+                    <Switch
+                      checked={remoteAccessStatus?.enabled === true}
+                      disabled={isTogglingRemoteAccess}
+                      onCheckedChange={toggleRemoteAccess}
+                      aria-label="Toggle private remote access"
+                    />
+                  </div>
+
+                  <div className="rounded-xl border border-border bg-background px-4 py-3 text-xs text-muted-foreground">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium text-foreground">Status</span>
+                      <span className="rounded-full border border-border px-2 py-0.5 text-[11px]">
+                        {remoteAccessStateLabel(remoteAccessStatus)}
+                      </span>
+                    </div>
+                    {remoteAccessStatus?.preferredUrl ? (
+                      <div className="mt-3">
+                        <div className="font-medium text-foreground">Preferred URL</div>
+                        <div className="mt-1 break-all">{remoteAccessStatus.preferredUrl}</div>
+                      </div>
+                    ) : null}
+                    {remoteAccessStatus && remoteAccessStatus.urls.length > 1 ? (
+                      <div className="mt-3">
+                        <div className="font-medium text-foreground">Also available on</div>
+                        <div className="mt-1 space-y-1">
+                          {remoteAccessStatus.urls
+                            .filter((url) => url !== remoteAccessStatus.preferredUrl)
+                            .map((url) => (
+                              <div key={url} className="break-all">
+                                {url}
+                              </div>
+                            ))}
+                        </div>
+                      </div>
+                    ) : null}
+                    {remoteAccessStatus?.message ? (
+                      <div className="mt-3 text-amber-700">{remoteAccessStatus.message}</div>
+                    ) : (
+                      <div className="mt-3">
+                        Open the preferred URL on a phone connected to Tailscale over Wi-Fi or
+                        cellular.
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={copyRemoteAccessUrl}
+                      disabled={!remoteAccessStatus?.preferredUrl}
+                    >
+                      <CopyIcon className="size-4" />
+                      Copy URL
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={openRemoteAccessUrl}
+                      disabled={!remoteAccessStatus?.preferredUrl}
+                    >
+                      <ExternalLinkIcon className="size-4" />
+                      Open URL
+                    </Button>
+                  </div>
+                </div>
+              </section>
+            ) : null}
             <section className="rounded-2xl border border-border bg-card p-5">
               <div className="mb-4">
                 <h2 className="text-sm font-medium text-foreground">Appearance</h2>
@@ -360,10 +568,67 @@ function SettingsRouteView() {
                       updateSettings({
                         codexBinaryPath: defaults.codexBinaryPath,
                         codexHomePath: defaults.codexHomePath,
+                        extraSkillRoots: defaults.extraSkillRoots,
                       })
                     }
                   >
                     Reset codex overrides
+                  </Button>
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">Skill Discovery</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Add extra skill roots outside your workspace and `CODEX_HOME`. Enter one absolute
+                  path per line.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <label htmlFor="skill-roots" className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">Extra skill roots</span>
+                  <Textarea
+                    id="skill-roots"
+                    value={formatSkillRootsForTextarea(extraSkillRoots)}
+                    onChange={(event) =>
+                      updateSettings({
+                        extraSkillRoots: event.target.value
+                          .split(/\r?\n/)
+                          .map((value) => value.trim()),
+                      })
+                    }
+                    placeholder={"/Users/you/.codex/skills\n/Users/you/dotfiles/.codex/skills"}
+                    spellCheck={false}
+                    rows={4}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    Workspace-local skills from `.codex/skills` are discovered automatically.
+                  </span>
+                </label>
+
+                <div className="flex flex-col gap-3 text-xs text-muted-foreground sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0 flex-1">
+                    <p>Discovered extra roots</p>
+                    <p className="mt-1 break-all font-mono text-[11px] text-foreground whitespace-pre-wrap">
+                      {extraSkillRoots.length > 0
+                        ? formatSkillRootsForTextarea(extraSkillRoots)
+                        : "None"}
+                    </p>
+                  </div>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    className="self-start"
+                    onClick={() =>
+                      updateSettings({
+                        extraSkillRoots: defaults.extraSkillRoots,
+                      })
+                    }
+                  >
+                    Reset skill roots
                   </Button>
                 </div>
               </div>

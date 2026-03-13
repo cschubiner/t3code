@@ -15,6 +15,7 @@ import {
   type ProviderApprovalDecision,
   type ServerProviderStatus,
   type ProviderKind,
+  type SkillSummary,
   type ThreadId,
   type TurnId,
   OrchestrationThreadActivity,
@@ -28,13 +29,26 @@ import {
   normalizeModelSlug,
   resolveModelSlugForProvider,
 } from "@t3tools/shared/model";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "~/lib/gitReactQuery";
+import {
+  gitBranchesQueryOptions,
+  gitCreateWorktreeMutationOptions,
+  gitRemoveWorktreeMutationOptions,
+} from "~/lib/gitReactQuery";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
+import { skillSearchQueryOptions } from "~/lib/skillReactQuery";
 import { isElectron } from "../env";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import {
@@ -67,6 +81,7 @@ import {
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
 import { useStore } from "../store";
+import { useThreadActivityStore } from "../threadActivityStore";
 import {
   buildPlanImplementationThreadTitle,
   buildPlanImplementationPrompt,
@@ -80,6 +95,7 @@ import {
   DEFAULT_THREAD_TERMINAL_ID,
   MAX_TERMINALS_PER_GROUP,
   type ChatMessage,
+  type ThreadQueuedTurn,
   type TurnDiffSummary,
 } from "../types";
 import { basenameOfPath } from "../vscode-icons";
@@ -116,7 +132,7 @@ import {
   setupProjectScript,
 } from "~/projectScripts";
 import { SidebarTrigger } from "./ui/sidebar";
-import { newCommandId, newMessageId, newThreadId } from "~/lib/utils";
+import { isMacPlatform, newCommandId, newMessageId, newThreadId } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
 import { resolveAppModelSelection, useAppSettings } from "../appSettings";
 import { isTerminalFocused } from "../lib/terminalFocus";
@@ -133,6 +149,7 @@ import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./Compose
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
+import { ThreadSearchBar } from "./chat/ThreadSearchBar";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { AVAILABLE_PROVIDER_OPTIONS, ProviderModelPicker } from "./chat/ProviderModelPicker";
 import { ComposerCommandItem, ComposerCommandMenu } from "./chat/ComposerCommandMenu";
@@ -159,6 +176,10 @@ import {
   SendPhase,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import QueuedFollowUpsPanel from "./QueuedFollowUpsPanel";
+import { confirmAndDeleteThreadWithSidebarBehavior } from "../lib/threadDeletion";
+import { buildThreadSearchMatches, buildThreadSearchSources } from "../lib/threadSearch";
+import { useThreadSearchNavigationStore } from "../threadSearchNavigationStore";
 
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
@@ -167,9 +188,11 @@ const IMAGE_ONLY_BOOTSTRAP_PROMPT =
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
+const EMPTY_SKILLS: SkillSummary[] = [];
 const EMPTY_AVAILABLE_EDITORS: EditorId[] = [];
 const EMPTY_PROVIDER_STATUSES: ServerProviderStatus[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+const EMPTY_QUEUED_TURNS: ThreadQueuedTurn[] = [];
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
@@ -184,9 +207,20 @@ const extendReplacementRangeForTrailingSpace = (
   }
   return text[rangeEnd] === " " ? rangeEnd + 1 : rangeEnd;
 };
-
+type ComposerSubmissionDisposition = "queue" | "steer";
 interface ChatViewProps {
   threadId: ThreadId;
+}
+
+function isComposerTextboxFocused(target: EventTarget | null): boolean {
+  const activeElement =
+    target instanceof HTMLElement
+      ? target
+      : document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+  if (!activeElement) return false;
+  return activeElement.closest('[data-testid="composer-editor"]') !== null;
 }
 
 export default function ChatView({ threadId }: ChatViewProps) {
@@ -196,6 +230,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const syncServerReadModel = useStore((store) => store.syncServerReadModel);
   const setStoreThreadError = useStore((store) => store.setError);
   const setStoreThreadBranch = useStore((store) => store.setThreadBranch);
+  const pendingThreadSearchNavigation = useThreadSearchNavigationStore(
+    (store) => store.pendingNavigation,
+  );
   const { settings } = useAppSettings();
   const timestampFormat = settings.timestampFormat;
   const navigate = useNavigate();
@@ -206,6 +243,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const { resolvedTheme } = useTheme();
   const queryClient = useQueryClient();
   const createWorktreeMutation = useMutation(gitCreateWorktreeMutationOptions({ queryClient }));
+  const removeWorktreeMutation = useMutation(gitRemoveWorktreeMutationOptions({ queryClient }));
   const composerDraft = useComposerThreadDraft(threadId);
   const prompt = composerDraft.prompt;
   const composerImages = composerDraft.images;
@@ -238,6 +276,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const clearProjectDraftThreadId = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadId,
   );
+  const clearProjectDraftThreadById = useComposerDraftStore(
+    (store) => store.clearProjectDraftThreadById,
+  );
+  const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearThreadDraft);
   const draftThread = useComposerDraftStore(
     (store) => store.draftThreadsByThreadId[threadId] ?? null,
   );
@@ -247,11 +289,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
   optimisticUserMessagesRef.current = optimisticUserMessages;
+  const setTransientWorking = useThreadActivityStore((state) => state.setTransientWorking);
   const [localDraftErrorsByThreadId, setLocalDraftErrorsByThreadId] = useState<
     Record<ThreadId, string | null>
   >({});
   const [sendPhase, setSendPhase] = useState<SendPhase>("idle");
   const [sendStartedAt, setSendStartedAt] = useState<string | null>(null);
+  const [pendingQueuedTurnMessageId, setPendingQueuedTurnMessageId] = useState<MessageId | null>(
+    null,
+  );
+  const [pendingQueueAction, setPendingQueueAction] = useState<{
+    kind: "send-now" | "mutate";
+    messageId: MessageId | null;
+  } | null>(null);
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
   const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
@@ -276,6 +326,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
   const [pullRequestDialogState, setPullRequestDialogState] =
     useState<PullRequestDialogState | null>(null);
+  const [isThreadSearchOpen, setIsThreadSearchOpen] = useState(false);
+  const [threadSearchQuery, setThreadSearchQuery] = useState("");
+  const [activeThreadSearchMatchIndex, setActiveThreadSearchMatchIndex] = useState(0);
+  const [titleSearchHighlightQuery, setTitleSearchHighlightQuery] = useState<string | null>(null);
+  const [titleSearchHighlighted, setTitleSearchHighlighted] = useState(false);
   const [attachmentPreviewHandoffByMessageId, setAttachmentPreviewHandoffByMessageId] = useState<
     Record<string, string[]>
   >({});
@@ -304,6 +359,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   } | null>(null);
   const pendingInteractionAnchorFrameRef = useRef<number | null>(null);
   const composerEditorRef = useRef<ComposerPromptEditorHandle>(null);
+  const threadSearchInputRef = useRef<HTMLInputElement | null>(null);
   const composerFormRef = useRef<HTMLFormElement>(null);
   const composerFormHeightRef = useRef(0);
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
@@ -316,6 +372,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const sendInFlightRef = useRef(false);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
+  const pendingThreadSearchRestoreRef = useRef<{
+    sourceKind: "message" | "proposed-plan";
+    sourceId: string;
+    occurrenceIndexInSource: number;
+  } | null>(null);
   const setMessagesScrollContainerRef = useCallback((element: HTMLDivElement | null) => {
     messagesScrollRef.current = element;
     setMessagesScrollElement(element);
@@ -330,6 +391,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const storeNewTerminal = useTerminalStateStore((s) => s.newTerminal);
   const storeSetActiveTerminal = useTerminalStateStore((s) => s.setActiveTerminal);
   const storeCloseTerminal = useTerminalStateStore((s) => s.closeTerminal);
+  const clearTerminalState = useTerminalStateStore((s) => s.clearTerminalState);
 
   const setPrompt = useCallback(
     (nextPrompt: string) => {
@@ -376,6 +438,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     composerDraft.runtimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const interactionMode =
     composerDraft.interactionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
+  const composerHasContent = prompt.trim().length > 0 || composerImages.length > 0;
   const isServerThread = serverThread !== undefined;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
@@ -384,6 +447,49 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const activeLatestTurn = activeThread?.latestTurn ?? null;
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = projects.find((p) => p.id === activeThread?.projectId);
+  const deferredThreadSearchQuery = useDeferredValue(threadSearchQuery);
+  const threadSearchSources = useMemo(
+    () =>
+      activeThread
+        ? buildThreadSearchSources(activeThread, {
+            includeTitle: false,
+          }).filter((source) => source.sourceKind !== "title")
+        : [],
+    [activeThread],
+  );
+  const threadSearchMatches = useMemo(
+    () =>
+      buildThreadSearchMatches(threadSearchSources, deferredThreadSearchQuery).toSorted(
+        (left, right) => {
+          const byCreatedAt = left.sourceCreatedAt.localeCompare(right.sourceCreatedAt);
+          if (byCreatedAt !== 0) return byCreatedAt;
+          const bySourceId = left.sourceId.localeCompare(right.sourceId);
+          if (bySourceId !== 0) return bySourceId;
+          return left.occurrenceIndexInSource - right.occurrenceIndexInSource;
+        },
+      ),
+    [deferredThreadSearchQuery, threadSearchSources],
+  );
+  const activeThreadSearchMatch =
+    threadSearchMatches[
+      Math.min(activeThreadSearchMatchIndex, Math.max(threadSearchMatches.length - 1, 0))
+    ] ?? null;
+  const threadSearchOccurrencesBySourceId = useMemo(() => {
+    const matchesBySourceId = new Map<
+      string,
+      Array<{ start: number; end: number; occurrenceIndexInSource: number }>
+    >();
+    for (const match of threadSearchMatches) {
+      const existing = matchesBySourceId.get(match.sourceId) ?? [];
+      existing.push({
+        start: match.matchStart,
+        end: match.matchEnd,
+        occurrenceIndexInSource: match.occurrenceIndexInSource,
+      });
+      matchesBySourceId.set(match.sourceId, existing);
+    }
+    return matchesBySourceId;
+  }, [threadSearchMatches]);
 
   const openPullRequestDialog = useCallback(
     (reference?: string) => {
@@ -483,6 +589,76 @@ export default function ChatView({ threadId }: ChatViewProps) {
     markThreadVisited,
   ]);
 
+  useEffect(() => {
+    setActiveThreadSearchMatchIndex(0);
+  }, [deferredThreadSearchQuery]);
+
+  useEffect(() => {
+    if (threadSearchMatches.length === 0) {
+      setActiveThreadSearchMatchIndex(0);
+      return;
+    }
+    setActiveThreadSearchMatchIndex((current) =>
+      Math.min(current, Math.max(threadSearchMatches.length - 1, 0)),
+    );
+  }, [threadSearchMatches.length]);
+
+  useEffect(() => {
+    if (!pendingThreadSearchRestoreRef.current) {
+      return;
+    }
+    const target = pendingThreadSearchRestoreRef.current;
+    const nextIndex = threadSearchMatches.findIndex(
+      (match) =>
+        match.sourceKind === target.sourceKind &&
+        match.sourceId === target.sourceId &&
+        match.occurrenceIndexInSource === target.occurrenceIndexInSource,
+    );
+    pendingThreadSearchRestoreRef.current = null;
+    if (nextIndex >= 0) {
+      setActiveThreadSearchMatchIndex(nextIndex);
+    }
+  }, [threadSearchMatches]);
+
+  useEffect(() => {
+    if (!titleSearchHighlighted) {
+      return;
+    }
+    const timeout = window.setTimeout(() => {
+      setTitleSearchHighlighted(false);
+      setTitleSearchHighlightQuery(null);
+    }, 2200);
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [titleSearchHighlighted]);
+
+  useEffect(() => {
+    if (!isThreadSearchOpen || !activeThreadSearchMatch) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      const activeMatchSelector =
+        activeThreadSearchMatch.sourceKind === "message"
+          ? `[data-thread-search-source-id="${activeThreadSearchMatch.sourceId}"] [data-thread-search-occurrence-index="${String(activeThreadSearchMatch.occurrenceIndexInSource)}"]`
+          : `[data-thread-search-source-id="${activeThreadSearchMatch.sourceId}"]`;
+      const activeElement =
+        document.querySelector<HTMLElement>(activeMatchSelector) ??
+        document.querySelector<HTMLElement>(
+          `[data-thread-search-source-id="${activeThreadSearchMatch.sourceId}"]`,
+        );
+      activeElement?.scrollIntoView({
+        block: "center",
+        behavior: "smooth",
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [activeThreadSearchMatch, isThreadSearchOpen]);
+
   const sessionProvider = activeThread?.session?.provider ?? null;
   const selectedProviderByThreadId = composerDraft.provider;
   const hasThreadStarted = Boolean(
@@ -576,6 +752,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     sendStartedAt,
   );
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
+  const queuedTurns = activeThread?.queuedTurns ?? EMPTY_QUEUED_TURNS;
   const workLogEntries = useMemo(
     () => deriveWorkLogEntries(threadActivities, activeLatestTurn?.turnId ?? undefined),
     [activeLatestTurn?.turnId, threadActivities],
@@ -905,12 +1082,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const composerTriggerKind = composerTrigger?.kind ?? null;
   const pathTriggerQuery = composerTrigger?.kind === "path" ? composerTrigger.query : "";
   const isPathTrigger = composerTriggerKind === "path";
+  const skillTriggerQuery = composerTrigger?.kind === "skill" ? composerTrigger.query : "";
+  const isSkillTrigger = composerTriggerKind === "skill";
   const [debouncedPathQuery, composerPathQueryDebouncer] = useDebouncedValue(
     pathTriggerQuery,
     { wait: COMPOSER_PATH_QUERY_DEBOUNCE_MS },
     (debouncerState) => ({ isPending: debouncerState.isPending }),
   );
+  const [debouncedSkillQuery, composerSkillQueryDebouncer] = useDebouncedValue(
+    skillTriggerQuery,
+    { wait: COMPOSER_PATH_QUERY_DEBOUNCE_MS },
+    (debouncerState) => ({ isPending: debouncerState.isPending }),
+  );
   const effectivePathQuery = pathTriggerQuery.length > 0 ? debouncedPathQuery : "";
+  const effectiveSkillQuery = skillTriggerQuery.length > 0 ? debouncedSkillQuery : "";
   const branchesQuery = useQuery(gitBranchesQueryOptions(gitCwd));
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const workspaceEntriesQuery = useQuery(
@@ -921,7 +1106,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
       limit: 80,
     }),
   );
+  const skillSearchResultQuery = useQuery(
+    skillSearchQueryOptions({
+      cwd: gitCwd,
+      query: effectiveSkillQuery,
+      codexHomePath: settings.codexHomePath,
+      extraRoots: settings.extraSkillRoots,
+      enabled: isSkillTrigger,
+      limit: 40,
+    }),
+  );
   const workspaceEntries = workspaceEntriesQuery.data?.entries ?? EMPTY_PROJECT_ENTRIES;
+  const discoveredSkills = skillSearchResultQuery.data?.skills ?? EMPTY_SKILLS;
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
@@ -958,6 +1154,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
           label: "/default",
           description: "Switch this thread back to normal chat mode",
         },
+        {
+          id: "slash:delete",
+          type: "slash-command",
+          command: "delete",
+          label: "/delete",
+          description: "Delete this thread",
+        },
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
       const query = composerTrigger.query.trim().toLowerCase();
       if (!query) {
@@ -966,6 +1169,26 @@ export default function ChatView({ threadId }: ChatViewProps) {
       return slashCommandItems.filter(
         (item) => item.command.includes(query) || item.label.slice(1).includes(query),
       );
+    }
+
+    if (composerTrigger.kind === "skill") {
+      return discoveredSkills.map((skill) => ({
+        id: `skill:${skill.source}:${skill.name}:${skill.skillPath}`,
+        type: "skill",
+        name: skill.name,
+        source: skill.source,
+        label: `$${skill.name}`,
+        description: [
+          skill.source === "workspace"
+            ? "Workspace"
+            : skill.source === "extra-root"
+              ? "Extra root"
+              : "Codex home",
+          skill.description,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      }));
     }
 
     return searchableModelOptions
@@ -984,7 +1207,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         label: name,
         description: `${providerLabel} · ${slug}`,
       }));
-  }, [composerTrigger, searchableModelOptions, workspaceEntries]);
+  }, [composerTrigger, discoveredSkills, searchableModelOptions, workspaceEntries]);
   const composerMenuOpen = Boolean(composerTrigger);
   const activeComposerMenuItem = useMemo(
     () =>
@@ -1087,6 +1310,93 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const focusComposer = useCallback(() => {
     composerEditorRef.current?.focusAtEnd();
   }, []);
+  const focusThreadSearchInput = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      threadSearchInputRef.current?.focus();
+      threadSearchInputRef.current?.select();
+    });
+  }, []);
+  const closeThreadSearch = useCallback(() => {
+    setIsThreadSearchOpen(false);
+    setThreadSearchQuery("");
+    setActiveThreadSearchMatchIndex(0);
+    pendingThreadSearchRestoreRef.current = null;
+  }, []);
+  const openThreadSearch = useCallback(
+    (query?: string) => {
+      setIsThreadSearchOpen(true);
+      if (typeof query === "string") {
+        setThreadSearchQuery(query);
+      }
+      focusThreadSearchInput();
+    },
+    [focusThreadSearchInput],
+  );
+  const selectNextThreadSearchMatch = useCallback(() => {
+    if (threadSearchMatches.length === 0) {
+      return;
+    }
+    setActiveThreadSearchMatchIndex((current) => (current + 1) % threadSearchMatches.length);
+  }, [threadSearchMatches.length]);
+  const selectPreviousThreadSearchMatch = useCallback(() => {
+    if (threadSearchMatches.length === 0) {
+      return;
+    }
+    setActiveThreadSearchMatchIndex(
+      (current) => (current - 1 + threadSearchMatches.length) % threadSearchMatches.length,
+    );
+  }, [threadSearchMatches.length]);
+  const onThreadSearchInputKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeThreadSearch();
+        focusComposer();
+        return;
+      }
+      if (event.key !== "Enter") {
+        return;
+      }
+      event.preventDefault();
+      if (event.shiftKey) {
+        selectPreviousThreadSearchMatch();
+        return;
+      }
+      selectNextThreadSearchMatch();
+    },
+    [
+      closeThreadSearch,
+      focusComposer,
+      selectNextThreadSearchMatch,
+      selectPreviousThreadSearchMatch,
+    ],
+  );
+  useEffect(() => {
+    closeThreadSearch();
+    setTitleSearchHighlighted(false);
+    setTitleSearchHighlightQuery(null);
+  }, [closeThreadSearch, threadId]);
+  useEffect(() => {
+    const pendingNavigation = useThreadSearchNavigationStore
+      .getState()
+      .consumePendingNavigation(threadId);
+    if (!pendingNavigation) {
+      return;
+    }
+
+    if (pendingNavigation.kind === "content-match") {
+      pendingThreadSearchRestoreRef.current = {
+        sourceKind: pendingNavigation.sourceKind,
+        sourceId: pendingNavigation.sourceId,
+        occurrenceIndexInSource: pendingNavigation.occurrenceIndexInSource,
+      };
+      openThreadSearch(pendingNavigation.query);
+      return;
+    }
+
+    setTitleSearchHighlightQuery(pendingNavigation.query);
+    setTitleSearchHighlighted(true);
+  }, [openThreadSearch, pendingThreadSearchNavigation, threadId]);
   const scheduleComposerFocus = useCallback(() => {
     window.requestAnimationFrame(() => {
       focusComposer();
@@ -1424,6 +1734,50 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const toggleInteractionMode = useCallback(() => {
     handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
   }, [handleInteractionModeChange, interactionMode]);
+  const handleDeleteSlashCommand = useCallback(async () => {
+    if (!serverThread) {
+      toastManager.add({
+        type: "warning",
+        title: "Only saved threads can be deleted",
+        description: "Create the thread first, then run /delete.",
+      });
+      return "missing" as const;
+    }
+
+    return confirmAndDeleteThreadWithSidebarBehavior({
+      threadId: serverThread.id,
+      confirmBeforeDelete: settings.confirmThreadDelete,
+      threads,
+      projects,
+      routeThreadId: threadId,
+      clearComposerDraftForThread,
+      clearProjectDraftThreadById,
+      clearTerminalState,
+      navigateToThread: (nextThreadId) => {
+        if (nextThreadId) {
+          void navigate({
+            to: "/$threadId",
+            params: { threadId: nextThreadId },
+            replace: true,
+          });
+          return;
+        }
+        void navigate({ to: "/", replace: true });
+      },
+      removeWorktree: (input) => removeWorktreeMutation.mutateAsync(input),
+    });
+  }, [
+    clearComposerDraftForThread,
+    clearProjectDraftThreadById,
+    clearTerminalState,
+    navigate,
+    projects,
+    removeWorktreeMutation,
+    serverThread,
+    settings.confirmThreadDelete,
+    threadId,
+    threads,
+  ]);
   const toggleRuntimeMode = useCallback(() => {
     void handleRuntimeModeChange(
       runtimeMode === "full-access" ? "approval-required" : "full-access",
@@ -1491,6 +1845,29 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [serverThread],
   );
 
+  useEffect(() => {
+    if (pendingQueuedTurnMessageId === null) {
+      return;
+    }
+    if (queuedTurns.some((queuedTurn) => queuedTurn.messageId === pendingQueuedTurnMessageId)) {
+      setPendingQueuedTurnMessageId(null);
+    }
+  }, [pendingQueuedTurnMessageId, queuedTurns]);
+
+  useEffect(() => {
+    try {
+      if (Object.keys(lastInvokedScriptByProjectId).length === 0) {
+        localStorage.removeItem(LAST_INVOKED_SCRIPT_BY_PROJECT_KEY);
+        return;
+      }
+      localStorage.setItem(
+        LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
+        JSON.stringify(lastInvokedScriptByProjectId),
+      );
+    } catch {
+      // Ignore storage write failures (private mode, quota exceeded, etc.)
+    }
+  }, [lastInvokedScriptByProjectId]);
   // Auto-scroll on new messages
   const messageCount = timelineMessages.length;
   const scrollMessagesToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
@@ -1941,6 +2318,290 @@ export default function ChatView({ threadId }: ChatViewProps) {
   ]);
 
   useEffect(() => {
+    const hasTransientWork = isSendBusy || isConnecting || isRevertingCheckpoint;
+    setTransientWorking(threadId, hasTransientWork);
+    return () => {
+      setTransientWorking(threadId, false);
+    };
+  }, [isConnecting, isRevertingCheckpoint, isSendBusy, setTransientWorking, threadId]);
+
+  const queueComposerTurn = useCallback(
+    async (input?: { text: string; interactionMode: ProviderInteractionMode }) => {
+      const api = readNativeApi();
+      if (
+        !api ||
+        !activeThread ||
+        !isServerThread ||
+        pendingQueuedTurnMessageId !== null ||
+        sendInFlightRef.current
+      ) {
+        return false;
+      }
+
+      const trimmed = (input?.text ?? prompt).trim();
+      const queuedImages = [...composerImages];
+      if (!trimmed && queuedImages.length === 0) {
+        return false;
+      }
+
+      const threadIdForQueue = activeThread.id;
+      const createdAt = new Date().toISOString();
+      const messageIdForQueue = newMessageId();
+      setThreadError(threadIdForQueue, null);
+      setPendingQueuedTurnMessageId(messageIdForQueue);
+
+      try {
+        await persistThreadSettingsForNextTurn({
+          threadId: threadIdForQueue,
+          createdAt,
+          ...(selectedModel ? { model: selectedModel } : {}),
+          runtimeMode,
+          interactionMode: input?.interactionMode ?? interactionMode,
+        });
+
+        const turnAttachments = await Promise.all(
+          queuedImages.map(async (image) => ({
+            type: "image" as const,
+            name: image.name,
+            mimeType: image.mimeType,
+            sizeBytes: image.sizeBytes,
+            dataUrl: await readFileAsDataUrl(image.file),
+          })),
+        );
+
+        await api.orchestration.dispatchCommand({
+          type: "thread.turn.queue.enqueue",
+          commandId: newCommandId(),
+          threadId: threadIdForQueue,
+          message: {
+            messageId: messageIdForQueue,
+            role: "user",
+            text: trimmed || IMAGE_ONLY_BOOTSTRAP_PROMPT,
+            attachments: turnAttachments,
+          },
+          model: selectedModel || undefined,
+          ...(selectedModelOptionsForDispatch
+            ? { modelOptions: selectedModelOptionsForDispatch }
+            : {}),
+          ...(providerOptionsForDispatch ? { providerOptions: providerOptionsForDispatch } : {}),
+          provider: selectedProvider,
+          assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
+          runtimeMode,
+          interactionMode: input?.interactionMode ?? interactionMode,
+          createdAt,
+        });
+
+        for (const image of queuedImages) {
+          revokeBlobPreviewUrl(image.previewUrl);
+        }
+        promptRef.current = "";
+        clearComposerDraftContent(threadIdForQueue);
+        setComposerHighlightedItemId(null);
+        setComposerCursor(0);
+        setComposerTrigger(null);
+        return true;
+      } catch (err) {
+        setPendingQueuedTurnMessageId(null);
+        setThreadError(
+          threadIdForQueue,
+          err instanceof Error ? err.message : "Failed to queue follow-up.",
+        );
+        return false;
+      }
+    },
+    [
+      activeThread,
+      clearComposerDraftContent,
+      composerImages,
+      interactionMode,
+      isServerThread,
+      pendingQueuedTurnMessageId,
+      prompt,
+      providerOptionsForDispatch,
+      persistThreadSettingsForNextTurn,
+      runtimeMode,
+      selectedModel,
+      selectedModelOptionsForDispatch,
+      selectedProvider,
+      settings.enableAssistantStreaming,
+      setThreadError,
+    ],
+  );
+
+  const removeQueuedTurnFromServer = useCallback(
+    async (messageId: MessageId) => {
+      const api = readNativeApi();
+      if (!api || !activeThread || !isServerThread || pendingQueueAction !== null) {
+        return;
+      }
+
+      setPendingQueueAction({
+        kind: "mutate",
+        messageId,
+      });
+
+      await api.orchestration
+        .dispatchCommand({
+          type: "thread.turn.queue.remove",
+          commandId: newCommandId(),
+          threadId: activeThread.id,
+          messageId,
+          createdAt: new Date().toISOString(),
+        })
+        .catch((err: unknown) => {
+          setThreadError(
+            activeThread.id,
+            err instanceof Error ? err.message : "Failed to remove queued follow-up.",
+          );
+        })
+        .finally(() => {
+          setPendingQueueAction((current) =>
+            current?.kind === "mutate" && current?.messageId === messageId ? null : current,
+          );
+        });
+    },
+    [activeThread, isServerThread, pendingQueueAction, setThreadError],
+  );
+
+  const updateQueuedTurnOnServer = useCallback(
+    async (messageId: MessageId, text: string) => {
+      const api = readNativeApi();
+      if (!api || !activeThread || !isServerThread || pendingQueueAction !== null) {
+        return;
+      }
+
+      const queuedTurn = queuedTurns.find((entry) => entry.messageId === messageId);
+      if (!queuedTurn) {
+        return;
+      }
+
+      const trimmed = text.trim();
+      if (!trimmed && queuedTurn.attachments.length === 0) {
+        return;
+      }
+
+      setPendingQueueAction({
+        kind: "mutate",
+        messageId,
+      });
+
+      await api.orchestration
+        .dispatchCommand({
+          type: "thread.turn.queue.update",
+          commandId: newCommandId(),
+          threadId: activeThread.id,
+          messageId,
+          text: trimmed,
+          createdAt: new Date().toISOString(),
+        })
+        .catch((err: unknown) => {
+          setThreadError(
+            activeThread.id,
+            err instanceof Error ? err.message : "Failed to update queued follow-up.",
+          );
+        })
+        .finally(() => {
+          setPendingQueueAction((current) =>
+            current?.kind === "mutate" && current?.messageId === messageId ? null : current,
+          );
+        });
+    },
+    [activeThread, isServerThread, pendingQueueAction, queuedTurns, setThreadError],
+  );
+
+  const moveQueuedTurnOnServer = useCallback(
+    async (messageId: MessageId, targetMessageId: MessageId) => {
+      const api = readNativeApi();
+      if (
+        !api ||
+        !activeThread ||
+        !isServerThread ||
+        pendingQueueAction !== null ||
+        messageId === targetMessageId
+      ) {
+        return;
+      }
+
+      setPendingQueueAction({
+        kind: "mutate",
+        messageId,
+      });
+
+      await api.orchestration
+        .dispatchCommand({
+          type: "thread.turn.queue.move",
+          commandId: newCommandId(),
+          threadId: activeThread.id,
+          messageId,
+          targetMessageId,
+          createdAt: new Date().toISOString(),
+        })
+        .catch((err: unknown) => {
+          setThreadError(
+            activeThread.id,
+            err instanceof Error ? err.message : "Failed to reorder queued follow-up.",
+          );
+        })
+        .finally(() => {
+          setPendingQueueAction((current) =>
+            current?.kind === "mutate" && current?.messageId === messageId ? null : current,
+          );
+        });
+    },
+    [activeThread, isServerThread, pendingQueueAction, setThreadError],
+  );
+
+  const sendQueuedTurnNow = useCallback(
+    async (messageId: MessageId) => {
+      const api = readNativeApi();
+      if (!api || !activeThread || !isServerThread || pendingQueueAction !== null) {
+        return;
+      }
+
+      setPendingQueueAction({
+        kind: "send-now",
+        messageId,
+      });
+
+      await api.orchestration
+        .dispatchCommand({
+          type: "thread.turn.queue.send-now",
+          commandId: newCommandId(),
+          threadId: activeThread.id,
+          messageId,
+          createdAt: new Date().toISOString(),
+        })
+        .catch((err: unknown) => {
+          setThreadError(
+            activeThread.id,
+            err instanceof Error ? err.message : "Failed to send queued follow-up now.",
+          );
+        })
+        .finally(() => {
+          setPendingQueueAction((current) =>
+            current?.kind === "send-now" && current?.messageId === messageId ? null : current,
+          );
+        });
+    },
+    [activeThread, isServerThread, pendingQueueAction, setThreadError],
+  );
+
+  const clearQueuedTurnsFromServer = useCallback(async () => {
+    if (
+      !activeThread ||
+      !isServerThread ||
+      queuedTurns.length === 0 ||
+      pendingQueueAction !== null
+    ) {
+      return;
+    }
+
+    for (const queuedTurn of queuedTurns) {
+      await removeQueuedTurnFromServer(queuedTurn.messageId);
+    }
+  }, [activeThread, isServerThread, pendingQueueAction, queuedTurns, removeQueuedTurnFromServer]);
+
+  useEffect(() => {
     if (!activeThreadId) return;
     const previous = terminalOpenByThreadRef.current[activeThreadId] ?? false;
     const current = Boolean(terminalState.terminalOpen);
@@ -2017,6 +2678,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return;
       }
 
+      if (command === "thread.search") {
+        event.preventDefault();
+        event.stopPropagation();
+        openThreadSearch();
+        return;
+      }
+
       const scriptId = projectScriptIdFromCommand(command);
       if (!scriptId || !activeProject) return;
       const script = activeProject.scripts.find((entry) => entry.id === scriptId);
@@ -2038,6 +2706,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     runProjectScript,
     splitTerminal,
     keybindings,
+    openThreadSearch,
     onToggleDiff,
     toggleTerminalVisibility,
   ]);
@@ -2194,7 +2863,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [activeThread, isConnecting, isRevertingCheckpoint, isSendBusy, phase, setThreadError],
   );
 
-  const onSend = async (e?: { preventDefault: () => void }) => {
+  const onSend = async (
+    e?: { preventDefault: () => void },
+    disposition: ComposerSubmissionDisposition = "queue",
+  ) => {
     e?.preventDefault();
     const api = readNativeApi();
     if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
@@ -2208,6 +2880,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
         draftText: trimmed,
         planMarkdown: activeProposedPlan.planMarkdown,
       });
+      if (phase === "running" && disposition === "queue") {
+        await queueComposerTurn(followUp);
+        return;
+      }
       promptRef.current = "";
       clearComposerDraftContent(activeThread.id);
       setComposerHighlightedItemId(null);
@@ -2222,6 +2898,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
     const standaloneSlashCommand =
       composerImages.length === 0 ? parseStandaloneComposerSlashCommand(trimmed) : null;
     if (standaloneSlashCommand) {
+      if (standaloneSlashCommand === "delete") {
+        const deleteResult = await handleDeleteSlashCommand();
+        if (deleteResult !== "deleted") {
+          promptRef.current = "";
+          clearComposerDraftContent(activeThread.id);
+          setComposerHighlightedItemId(null);
+          setComposerCursor(0);
+          setComposerTrigger(null);
+        }
+        return;
+      }
       await handleInteractionModeChange(standaloneSlashCommand);
       promptRef.current = "";
       clearComposerDraftContent(activeThread.id);
@@ -2231,6 +2918,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
       return;
     }
     if (!trimmed && composerImages.length === 0) return;
+    if (phase === "running" && disposition === "queue") {
+      await queueComposerTurn();
+      return;
+    }
     if (!activeProject) return;
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
@@ -2916,6 +3607,31 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [isLocalDraftThread, scheduleComposerFocus, setDraftThreadContext, threadId],
   );
+  const canToggleComposerEnvMode =
+    isLocalDraftThread && !envLocked && !activeWorktreePath && !isComposerApprovalState;
+
+  useEffect(() => {
+    const handleComposerEnvModeShortcut = (event: globalThis.KeyboardEvent) => {
+      if (event.defaultPrevented || !canToggleComposerEnvMode) {
+        return;
+      }
+      if (!isComposerTextboxFocused(event.target)) {
+        return;
+      }
+
+      const usesMod = isMacPlatform(navigator.platform) ? event.metaKey : event.ctrlKey;
+      if (event.key.toLowerCase() !== "w" || !usesMod || !event.shiftKey || event.altKey) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      onEnvModeChange(envMode === "local" ? "worktree" : "local");
+    };
+
+    window.addEventListener("keydown", handleComposerEnvModeShortcut);
+    return () => window.removeEventListener("keydown", handleComposerEnvModeShortcut);
+  }, [canToggleComposerEnvMode, envMode, onEnvModeChange]);
 
   const applyPromptReplacement = useCallback(
     (
@@ -3017,6 +3733,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
         }
         return;
       }
+      if (item.type === "skill") {
+        const applied = applyPromptReplacement(
+          trigger.rangeStart,
+          trigger.rangeEnd,
+          `$${item.name} `,
+          { expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd) },
+        );
+        if (applied) {
+          setComposerHighlightedItemId(null);
+        }
+        return;
+      }
       if (item.type === "slash-command") {
         if (item.command === "model") {
           const replacement = "/model ";
@@ -3031,6 +3759,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
             replacement,
             { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
           );
+          if (applied) {
+            setComposerHighlightedItemId(null);
+          }
+          return;
+        }
+        if (item.command === "delete") {
+          void handleDeleteSlashCommand();
+          const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+            expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+          });
           if (applied) {
             setComposerHighlightedItemId(null);
           }
@@ -3055,6 +3793,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [
       applyPromptReplacement,
+      handleDeleteSlashCommand,
       handleInteractionModeChange,
       onProviderModelSelect,
       resolveActiveComposerTrigger,
@@ -3082,10 +3821,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [composerHighlightedItemId, composerMenuItems],
   );
   const isComposerMenuLoading =
-    composerTriggerKind === "path" &&
-    ((pathTriggerQuery.length > 0 && composerPathQueryDebouncer.state.isPending) ||
-      workspaceEntriesQuery.isLoading ||
-      workspaceEntriesQuery.isFetching);
+    (composerTriggerKind === "path" &&
+      ((pathTriggerQuery.length > 0 && composerPathQueryDebouncer.state.isPending) ||
+        workspaceEntriesQuery.isLoading ||
+        workspaceEntriesQuery.isFetching)) ||
+    (composerTriggerKind === "skill" &&
+      ((skillTriggerQuery.length > 0 && composerSkillQueryDebouncer.state.isPending) ||
+        skillSearchResultQuery.isLoading ||
+        skillSearchResultQuery.isFetching));
 
   const onPromptChange = useCallback(
     (
@@ -3123,8 +3866,22 @@ export default function ChatView({ threadId }: ChatViewProps) {
     key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
     event: KeyboardEvent,
   ) => {
+    const steerModifierPressed = isMacPlatform(navigator.platform) ? event.metaKey : event.ctrlKey;
+
     if (key === "Tab" && event.shiftKey) {
       toggleInteractionMode();
+      return true;
+    }
+
+    if (
+      key === "Enter" &&
+      phase === "running" &&
+      composerHasContent &&
+      event.shiftKey &&
+      !event.altKey &&
+      steerModifierPressed
+    ) {
+      void onSend(undefined, "steer");
       return true;
     }
 
@@ -3141,13 +3898,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
         nudgeComposerMenuHighlight("ArrowUp");
         return true;
       }
-      if (key === "Tab" || key === "Enter") {
+      if (
+        key === "Tab" ||
+        (key === "Enter" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey)
+      ) {
         const selectedItem = activeComposerMenuItemRef.current ?? currentItems[0];
         if (selectedItem) {
           onSelectComposerItem(selectedItem);
           return true;
         }
       }
+    }
+
+    if (key === "Tab" && !event.shiftKey && phase === "running" && composerHasContent) {
+      void onSend(undefined, "queue");
+      return true;
     }
 
     if (key === "Enter" && !event.shiftKey) {
@@ -3221,7 +3986,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       <header
         className={cn(
           "border-b border-border px-3 sm:px-5",
-          isElectron ? "drag-region flex h-[52px] items-center" : "py-2 sm:py-3",
+          isElectron
+            ? "drag-region flex min-h-[52px] flex-col justify-center gap-2 py-2"
+            : "py-2 sm:py-3",
         )}
       >
         <ChatHeader
@@ -3239,6 +4006,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
           diffToggleShortcutLabel={diffPanelShortcutLabel}
           gitCwd={gitCwd}
           diffOpen={diffOpen}
+          titleSearchQuery={titleSearchHighlightQuery}
+          titleSearchHighlighted={titleSearchHighlighted}
           onRunProjectScript={(script) => {
             void runProjectScript(script);
           }}
@@ -3247,6 +4016,22 @@ export default function ChatView({ threadId }: ChatViewProps) {
           onDeleteProjectScript={deleteProjectScript}
           onToggleDiff={onToggleDiff}
         />
+        {isThreadSearchOpen && (
+          <ThreadSearchBar
+            inputRef={threadSearchInputRef}
+            query={threadSearchQuery}
+            activeMatchIndex={activeThreadSearchMatch ? activeThreadSearchMatchIndex : 0}
+            totalMatches={threadSearchMatches.length}
+            onQueryChange={setThreadSearchQuery}
+            onPrevious={selectPreviousThreadSearchMatch}
+            onNext={selectNextThreadSearchMatch}
+            onClose={() => {
+              closeThreadSearch();
+              focusComposer();
+            }}
+            onKeyDown={onThreadSearchInputKeyDown}
+          />
+        )}
       </header>
 
       {/* Error banner */}
@@ -3297,6 +4082,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
               resolvedTheme={resolvedTheme}
               timestampFormat={timestampFormat}
               workspaceRoot={activeProject?.cwd ?? undefined}
+              threadSearchQuery={deferredThreadSearchQuery}
+              threadSearchOccurrencesBySourceId={threadSearchOccurrencesBySourceId}
+              activeThreadSearchSourceId={activeThreadSearchMatch?.sourceId ?? null}
+              activeThreadSearchOccurrenceIndex={
+                activeThreadSearchMatch?.occurrenceIndexInSource ?? null
+              }
             />
           </div>
 
@@ -3308,475 +4099,540 @@ export default function ChatView({ threadId }: ChatViewProps) {
               className="mx-auto w-full min-w-0 max-w-3xl"
               data-chat-composer-form="true"
             >
-              <div
-                className={`group rounded-[20px] border bg-card transition-colors duration-200 focus-within:border-ring/45 ${
-                  isDragOverComposer ? "border-primary/70 bg-accent/30" : "border-border"
-                }`}
-                onDragEnter={onComposerDragEnter}
-                onDragOver={onComposerDragOver}
-                onDragLeave={onComposerDragLeave}
-                onDrop={onComposerDrop}
-              >
-                {activePendingApproval ? (
-                  <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
-                    <ComposerPendingApprovalPanel
-                      approval={activePendingApproval}
-                      pendingCount={pendingApprovals.length}
-                    />
-                  </div>
-                ) : pendingUserInputs.length > 0 ? (
-                  <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
-                    <ComposerPendingUserInputPanel
-                      pendingUserInputs={pendingUserInputs}
-                      respondingRequestIds={respondingUserInputRequestIds}
-                      answers={activePendingDraftAnswers}
-                      questionIndex={activePendingQuestionIndex}
-                      onSelectOption={onSelectActivePendingUserInputOption}
-                      onAdvance={onAdvanceActivePendingUserInput}
-                    />
-                  </div>
-                ) : showPlanFollowUpPrompt && activeProposedPlan ? (
-                  <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
-                    <ComposerPlanFollowUpBanner
-                      key={activeProposedPlan.id}
-                      planTitle={proposedPlanTitle(activeProposedPlan.planMarkdown) ?? null}
-                    />
-                  </div>
-                ) : null}
+              <QueuedFollowUpsPanel
+                queuedTurns={queuedTurns}
+                busyQueuedTurnId={
+                  pendingQueueAction?.kind === "send-now" ? pendingQueueAction.messageId : null
+                }
+                isQueueInteractionDisabled={
+                  pendingQueueAction !== null || pendingQueuedTurnMessageId !== null
+                }
+                onDelete={(messageId) => void removeQueuedTurnFromServer(messageId as MessageId)}
+                onClearAll={() => void clearQueuedTurnsFromServer()}
+                onSaveEdit={(messageId, text) =>
+                  void updateQueuedTurnOnServer(messageId as MessageId, text)
+                }
+                onSendNow={(messageId) => void sendQueuedTurnNow(messageId as MessageId)}
+                onReorder={(activeMessageId, targetMessageId) =>
+                  void moveQueuedTurnOnServer(
+                    activeMessageId as MessageId,
+                    targetMessageId as MessageId,
+                  )
+                }
+              />
 
-                {/* Textarea area */}
+              <div
+                className={cn(
+                  "relative px-3 pb-2 sm:px-4",
+                  hasComposerHeader ? "pt-2.5 sm:pt-3" : "pt-3.5 sm:pt-4",
+                )}
+              >
                 <div
-                  className={cn(
-                    "relative px-3 pb-2 sm:px-4",
-                    hasComposerHeader ? "pt-2.5 sm:pt-3" : "pt-3.5 sm:pt-4",
-                  )}
+                  className={`group rounded-[20px] border bg-card transition-colors duration-200 focus-within:border-ring/45 ${
+                    isDragOverComposer ? "border-primary/70 bg-accent/30" : "border-border"
+                  }`}
+                  onDragEnter={onComposerDragEnter}
+                  onDragOver={onComposerDragOver}
+                  onDragLeave={onComposerDragLeave}
+                  onDrop={onComposerDrop}
                 >
-                  {composerMenuOpen && !isComposerApprovalState && (
-                    <div className="absolute inset-x-0 bottom-full z-20 mb-2 px-1">
-                      <ComposerCommandMenu
-                        items={composerMenuItems}
-                        resolvedTheme={resolvedTheme}
-                        isLoading={isComposerMenuLoading}
-                        triggerKind={composerTriggerKind}
-                        activeItemId={activeComposerMenuItem?.id ?? null}
-                        onHighlightedItemChange={onComposerMenuItemHighlighted}
-                        onSelect={onSelectComposerItem}
+                  {activePendingApproval ? (
+                    <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
+                      <ComposerPendingApprovalPanel
+                        approval={activePendingApproval}
+                        pendingCount={pendingApprovals.length}
                       />
                     </div>
-                  )}
+                  ) : pendingUserInputs.length > 0 ? (
+                    <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
+                      <ComposerPendingUserInputPanel
+                        pendingUserInputs={pendingUserInputs}
+                        respondingRequestIds={respondingUserInputRequestIds}
+                        answers={activePendingDraftAnswers}
+                        questionIndex={activePendingQuestionIndex}
+                        onSelectOption={onSelectActivePendingUserInputOption}
+                        onAdvance={onAdvanceActivePendingUserInput}
+                      />
+                    </div>
+                  ) : showPlanFollowUpPrompt && activeProposedPlan ? (
+                    <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
+                      <ComposerPlanFollowUpBanner
+                        key={activeProposedPlan.id}
+                        planTitle={proposedPlanTitle(activeProposedPlan.planMarkdown) ?? null}
+                      />
+                    </div>
+                  ) : null}
 
-                  {!isComposerApprovalState &&
-                    pendingUserInputs.length === 0 &&
-                    composerImages.length > 0 && (
-                      <div className="mb-3 flex flex-wrap gap-2">
-                        {composerImages.map((image) => (
-                          <div
-                            key={image.id}
-                            className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
-                          >
-                            {image.previewUrl ? (
-                              <button
-                                type="button"
-                                className="h-full w-full cursor-zoom-in"
-                                aria-label={`Preview ${image.name}`}
-                                onClick={() => {
-                                  const preview = buildExpandedImagePreview(
-                                    composerImages,
-                                    image.id,
-                                  );
-                                  if (!preview) return;
-                                  setExpandedImage(preview);
-                                }}
-                              >
-                                <img
-                                  src={image.previewUrl}
-                                  alt={image.name}
-                                  className="h-full w-full object-cover"
-                                />
-                              </button>
-                            ) : (
-                              <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] text-muted-foreground/70">
-                                {image.name}
-                              </div>
-                            )}
-                            {nonPersistedComposerImageIdSet.has(image.id) && (
-                              <Tooltip>
-                                <TooltipTrigger
-                                  render={
-                                    <span
-                                      role="img"
-                                      aria-label="Draft attachment may not persist"
-                                      className="absolute left-1 top-1 inline-flex items-center justify-center rounded bg-background/85 p-0.5 text-amber-600"
-                                    >
-                                      <CircleAlertIcon className="size-3" />
-                                    </span>
-                                  }
-                                />
-                                <TooltipPopup
-                                  side="top"
-                                  className="max-w-64 whitespace-normal leading-tight"
-                                >
-                                  Draft attachment could not be saved locally and may be lost on
-                                  navigation.
-                                </TooltipPopup>
-                              </Tooltip>
-                            )}
-                            <Button
-                              variant="ghost"
-                              size="icon-xs"
-                              className="absolute right-1 top-1 bg-background/80 hover:bg-background/90"
-                              onClick={() => removeComposerImage(image.id)}
-                              aria-label={`Remove ${image.name}`}
-                            >
-                              <XIcon />
-                            </Button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  <ComposerPromptEditor
-                    ref={composerEditorRef}
-                    value={
-                      isComposerApprovalState
-                        ? ""
-                        : activePendingProgress
-                          ? activePendingProgress.customAnswer
-                          : prompt
-                    }
-                    cursor={composerCursor}
-                    onChange={onPromptChange}
-                    onCommandKeyDown={onComposerCommandKey}
-                    onPaste={onComposerPaste}
-                    placeholder={
-                      isComposerApprovalState
-                        ? (activePendingApproval?.detail ??
-                          "Resolve this approval request to continue")
-                        : activePendingProgress
-                          ? "Type your own answer, or leave this blank to use the selected option"
-                          : showPlanFollowUpPrompt && activeProposedPlan
-                            ? "Add feedback to refine the plan, or leave this blank to implement it"
-                            : phase === "disconnected"
-                              ? "Ask for follow-up changes or attach images"
-                              : "Ask anything, @tag files/folders, or use / to show available commands"
-                    }
-                    disabled={isConnecting || isComposerApprovalState}
-                  />
-                </div>
-
-                {/* Bottom toolbar */}
-                {activePendingApproval ? (
-                  <div className="flex items-center justify-end gap-2 px-2.5 pb-2.5 sm:px-3 sm:pb-3">
-                    <ComposerPendingApprovalActions
-                      requestId={activePendingApproval.requestId}
-                      isResponding={respondingRequestIds.includes(activePendingApproval.requestId)}
-                      onRespondToApproval={onRespondToApproval}
-                    />
-                  </div>
-                ) : (
+                  {/* Textarea area */}
                   <div
-                    data-chat-composer-footer="true"
                     className={cn(
-                      "flex items-center justify-between px-2.5 pb-2.5 sm:px-3 sm:pb-3",
-                      isComposerFooterCompact
-                        ? "gap-1.5"
-                        : "flex-wrap gap-2 sm:flex-nowrap sm:gap-0",
+                      "relative px-3 pb-2 sm:px-4",
+                      hasComposerHeader ? "pt-2.5 sm:pt-3" : "pt-3.5 sm:pt-4",
                     )}
                   >
-                    <div
-                      className={cn(
-                        "flex min-w-0 flex-1 items-center",
-                        isComposerFooterCompact
-                          ? "gap-1 overflow-hidden"
-                          : "gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:min-w-max sm:overflow-visible",
-                      )}
-                    >
-                      {/* Provider/model picker */}
-                      <ProviderModelPicker
-                        compact={isComposerFooterCompact}
-                        provider={selectedProvider}
-                        model={selectedModelForPickerWithCustomFallback}
-                        lockedProvider={lockedProvider}
-                        modelOptionsByProvider={modelOptionsByProvider}
-                        onProviderModelChange={onProviderModelSelect}
-                      />
-
-                      {isComposerFooterCompact ? (
-                        <CompactComposerControlsMenu
-                          activePlan={Boolean(activePlan || activeProposedPlan || planSidebarOpen)}
-                          interactionMode={interactionMode}
-                          planSidebarOpen={planSidebarOpen}
-                          runtimeMode={runtimeMode}
-                          selectedEffort={selectedEffort}
-                          selectedProvider={selectedProvider}
-                          selectedCodexFastModeEnabled={selectedCodexFastModeEnabled}
-                          reasoningOptions={reasoningOptions}
-                          onEffortSelect={onEffortSelect}
-                          onCodexFastModeChange={onCodexFastModeChange}
-                          onToggleInteractionMode={toggleInteractionMode}
-                          onTogglePlanSidebar={togglePlanSidebar}
-                          onToggleRuntimeMode={toggleRuntimeMode}
+                    {composerMenuOpen && !isComposerApprovalState && (
+                      <div className="absolute inset-x-0 bottom-full z-20 mb-2 px-1">
+                        <ComposerCommandMenu
+                          items={composerMenuItems}
+                          resolvedTheme={resolvedTheme}
+                          isLoading={isComposerMenuLoading}
+                          triggerKind={composerTriggerKind}
+                          activeItemId={activeComposerMenuItem?.id ?? null}
+                          onHighlightedItemChange={onComposerMenuItemHighlighted}
+                          onSelect={onSelectComposerItem}
                         />
-                      ) : (
-                        <>
-                          {selectedProvider === "codex" && selectedEffort != null ? (
-                            <>
-                              <Separator
-                                orientation="vertical"
-                                className="mx-0.5 hidden h-4 sm:block"
-                              />
-                              <CodexTraitsPicker
-                                effort={selectedEffort}
-                                fastModeEnabled={selectedCodexFastModeEnabled}
-                                options={reasoningOptions}
-                                onEffortChange={onEffortSelect}
-                                onFastModeChange={onCodexFastModeChange}
-                              />
-                            </>
-                          ) : null}
+                      </div>
+                    )}
 
-                          <Separator
-                            orientation="vertical"
-                            className="mx-0.5 hidden h-4 sm:block"
-                          />
-
-                          <Button
-                            variant="ghost"
-                            className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
-                            size="sm"
-                            type="button"
-                            onClick={toggleInteractionMode}
-                            title={
-                              interactionMode === "plan"
-                                ? "Plan mode — click to return to normal chat mode"
-                                : "Default mode — click to enter plan mode"
-                            }
-                          >
-                            <BotIcon />
-                            <span className="sr-only sm:not-sr-only">
-                              {interactionMode === "plan" ? "Plan" : "Chat"}
-                            </span>
-                          </Button>
-
-                          <Separator
-                            orientation="vertical"
-                            className="mx-0.5 hidden h-4 sm:block"
-                          />
-
-                          <Button
-                            variant="ghost"
-                            className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
-                            size="sm"
-                            type="button"
-                            onClick={() =>
-                              void handleRuntimeModeChange(
-                                runtimeMode === "full-access" ? "approval-required" : "full-access",
-                              )
-                            }
-                            title={
-                              runtimeMode === "full-access"
-                                ? "Full access — click to require approvals"
-                                : "Approval required — click for full access"
-                            }
-                          >
-                            {runtimeMode === "full-access" ? <LockOpenIcon /> : <LockIcon />}
-                            <span className="sr-only sm:not-sr-only">
-                              {runtimeMode === "full-access" ? "Full access" : "Supervised"}
-                            </span>
-                          </Button>
-
-                          {activePlan || activeProposedPlan || planSidebarOpen ? (
-                            <>
-                              <Separator
-                                orientation="vertical"
-                                className="mx-0.5 hidden h-4 sm:block"
-                              />
+                    {!isComposerApprovalState &&
+                      pendingUserInputs.length === 0 &&
+                      composerImages.length > 0 && (
+                        <div className="mb-3 flex flex-wrap gap-2">
+                          {composerImages.map((image) => (
+                            <div
+                              key={image.id}
+                              className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
+                            >
+                              {image.previewUrl ? (
+                                <button
+                                  type="button"
+                                  className="h-full w-full cursor-zoom-in"
+                                  aria-label={`Preview ${image.name}`}
+                                  onClick={() => {
+                                    const preview = buildExpandedImagePreview(
+                                      composerImages,
+                                      image.id,
+                                    );
+                                    if (!preview) return;
+                                    setExpandedImage(preview);
+                                  }}
+                                >
+                                  <img
+                                    src={image.previewUrl}
+                                    alt={image.name}
+                                    className="h-full w-full object-cover"
+                                  />
+                                </button>
+                              ) : (
+                                <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] text-muted-foreground/70">
+                                  {image.name}
+                                </div>
+                              )}
+                              {nonPersistedComposerImageIdSet.has(image.id) && (
+                                <Tooltip>
+                                  <TooltipTrigger
+                                    render={
+                                      <span
+                                        role="img"
+                                        aria-label="Draft attachment may not persist"
+                                        className="absolute left-1 top-1 inline-flex items-center justify-center rounded bg-background/85 p-0.5 text-amber-600"
+                                      >
+                                        <CircleAlertIcon className="size-3" />
+                                      </span>
+                                    }
+                                  />
+                                  <TooltipPopup
+                                    side="top"
+                                    className="max-w-64 whitespace-normal leading-tight"
+                                  >
+                                    Draft attachment could not be saved locally and may be lost on
+                                    navigation.
+                                  </TooltipPopup>
+                                </Tooltip>
+                              )}
                               <Button
                                 variant="ghost"
-                                className={cn(
-                                  "shrink-0 whitespace-nowrap px-2 sm:px-3",
-                                  planSidebarOpen
-                                    ? "text-blue-400 hover:text-blue-300"
-                                    : "text-muted-foreground/70 hover:text-foreground/80",
-                                )}
-                                size="sm"
-                                type="button"
-                                onClick={togglePlanSidebar}
-                                title={planSidebarOpen ? "Hide plan sidebar" : "Show plan sidebar"}
+                                size="icon-xs"
+                                className="absolute right-1 top-1 bg-background/80 hover:bg-background/90"
+                                onClick={() => removeComposerImage(image.id)}
+                                aria-label={`Remove ${image.name}`}
                               >
-                                <ListTodoIcon />
-                                <span className="sr-only sm:not-sr-only">Plan</span>
+                                <XIcon />
                               </Button>
-                            </>
-                          ) : null}
-                        </>
-                      )}
-                    </div>
-
-                    {/* Right side: send / stop button */}
-                    <div
-                      data-chat-composer-actions="right"
-                      className="flex shrink-0 items-center gap-2"
-                    >
-                      {isPreparingWorktree ? (
-                        <span className="text-muted-foreground/70 text-xs">
-                          Preparing worktree...
-                        </span>
-                      ) : null}
-                      {activePendingProgress ? (
-                        <div className="flex items-center gap-2">
-                          {activePendingProgress.questionIndex > 0 ? (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="rounded-full"
-                              onClick={onPreviousActivePendingUserInputQuestion}
-                              disabled={activePendingIsResponding}
-                            >
-                              Previous
-                            </Button>
-                          ) : null}
-                          <Button
-                            type="submit"
-                            size="sm"
-                            className="rounded-full px-4"
-                            disabled={
-                              activePendingIsResponding ||
-                              (activePendingProgress.isLastQuestion
-                                ? !activePendingResolvedAnswers
-                                : !activePendingProgress.canAdvance)
-                            }
-                          >
-                            {activePendingIsResponding
-                              ? "Submitting..."
-                              : activePendingProgress.isLastQuestion
-                                ? "Submit answers"
-                                : "Next question"}
-                          </Button>
+                            </div>
+                          ))}
                         </div>
-                      ) : phase === "running" ? (
-                        <button
-                          type="button"
-                          className="flex size-8 cursor-pointer items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105 sm:h-8 sm:w-8"
-                          onClick={() => void onInterrupt()}
-                          aria-label="Stop generation"
-                        >
-                          <svg
-                            width="12"
-                            height="12"
-                            viewBox="0 0 12 12"
-                            fill="currentColor"
-                            aria-hidden="true"
-                          >
-                            <rect x="2" y="2" width="8" height="8" rx="1.5" />
-                          </svg>
-                        </button>
-                      ) : pendingUserInputs.length === 0 ? (
-                        showPlanFollowUpPrompt ? (
-                          prompt.trim().length > 0 ? (
+                      )}
+                    <ComposerPromptEditor
+                      ref={composerEditorRef}
+                      value={
+                        isComposerApprovalState
+                          ? ""
+                          : activePendingProgress
+                            ? activePendingProgress.customAnswer
+                            : prompt
+                      }
+                      cursor={composerCursor}
+                      onChange={onPromptChange}
+                      onCommandKeyDown={onComposerCommandKey}
+                      onPaste={onComposerPaste}
+                      placeholder={
+                        isComposerApprovalState
+                          ? (activePendingApproval?.detail ??
+                            "Resolve this approval request to continue")
+                          : activePendingProgress
+                            ? "Type your own answer, or leave this blank to use the selected option"
+                            : showPlanFollowUpPrompt && activeProposedPlan
+                              ? "Add feedback to refine the plan, or leave this blank to implement it"
+                              : phase === "disconnected"
+                                ? "Ask for follow-up changes or attach images"
+                                : "Ask anything, @tag files/folders, or use / to show available commands"
+                      }
+                      disabled={isConnecting || isComposerApprovalState}
+                    />
+                  </div>
+
+                  {/* Bottom toolbar */}
+                  {activePendingApproval ? (
+                    <div className="flex items-center justify-end gap-2 px-2.5 pb-2.5 sm:px-3 sm:pb-3">
+                      <ComposerPendingApprovalActions
+                        requestId={activePendingApproval.requestId}
+                        isResponding={respondingRequestIds.includes(
+                          activePendingApproval.requestId,
+                        )}
+                        onRespondToApproval={onRespondToApproval}
+                      />
+                    </div>
+                  ) : (
+                    <div
+                      data-chat-composer-footer="true"
+                      className={cn(
+                        "flex items-center justify-between px-2.5 pb-2.5 sm:px-3 sm:pb-3",
+                        isComposerFooterCompact
+                          ? "gap-1.5"
+                          : "flex-wrap gap-2 sm:flex-nowrap sm:gap-0",
+                      )}
+                    >
+                      <div
+                        className={cn(
+                          "flex min-w-0 flex-1 items-center",
+                          isComposerFooterCompact
+                            ? "gap-1 overflow-hidden"
+                            : "gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:min-w-max sm:overflow-visible",
+                        )}
+                      >
+                        {/* Provider/model picker */}
+                        <ProviderModelPicker
+                          compact={isComposerFooterCompact}
+                          provider={selectedProvider}
+                          model={selectedModelForPickerWithCustomFallback}
+                          lockedProvider={lockedProvider}
+                          modelOptionsByProvider={modelOptionsByProvider}
+                          onProviderModelChange={onProviderModelSelect}
+                        />
+
+                        {isComposerFooterCompact ? (
+                          <CompactComposerControlsMenu
+                            activePlan={Boolean(
+                              activePlan || activeProposedPlan || planSidebarOpen,
+                            )}
+                            interactionMode={interactionMode}
+                            planSidebarOpen={planSidebarOpen}
+                            runtimeMode={runtimeMode}
+                            selectedEffort={selectedEffort}
+                            selectedProvider={selectedProvider}
+                            selectedCodexFastModeEnabled={selectedCodexFastModeEnabled}
+                            reasoningOptions={reasoningOptions}
+                            onEffortSelect={onEffortSelect}
+                            onCodexFastModeChange={onCodexFastModeChange}
+                            onToggleInteractionMode={toggleInteractionMode}
+                            onTogglePlanSidebar={togglePlanSidebar}
+                            onToggleRuntimeMode={toggleRuntimeMode}
+                          />
+                        ) : (
+                          <>
+                            {selectedProvider === "codex" && selectedEffort != null ? (
+                              <>
+                                <Separator
+                                  orientation="vertical"
+                                  className="mx-0.5 hidden h-4 sm:block"
+                                />
+                                <CodexTraitsPicker
+                                  effort={selectedEffort}
+                                  fastModeEnabled={selectedCodexFastModeEnabled}
+                                  options={reasoningOptions}
+                                  onEffortChange={onEffortSelect}
+                                  onFastModeChange={onCodexFastModeChange}
+                                />
+                              </>
+                            ) : null}
+
+                            <Separator
+                              orientation="vertical"
+                              className="mx-0.5 hidden h-4 sm:block"
+                            />
+
+                            <Button
+                              variant="ghost"
+                              className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+                              size="sm"
+                              type="button"
+                              onClick={toggleInteractionMode}
+                              title={
+                                interactionMode === "plan"
+                                  ? "Plan mode — click to return to normal chat mode"
+                                  : "Default mode — click to enter plan mode"
+                              }
+                            >
+                              <BotIcon />
+                              <span className="sr-only sm:not-sr-only">
+                                {interactionMode === "plan" ? "Plan" : "Chat"}
+                              </span>
+                            </Button>
+
+                            <Separator
+                              orientation="vertical"
+                              className="mx-0.5 hidden h-4 sm:block"
+                            />
+
+                            <Button
+                              variant="ghost"
+                              className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+                              size="sm"
+                              type="button"
+                              onClick={() =>
+                                void handleRuntimeModeChange(
+                                  runtimeMode === "full-access"
+                                    ? "approval-required"
+                                    : "full-access",
+                                )
+                              }
+                              title={
+                                runtimeMode === "full-access"
+                                  ? "Full access — click to require approvals"
+                                  : "Approval required — click for full access"
+                              }
+                            >
+                              {runtimeMode === "full-access" ? <LockOpenIcon /> : <LockIcon />}
+                              <span className="sr-only sm:not-sr-only">
+                                {runtimeMode === "full-access" ? "Full access" : "Supervised"}
+                              </span>
+                            </Button>
+
+                            {activePlan || activeProposedPlan || planSidebarOpen ? (
+                              <>
+                                <Separator
+                                  orientation="vertical"
+                                  className="mx-0.5 hidden h-4 sm:block"
+                                />
+                                <Button
+                                  variant="ghost"
+                                  className={cn(
+                                    "shrink-0 whitespace-nowrap px-2 sm:px-3",
+                                    planSidebarOpen
+                                      ? "text-blue-400 hover:text-blue-300"
+                                      : "text-muted-foreground/70 hover:text-foreground/80",
+                                  )}
+                                  size="sm"
+                                  type="button"
+                                  onClick={togglePlanSidebar}
+                                  title={
+                                    planSidebarOpen ? "Hide plan sidebar" : "Show plan sidebar"
+                                  }
+                                >
+                                  <ListTodoIcon />
+                                  <span className="sr-only sm:not-sr-only">Plan</span>
+                                </Button>
+                              </>
+                            ) : null}
+                          </>
+                        )}
+                      </div>
+
+                      {/* Right side: send / stop button */}
+                      <div
+                        data-chat-composer-actions="right"
+                        className="flex shrink-0 items-center gap-2"
+                      >
+                        {isPreparingWorktree ? (
+                          <span className="text-muted-foreground/70 text-xs">
+                            Preparing worktree...
+                          </span>
+                        ) : null}
+                        {activePendingProgress ? (
+                          <div className="flex items-center gap-2">
+                            {activePendingProgress.questionIndex > 0 ? (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="rounded-full"
+                                onClick={onPreviousActivePendingUserInputQuestion}
+                                disabled={activePendingIsResponding}
+                              >
+                                Previous
+                              </Button>
+                            ) : null}
                             <Button
                               type="submit"
                               size="sm"
-                              className="h-9 rounded-full px-4 sm:h-8"
-                              disabled={isSendBusy || isConnecting}
+                              className="rounded-full px-4"
+                              disabled={
+                                activePendingIsResponding ||
+                                (activePendingProgress.isLastQuestion
+                                  ? !activePendingResolvedAnswers
+                                  : !activePendingProgress.canAdvance)
+                              }
                             >
-                              {isConnecting || isSendBusy ? "Sending..." : "Refine"}
+                              {activePendingIsResponding
+                                ? "Submitting..."
+                                : activePendingProgress.isLastQuestion
+                                  ? "Submit answers"
+                                  : "Next question"}
                             </Button>
-                          ) : (
-                            <div className="flex items-center">
+                          </div>
+                        ) : phase === "running" ? (
+                          <div className="flex items-center gap-2">
+                            {composerHasContent ? (
+                              <>
+                                <Button
+                                  type="submit"
+                                  size="sm"
+                                  className="h-9 rounded-full px-4 sm:h-8"
+                                  disabled={isSendBusy || isConnecting}
+                                >
+                                  Steer
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-9 rounded-full px-4 sm:h-8"
+                                  disabled={
+                                    isSendBusy ||
+                                    isConnecting ||
+                                    pendingQueuedTurnMessageId !== null
+                                  }
+                                  onClick={() => void onSend(undefined, "queue")}
+                                >
+                                  {pendingQueuedTurnMessageId !== null ? "Queueing..." : "Queue"}
+                                </Button>
+                              </>
+                            ) : null}
+                            <button
+                              type="button"
+                              className="flex size-8 cursor-pointer items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105 sm:h-8 sm:w-8"
+                              onClick={() => void onInterrupt()}
+                              aria-label="Stop generation"
+                            >
+                              <svg
+                                width="12"
+                                height="12"
+                                viewBox="0 0 12 12"
+                                fill="currentColor"
+                                aria-hidden="true"
+                              >
+                                <rect x="2" y="2" width="8" height="8" rx="1.5" />
+                              </svg>
+                            </button>
+                          </div>
+                        ) : pendingUserInputs.length === 0 ? (
+                          showPlanFollowUpPrompt ? (
+                            prompt.trim().length > 0 ? (
                               <Button
                                 type="submit"
                                 size="sm"
-                                className="h-9 rounded-l-full rounded-r-none px-4 sm:h-8"
+                                className="h-9 rounded-full px-4 sm:h-8"
                                 disabled={isSendBusy || isConnecting}
                               >
-                                {isConnecting || isSendBusy ? "Sending..." : "Implement"}
+                                {isConnecting || isSendBusy ? "Sending..." : "Refine"}
                               </Button>
-                              <Menu>
-                                <MenuTrigger
-                                  render={
-                                    <Button
-                                      size="sm"
-                                      variant="default"
-                                      className="h-9 rounded-l-none rounded-r-full border-l-white/12 px-2 sm:h-8"
-                                      aria-label="Implementation actions"
-                                      disabled={isSendBusy || isConnecting}
-                                    />
-                                  }
-                                >
-                                  <ChevronDownIcon className="size-3.5" />
-                                </MenuTrigger>
-                                <MenuPopup align="end" side="top">
-                                  <MenuItem
-                                    disabled={isSendBusy || isConnecting}
-                                    onClick={() => void onImplementPlanInNewThread()}
-                                  >
-                                    Implement in new thread
-                                  </MenuItem>
-                                </MenuPopup>
-                              </Menu>
-                            </div>
-                          )
-                        ) : (
-                          <button
-                            type="submit"
-                            className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/90 text-primary-foreground transition-all duration-150 hover:bg-primary hover:scale-105 disabled:opacity-30 disabled:hover:scale-100 sm:h-8 sm:w-8"
-                            disabled={
-                              isSendBusy ||
-                              isConnecting ||
-                              (!prompt.trim() && composerImages.length === 0)
-                            }
-                            aria-label={
-                              isConnecting
-                                ? "Connecting"
-                                : isPreparingWorktree
-                                  ? "Preparing worktree"
-                                  : isSendBusy
-                                    ? "Sending"
-                                    : "Send message"
-                            }
-                          >
-                            {isConnecting || isSendBusy ? (
-                              <svg
-                                width="14"
-                                height="14"
-                                viewBox="0 0 14 14"
-                                fill="none"
-                                className="animate-spin"
-                                aria-hidden="true"
-                              >
-                                <circle
-                                  cx="7"
-                                  cy="7"
-                                  r="5.5"
-                                  stroke="currentColor"
-                                  strokeWidth="1.5"
-                                  strokeLinecap="round"
-                                  strokeDasharray="20 12"
-                                />
-                              </svg>
                             ) : (
-                              <svg
-                                width="14"
-                                height="14"
-                                viewBox="0 0 14 14"
-                                fill="none"
-                                aria-hidden="true"
-                              >
-                                <path
-                                  d="M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5"
-                                  stroke="currentColor"
-                                  strokeWidth="1.8"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                />
-                              </svg>
-                            )}
-                          </button>
-                        )
-                      ) : null}
+                              <div className="flex items-center">
+                                <Button
+                                  type="submit"
+                                  size="sm"
+                                  className="h-9 rounded-l-full rounded-r-none px-4 sm:h-8"
+                                  disabled={isSendBusy || isConnecting}
+                                >
+                                  {isConnecting || isSendBusy ? "Sending..." : "Implement"}
+                                </Button>
+                                <Menu>
+                                  <MenuTrigger
+                                    render={
+                                      <Button
+                                        size="sm"
+                                        variant="default"
+                                        className="h-9 rounded-l-none rounded-r-full border-l-white/12 px-2 sm:h-8"
+                                        aria-label="Implementation actions"
+                                        disabled={isSendBusy || isConnecting}
+                                      />
+                                    }
+                                  >
+                                    <ChevronDownIcon className="size-3.5" />
+                                  </MenuTrigger>
+                                  <MenuPopup align="end" side="top">
+                                    <MenuItem
+                                      disabled={isSendBusy || isConnecting}
+                                      onClick={() => void onImplementPlanInNewThread()}
+                                    >
+                                      Implement in new thread
+                                    </MenuItem>
+                                  </MenuPopup>
+                                </Menu>
+                              </div>
+                            )
+                          ) : (
+                            <button
+                              type="submit"
+                              className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/90 text-primary-foreground transition-all duration-150 hover:bg-primary hover:scale-105 disabled:opacity-30 disabled:hover:scale-100 sm:h-8 sm:w-8"
+                              disabled={
+                                isSendBusy ||
+                                isConnecting ||
+                                (!prompt.trim() && composerImages.length === 0)
+                              }
+                              aria-label={
+                                isConnecting
+                                  ? "Connecting"
+                                  : isPreparingWorktree
+                                    ? "Preparing worktree"
+                                    : isSendBusy
+                                      ? "Sending"
+                                      : "Send message"
+                              }
+                            >
+                              {isConnecting || isSendBusy ? (
+                                <svg
+                                  width="14"
+                                  height="14"
+                                  viewBox="0 0 14 14"
+                                  fill="none"
+                                  className="animate-spin"
+                                  aria-hidden="true"
+                                >
+                                  <circle
+                                    cx="7"
+                                    cy="7"
+                                    r="5.5"
+                                    stroke="currentColor"
+                                    strokeWidth="1.5"
+                                    strokeLinecap="round"
+                                    strokeDasharray="20 12"
+                                  />
+                                </svg>
+                              ) : (
+                                <svg
+                                  width="14"
+                                  height="14"
+                                  viewBox="0 0 14 14"
+                                  fill="none"
+                                  aria-hidden="true"
+                                >
+                                  <path
+                                    d="M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5"
+                                    stroke="currentColor"
+                                    strokeWidth="1.8"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                  />
+                                </svg>
+                              )}
+                            </button>
+                          )
+                        ) : null}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
             </form>
           </div>
