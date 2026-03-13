@@ -3,6 +3,7 @@ import * as Crypto from "node:crypto";
 import * as FS from "node:fs";
 import * as OS from "node:os";
 import * as Path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   app,
@@ -23,7 +24,7 @@ import type {
   DesktopUpdateActionResult,
   DesktopUpdateState,
 } from "@t3tools/contracts";
-import { autoUpdater } from "electron-updater";
+import electronUpdater from "electron-updater";
 
 import type { ContextMenuItem } from "@t3tools/contracts";
 import { NetService } from "@t3tools/shared/Net";
@@ -52,6 +53,9 @@ import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runti
 import { clearPrivateTailscaleServe, setupPrivateTailscaleServe } from "./tailscale";
 
 fixPath();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = Path.dirname(__filename);
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const CONFIRM_CHANNEL = "desktop:confirm";
@@ -133,6 +137,7 @@ const desktopRuntimeInfo = resolveDesktopRuntimeInfo({
 });
 const initialUpdateState = (): DesktopUpdateState =>
   createInitialDesktopUpdateState(app.getVersion(), desktopRuntimeInfo);
+const { autoUpdater } = electronUpdater;
 
 function logTimestamp(): string {
   return new Date().toISOString();
