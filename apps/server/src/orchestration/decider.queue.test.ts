@@ -176,7 +176,7 @@ describe("decider queued turns", () => {
     expect(event.payload.targetMessageId).toBe("message-a");
   });
 
-  it("moves the selected queued turn to the front for send-now", async () => {
+  it("removes the selected queued turn and emits an immediate turn start for send-now", async () => {
     const readModel = await createReadModelWithQueuedTurns();
 
     const result = await Effect.runPromise(
@@ -192,18 +192,65 @@ describe("decider queued turns", () => {
       }),
     );
 
-    expect(Array.isArray(result)).toBe(false);
-    const event = Array.isArray(result) ? result[0] : result;
-    expect(event?.type).toBe("thread.turn-queue-moved");
-    if (!event || event.type !== "thread.turn-queue-moved") {
+    expect(Array.isArray(result)).toBe(true);
+    if (!Array.isArray(result)) {
       return;
     }
-    expect(event.payload.messageId).toBe("message-b");
-    expect(event.payload.targetMessageId).toBe("message-a");
+
+    expect(result.map((event) => event.type)).toEqual([
+      "thread.turn-queue-removed",
+      "thread.message-sent",
+      "thread.turn-start-requested",
+    ]);
+    expect(result[0]?.payload).toMatchObject({
+      threadId: THREAD_ID,
+      messageId: MessageId.makeUnsafe("message-b"),
+    });
+    expect(result[1]?.payload).toMatchObject({
+      threadId: THREAD_ID,
+      messageId: MessageId.makeUnsafe("message-b"),
+      text: "Queued message-b",
+    });
+    expect(result[2]?.payload).toMatchObject({
+      threadId: THREAD_ID,
+      messageId: MessageId.makeUnsafe("message-b"),
+      provider: "codex",
+      model: "gpt-5",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+    });
   });
 
-  it("re-emits the head queued turn when send-now is used on the next item", async () => {
-    const readModel = await createReadModelWithQueuedTurns();
+  it("syncs queued turn thread settings before send-now dispatches immediately", async () => {
+    const baseReadModel = await createReadModelWithQueuedTurns();
+    const readModel = await Effect.runPromise(
+      projectEvent(
+        baseReadModel,
+        eventFrom({
+          sequence: 6,
+          type: "thread.turn-queue-updated",
+          occurredAt: "2026-03-08T12:03:30.000Z",
+          commandId: "cmd-queue-update-settings",
+          payload: {
+            threadId: THREAD_ID,
+            queuedTurn: {
+              messageId: MessageId.makeUnsafe("message-a"),
+              text: "Queued message-a",
+              attachments: [],
+              provider: "codex",
+              model: "gpt-5.1",
+              serviceTier: null,
+              modelOptions: null,
+              providerOptions: null,
+              assistantDeliveryMode: "buffered",
+              runtimeMode: "approval-required",
+              interactionMode: "plan",
+              queuedAt: "2026-03-08T12:00:00.000Z",
+            },
+          },
+        }),
+      ),
+    );
 
     const result = await Effect.runPromise(
       decideOrchestrationCommand({
@@ -218,12 +265,37 @@ describe("decider queued turns", () => {
       }),
     );
 
-    expect(Array.isArray(result)).toBe(false);
-    const event = Array.isArray(result) ? result[0] : result;
-    expect(event?.type).toBe("thread.turn-queue-updated");
-    if (!event || event.type !== "thread.turn-queue-updated") {
+    expect(Array.isArray(result)).toBe(true);
+    if (!Array.isArray(result)) {
       return;
     }
-    expect(event.payload.queuedTurn.messageId).toBe("message-a");
+
+    expect(result.map((event) => event.type)).toEqual([
+      "thread.meta-updated",
+      "thread.runtime-mode-set",
+      "thread.interaction-mode-set",
+      "thread.turn-queue-removed",
+      "thread.message-sent",
+      "thread.turn-start-requested",
+    ]);
+    expect(result[0]?.payload).toMatchObject({
+      threadId: THREAD_ID,
+      model: "gpt-5.1",
+    });
+    expect(result[1]?.payload).toMatchObject({
+      threadId: THREAD_ID,
+      runtimeMode: "approval-required",
+    });
+    expect(result[2]?.payload).toMatchObject({
+      threadId: THREAD_ID,
+      interactionMode: "plan",
+    });
+    expect(result[5]?.payload).toMatchObject({
+      threadId: THREAD_ID,
+      messageId: MessageId.makeUnsafe("message-a"),
+      model: "gpt-5.1",
+      runtimeMode: "approval-required",
+      interactionMode: "plan",
+    });
   });
 });
