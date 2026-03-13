@@ -2,6 +2,8 @@
 import "../index.css";
 
 import {
+  EventId,
+  type KeybindingWhenNode,
   ORCHESTRATION_WS_METHODS,
   type MessageId,
   type OrchestrationReadModel,
@@ -95,10 +97,49 @@ interface MountedChatView {
   router: ReturnType<typeof getRouter>;
 }
 
-function modShiftShortcutModifiers(): Pick<KeyboardEventInit, "ctrlKey" | "metaKey" | "shiftKey"> {
+function createResolvedKeybinding(
+  key: string,
+  command: ServerConfig["keybindings"][number]["command"],
+  options?: { shiftKey?: boolean; whenAst?: KeybindingWhenNode },
+) {
+  return {
+    command,
+    shortcut: {
+      key,
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: options?.shiftKey ?? false,
+      altKey: false,
+      modKey: true,
+    },
+    ...(options?.whenAst ? { whenAst: options.whenAst } : {}),
+  } as const;
+}
+
+function whenIdentifier(name: string): KeybindingWhenNode {
+  return { type: "identifier", name };
+}
+
+function whenNot(node: KeybindingWhenNode): KeybindingWhenNode {
+  return { type: "not", node };
+}
+
+function steerShortcutModifiers(): Pick<KeyboardEventInit, "ctrlKey" | "metaKey" | "shiftKey"> {
   return isMacPlatform(navigator.platform)
     ? { metaKey: true, shiftKey: true }
     : { ctrlKey: true, shiftKey: true };
+}
+
+function modShiftShortcutModifiers(): Pick<KeyboardEventInit, "ctrlKey" | "metaKey" | "shiftKey"> {
+  return steerShortcutModifiers();
+}
+
+function modShortcutModifiers(options?: {
+  shiftKey?: boolean;
+}): Pick<KeyboardEventInit, "ctrlKey" | "metaKey" | "shiftKey"> {
+  return isMacPlatform(navigator.platform)
+    ? { metaKey: true, shiftKey: options?.shiftKey ?? false }
+    : { ctrlKey: true, shiftKey: options?.shiftKey ?? false };
 }
 
 function isoAt(offsetSeconds: number): string {
@@ -109,7 +150,15 @@ function createBaseServerConfig(): ServerConfig {
   return {
     cwd: "/repo/project",
     keybindingsConfigPath: "/repo/project/.t3code-keybindings.json",
-    keybindings: [],
+    keybindings: [
+      createResolvedKeybinding("f", "thread.search", {
+        whenAst: whenNot(whenIdentifier("terminalFocus")),
+      }),
+      createResolvedKeybinding("f", "threads.search", {
+        shiftKey: true,
+        whenAst: whenNot(whenIdentifier("terminalFocus")),
+      }),
+    ],
     issues: [],
     providers: [
       {
@@ -157,6 +206,47 @@ function createAssistantMessage(options: { id: MessageId; text: string; offsetSe
     streaming: false,
     createdAt: isoAt(options.offsetSeconds),
     updatedAt: isoAt(options.offsetSeconds + 1),
+  };
+}
+
+function createThreadRecord(options: {
+  id: ThreadId;
+  projectId: ProjectId;
+  title: string;
+  createdAt: string;
+  updatedAt?: string;
+  messages?: OrchestrationReadModel["threads"][number]["messages"];
+  proposedPlans?: OrchestrationReadModel["threads"][number]["proposedPlans"];
+  activities?: OrchestrationReadModel["threads"][number]["activities"];
+}): OrchestrationReadModel["threads"][number] {
+  const updatedAt = options.updatedAt ?? options.createdAt;
+  return {
+    id: options.id,
+    projectId: options.projectId,
+    title: options.title,
+    model: "gpt-5",
+    interactionMode: "default",
+    runtimeMode: "full-access",
+    branch: "main",
+    worktreePath: null,
+    latestTurn: null,
+    createdAt: options.createdAt,
+    updatedAt,
+    deletedAt: null,
+    messages: options.messages ?? [],
+    queuedTurns: [],
+    activities: options.activities ?? [],
+    proposedPlans: options.proposedPlans ?? [],
+    checkpoints: [],
+    session: {
+      threadId: options.id,
+      status: "ready",
+      providerName: "codex",
+      runtimeMode: "full-access",
+      activeTurnId: null,
+      lastError: null,
+      updatedAt,
+    },
   };
 }
 
@@ -303,6 +393,117 @@ function addThreadToSnapshot(
         },
       },
     ],
+  };
+}
+
+function createSnapshotForGlobalThreadSearch(): OrchestrationReadModel {
+  const metadataProjectId = "project-metadata-only" as ProjectId;
+  const contentThreadId = "thread-global-content" as ThreadId;
+  const titleThreadId = "thread-global-title" as ThreadId;
+  const metadataThreadId = "thread-global-metadata" as ThreadId;
+  const worklogThreadId = "thread-global-worklog" as ThreadId;
+
+  return {
+    snapshotSequence: 1,
+    projects: [
+      {
+        id: PROJECT_ID,
+        title: "Project",
+        workspaceRoot: "/repo/project",
+        defaultModel: "gpt-5",
+        scripts: [],
+        createdAt: NOW_ISO,
+        updatedAt: NOW_ISO,
+        deletedAt: null,
+      },
+      {
+        id: metadataProjectId,
+        title: "Gamma Workspace",
+        workspaceRoot: "/repo/gamma",
+        defaultModel: "gpt-5",
+        scripts: [],
+        createdAt: NOW_ISO,
+        updatedAt: NOW_ISO,
+        deletedAt: null,
+      },
+    ],
+    threads: [
+      createThreadRecord({
+        id: THREAD_ID,
+        projectId: PROJECT_ID,
+        title: "Browser test thread",
+        createdAt: NOW_ISO,
+        updatedAt: NOW_ISO,
+        messages: [
+          createUserMessage({
+            id: "msg-user-global-active" as MessageId,
+            text: "local active thread message",
+            offsetSeconds: 0,
+          }),
+        ],
+      }),
+      createThreadRecord({
+        id: contentThreadId,
+        projectId: PROJECT_ID,
+        title: "Cross-thread assistant result",
+        createdAt: "2026-03-04T12:05:00.000Z",
+        updatedAt: "2026-03-04T12:05:02.000Z",
+        messages: [
+          createAssistantMessage({
+            id: "msg-assistant-global-content" as MessageId,
+            text: "[Visible global needle](https://hidden.example.com/needle)",
+            offsetSeconds: 300,
+          }),
+        ],
+      }),
+      createThreadRecord({
+        id: titleThreadId,
+        projectId: PROJECT_ID,
+        title: "Header Needle Destination",
+        createdAt: "2026-03-04T12:03:00.000Z",
+        updatedAt: "2026-03-04T12:03:00.000Z",
+        messages: [
+          createUserMessage({
+            id: "msg-user-title-only" as MessageId,
+            text: "ordinary content only",
+            offsetSeconds: 180,
+          }),
+        ],
+      }),
+      createThreadRecord({
+        id: metadataThreadId,
+        projectId: metadataProjectId,
+        title: "Plain thread title",
+        createdAt: "2026-03-04T12:02:00.000Z",
+        updatedAt: "2026-03-04T12:02:00.000Z",
+        messages: [
+          createUserMessage({
+            id: "msg-user-metadata" as MessageId,
+            text: "ordinary content only",
+            offsetSeconds: 120,
+          }),
+        ],
+      }),
+      createThreadRecord({
+        id: worklogThreadId,
+        projectId: PROJECT_ID,
+        title: "Work log only thread",
+        createdAt: "2026-03-04T12:01:00.000Z",
+        updatedAt: "2026-03-04T12:01:00.000Z",
+        activities: [
+          {
+            id: EventId.makeUnsafe("event-global-search-worklog"),
+            tone: "tool",
+            kind: "tool.started",
+            summary: "activity-only-needle",
+            payload: {},
+            turnId: null,
+            createdAt: "2026-03-04T12:01:00.000Z",
+          },
+        ],
+      }),
+    ],
+    updatedAt: NOW_ISO,
   };
 }
 
@@ -610,6 +811,37 @@ async function waitForComposerEditor(): Promise<HTMLElement> {
   return waitForElement(
     () => document.querySelector<HTMLElement>('[contenteditable="true"]'),
     "Unable to find composer editor.",
+  );
+}
+
+function dispatchSearchAllThreadsShortcut(target: EventTarget = window): void {
+  target.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "f",
+      bubbles: true,
+      cancelable: true,
+      ...modShortcutModifiers({ shiftKey: true }),
+    }),
+  );
+}
+
+async function waitForGlobalThreadSearchInput(): Promise<HTMLInputElement> {
+  return waitForElement(
+    () => document.querySelector<HTMLInputElement>('input[placeholder="Search all threads"]'),
+    "Unable to find the global thread search input.",
+  );
+}
+
+async function waitForThreadSearchInput(): Promise<HTMLInputElement> {
+  return waitForElement(
+    () => document.querySelector<HTMLInputElement>('input[placeholder="Find in thread"]'),
+    "Unable to find the in-thread search input.",
+  );
+}
+
+function listGlobalThreadSearchResults(): HTMLButtonElement[] {
+  return Array.from(
+    document.querySelectorAll<HTMLButtonElement>('[data-global-thread-search-result="true"]'),
   );
 }
 
@@ -1542,6 +1774,206 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await waitForElement(
         () => findButtonByText(document, "Local"),
         "Unable to find Local env mode button after toggling back.",
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens global thread search with mod+shift+f and excludes project metadata and work logs", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForGlobalThreadSearch(),
+    });
+
+    try {
+      dispatchSearchAllThreadsShortcut();
+      const input = await waitForGlobalThreadSearchInput();
+      expect(document.activeElement).toBe(input);
+
+      await page.getByTestId("global-thread-search-input").fill("needle");
+      await vi.waitFor(
+        () => {
+          const results = listGlobalThreadSearchResults();
+          expect(results.length).toBeGreaterThanOrEqual(2);
+          expect(results[0]?.textContent).toContain("Cross-thread assistant result");
+          expect(results[0]?.textContent).toContain("Assistant");
+          expect(results[0]?.textContent).toContain("Project");
+          expect(
+            results.some((result) => result.textContent?.includes("Header Needle Destination")),
+          ).toBe(true);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await page.getByTestId("global-thread-search-input").fill("Gamma");
+      await vi.waitFor(
+        () => {
+          expect(listGlobalThreadSearchResults()).toHaveLength(0);
+          expect(document.body.textContent).toContain("No threads matched this search.");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await page.getByTestId("global-thread-search-input").fill("activity-only-needle");
+      await vi.waitFor(
+        () => {
+          expect(listGlobalThreadSearchResults()).toHaveLength(0);
+          expect(document.body.textContent).toContain("No threads matched this search.");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not open global thread search while terminal focus is active", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForGlobalThreadSearch(),
+    });
+
+    const terminalProxy = document.createElement("textarea");
+    terminalProxy.className = "xterm-helper-textarea";
+    document.body.append(terminalProxy);
+
+    try {
+      terminalProxy.focus();
+      await vi.waitFor(
+        () => {
+          expect(document.activeElement).toBe(terminalProxy);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      dispatchSearchAllThreadsShortcut(terminalProxy);
+      await waitForLayout();
+
+      expect(document.querySelector('[data-testid="global-thread-search-input"]')).toBeNull();
+    } finally {
+      terminalProxy.remove();
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not open global thread search while another dialog is already open", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForGlobalThreadSearch(),
+    });
+
+    const dialogBlocker = document.createElement("div");
+    dialogBlocker.dataset.slot = "dialog-popup";
+    document.body.append(dialogBlocker);
+
+    try {
+      dispatchSearchAllThreadsShortcut();
+      await waitForLayout();
+
+      expect(document.querySelector('[data-testid="global-thread-search-input"]')).toBeNull();
+    } finally {
+      dialogBlocker.remove();
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens a global content result in the target thread and restores the in-thread match", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForGlobalThreadSearch(),
+    });
+
+    try {
+      dispatchSearchAllThreadsShortcut();
+      const input = await waitForGlobalThreadSearchInput();
+      await page.getByTestId("global-thread-search-input").fill("visible global needle");
+
+      await vi.waitFor(
+        () => {
+          const results = listGlobalThreadSearchResults();
+          expect(results).toHaveLength(1);
+          expect(results[0]?.textContent).toContain("Cross-thread assistant result");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await waitForURL(
+        mounted.router,
+        (path) => path === "/thread-global-content",
+        "Global content search should navigate to the matching thread.",
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(document.querySelector('[data-testid="global-thread-search-input"]')).toBeNull();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const threadSearchInput = await waitForThreadSearchInput();
+      expect(threadSearchInput.value).toBe("visible global needle");
+
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain("1/1");
+          const activeRow = document.querySelector<HTMLElement>(
+            '[data-thread-search-source-id="msg-assistant-global-content"][data-thread-search-active="true"]',
+          );
+          expect(activeRow).toBeTruthy();
+          expect(activeRow?.textContent).toContain("Visible global needle");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens a global title result and highlights the destination thread title", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForGlobalThreadSearch(),
+    });
+
+    try {
+      dispatchSearchAllThreadsShortcut();
+      await waitForGlobalThreadSearchInput();
+      await page.getByTestId("global-thread-search-input").fill("header needle");
+
+      await vi.waitFor(
+        () => {
+          const results = listGlobalThreadSearchResults();
+          expect(results).toHaveLength(1);
+          expect(results[0]?.textContent).toContain("Header Needle Destination");
+          expect(results[0]?.textContent).toContain("Title");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      listGlobalThreadSearchResults()[0]?.click();
+
+      await waitForURL(
+        mounted.router,
+        (path) => path === "/thread-global-title",
+        "Global title search should navigate to the title-matching thread.",
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(document.querySelector('input[placeholder="Find in thread"]')).toBeNull();
+          const highlightedTitle = document.querySelector("h2 mark");
+          expect(highlightedTitle).toBeTruthy();
+          expect(document.querySelector("h2")?.textContent).toContain("Header Needle Destination");
+        },
+        { timeout: 8_000, interval: 16 },
       );
     } finally {
       await mounted.cleanup();

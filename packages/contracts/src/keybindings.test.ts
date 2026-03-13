@@ -41,6 +41,18 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedDiffToggle.command, "diff.toggle");
 
+    const parsedThreadSearch = yield* decode(KeybindingRule, {
+      key: "mod+f",
+      command: "thread.search",
+    });
+    assert.strictEqual(parsedThreadSearch.command, "thread.search");
+
+    const parsedThreadsSearch = yield* decode(KeybindingRule, {
+      key: "mod+shift+f",
+      command: "threads.search",
+    });
+    assert.strictEqual(parsedThreadsSearch.command, "threads.search");
+
     const parsedHistoryPrevious = yield* decode(KeybindingRule, {
       key: "mod+[",
       command: "sidebar.history.previous",

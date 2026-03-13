@@ -72,6 +72,8 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+d", command: "diff.toggle", when: "!terminalFocus" },
   { key: "mod+[", command: "sidebar.history.previous" },
   { key: "mod+]", command: "sidebar.history.next" },
+  { key: "mod+f", command: "thread.search", when: "!terminalFocus" },
+  { key: "mod+shift+f", command: "threads.search", when: "!terminalFocus" },
   { key: "alt+arrowup", command: "sidebar.thread.previous" },
   { key: "alt+arrowdown", command: "sidebar.thread.next" },
   { key: "alt+shift+arrowup", command: "sidebar.project.previous" },
