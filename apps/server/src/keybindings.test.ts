@@ -195,7 +195,8 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       );
       assert.isTrue(
         persisted.some(
-          (entry) => entry.command === "sidebar.project.next" && entry.key === "alt+shift+arrowdown",
+          (entry) =>
+            entry.command === "sidebar.project.next" && entry.key === "alt+shift+arrowdown",
         ),
       );
     }).pipe(Effect.provide(makeKeybindingsLayer())),
