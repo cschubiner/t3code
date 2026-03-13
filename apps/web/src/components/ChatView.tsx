@@ -3763,7 +3763,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           trigger.rangeStart,
           trigger.rangeEnd,
           `$${item.name} `,
-          { expectedText: expectedToken },
+          { expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd) },
         );
         if (applied) {
           setComposerHighlightedItemId(null);
@@ -3792,7 +3792,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         if (item.command === "delete") {
           void handleDeleteSlashCommand();
           const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
-            expectedText: expectedToken,
+            expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
           });
           if (applied) {
             setComposerHighlightedItemId(null);
