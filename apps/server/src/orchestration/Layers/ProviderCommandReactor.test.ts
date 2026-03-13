@@ -299,6 +299,80 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
 
+  it("sends queued follow-ups immediately when queue.send-now is dispatched on a running thread", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.startSession(ThreadId.makeUnsafe("thread-1"), {
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        provider: "codex",
+        runtimeMode: "approval-required",
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-session-set-running"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        session: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-running"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.queue.enqueue",
+        commandId: CommandId.makeUnsafe("cmd-queue-enqueue-send-now"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("queued-message-1"),
+          role: "user",
+          text: "Send this immediately",
+          attachments: [],
+        },
+        provider: "codex",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.queue.send-now",
+        commandId: CommandId.makeUnsafe("cmd-queue-send-now-running"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        messageId: asMessageId("queued-message-1"),
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toEqual({
+      threadId: "thread-1",
+      input: "Send this immediately",
+      model: "gpt-5-codex",
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+    });
+
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+    expect(thread?.queuedTurns).toEqual([]);
+    expect(thread?.messages.some((message) => message.id === asMessageId("queued-message-1"))).toBe(
+      true,
+    );
+  });
+
   it("forwards codex model options through session start and turn send", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();

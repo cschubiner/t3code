@@ -1,21 +1,23 @@
 import { defineConfig } from "tsdown";
 
 const shared = {
-  format: "cjs" as const,
   outDir: "dist-electron",
   sourcemap: true,
-  outExtensions: () => ({ js: ".js" }),
 };
 
 export default defineConfig([
   {
     ...shared,
+    format: "esm",
+    outExtensions: () => ({ js: ".mjs" }),
     entry: ["src/main.ts"],
     clean: true,
     noExternal: (id) => id.startsWith("@t3tools/"),
   },
   {
     ...shared,
+    format: "cjs",
+    outExtensions: () => ({ js: ".js" }),
     entry: ["src/preload.ts"],
   },
 ]);
