@@ -93,6 +93,26 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   );
 });
 
+function SkillSourceBadge(props: { source: SkillSource }) {
+  if (props.source === "workspace") {
+    return (
+      <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">
+        local
+      </Badge>
+    );
+  }
+
+  if (props.source === "extra-root") {
+    return (
+      <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">
+        custom
+      </Badge>
+    );
+  }
+
+  return null;
+}
+
 const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
   item: ComposerCommandItem;
   resolvedTheme: "light" | "dark";
@@ -123,30 +143,35 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       {props.item.type === "slash-command" ? (
         <BotIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground/80" />
       ) : null}
-      {props.item.type === "skill" ? (
-        <>
-          <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">
-            skill
-          </Badge>
-          {props.item.source === "workspace" ? (
-            <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">
-              local
-            </Badge>
-          ) : props.item.source === "extra-root" ? (
-            <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">
-              custom
-            </Badge>
-          ) : null}
-        </>
-      ) : null}
       {props.item.type === "model" ? (
         <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">
           model
         </Badge>
       ) : null}
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm leading-tight">{props.item.label}</p>
-        {props.item.description ? (
+        <p
+          className={cn(
+            "text-sm leading-tight",
+            props.item.type === "skill" ? "break-all whitespace-normal" : "truncate",
+          )}
+        >
+          {props.item.label}
+        </p>
+        {props.item.type === "skill" ? (
+          <>
+            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+              <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">
+                skill
+              </Badge>
+              <SkillSourceBadge source={props.item.source} />
+            </div>
+            {props.item.description ? (
+              <p className="mt-1 truncate text-muted-foreground/70 text-xs leading-tight">
+                {props.item.description}
+              </p>
+            ) : null}
+          </>
+        ) : props.item.description ? (
           <p className="truncate text-muted-foreground/70 text-xs leading-tight">
             {props.item.description}
           </p>
