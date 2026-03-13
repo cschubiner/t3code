@@ -17,6 +17,8 @@ import {
   isTerminalClearShortcut,
   isTerminalCloseShortcut,
   isTerminalNewShortcut,
+  isThreadSearchShortcut,
+  isThreadsSearchShortcut,
   isTerminalSplitShortcut,
   isTerminalToggleShortcut,
   resolveShortcutCommand,
@@ -97,6 +99,16 @@ const DEFAULT_BINDINGS = compile([
   {
     shortcut: modShortcut("d"),
     command: "diff.toggle",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
+    shortcut: modShortcut("f"),
+    command: "thread.search",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
+    shortcut: modShortcut("f", { shiftKey: true }),
+    command: "threads.search",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
   { shortcut: modShortcut("["), command: "sidebar.thread.previous" },
@@ -242,6 +254,14 @@ describe("shortcutLabelForCommand", () => {
     assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "chat.new", "MacIntel"), "⇧⌘O");
     assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "diff.toggle", "Linux"), "Ctrl+D");
     assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "thread.search", "Linux"),
+      "Ctrl+F",
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "threads.search", "MacIntel"),
+      "⇧⌘F",
+    );
+    assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "sidebar.thread.previous", "MacIntel"),
       "⌘[",
     );
@@ -308,6 +328,31 @@ describe("chat/editor shortcuts", () => {
         platform: "MacIntel",
         context: { terminalFocus: true },
       }),
+    );
+  });
+
+  it("matches thread search shortcuts outside terminal focus", () => {
+    assert.isTrue(
+      isThreadSearchShortcut(event({ key: "f", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+    );
+    assert.isFalse(
+      isThreadSearchShortcut(event({ key: "f", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+    );
+    assert.isTrue(
+      isThreadsSearchShortcut(
+        event({ key: "f", ctrlKey: true, shiftKey: true }),
+        DEFAULT_BINDINGS,
+        {
+          platform: "Linux",
+          context: { terminalFocus: false },
+        },
+      ),
     );
   });
 
@@ -411,6 +456,20 @@ describe("resolveShortcutCommand", () => {
         platform: "Linux",
       }),
       "sidebar.thread.next",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "f", ctrlKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+      "thread.search",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "f", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+      "threads.search",
     );
   });
 });

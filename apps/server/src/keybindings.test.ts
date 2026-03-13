@@ -170,6 +170,22 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         ),
       );
       assert.isTrue(
+        persisted.some(
+          (entry) =>
+            entry.command === "thread.search" &&
+            entry.key === "mod+f" &&
+            entry.when === "!terminalFocus",
+        ),
+      );
+      assert.isTrue(
+        persisted.some(
+          (entry) =>
+            entry.command === "threads.search" &&
+            entry.key === "mod+shift+f" &&
+            entry.when === "!terminalFocus",
+        ),
+      );
+      assert.isTrue(
         persisted.some((entry) => entry.command === "sidebar.thread.next" && entry.key === "mod+]"),
       );
     }).pipe(Effect.provide(makeKeybindingsLayer())),

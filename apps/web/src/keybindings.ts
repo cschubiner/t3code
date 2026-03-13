@@ -206,6 +206,22 @@ export function isDiffToggleShortcut(
   return matchesCommandShortcut(event, keybindings, "diff.toggle", options);
 }
 
+export function isThreadSearchShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "thread.search", options);
+}
+
+export function isThreadsSearchShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "threads.search", options);
+}
+
 export function isSidebarThreadPreviousShortcut(
   event: ShortcutEventLike,
   keybindings: ResolvedKeybindingsConfig,

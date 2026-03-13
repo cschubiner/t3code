@@ -14,6 +14,8 @@ import { Undo2Icon } from "lucide-react";
 import { Button } from "../ui/button";
 import { clamp } from "effect/Number";
 import { estimateTimelineMessageHeight } from "../timelineHeight";
+import { cn } from "~/lib/utils";
+import { buildHighlightSegments } from "../../lib/threadSearch";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
@@ -44,6 +46,13 @@ interface MessagesTimelineProps {
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
   workspaceRoot: string | undefined;
+  threadSearchQuery: string;
+  threadSearchOccurrencesBySourceId: Map<
+    string,
+    Array<{ start: number; end: number; occurrenceIndexInSource: number }>
+  >;
+  activeThreadSearchSourceId: string | null;
+  activeThreadSearchOccurrenceIndex: number | null;
 }
 
 export const MessagesTimeline = memo(function MessagesTimeline({
@@ -67,6 +76,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   markdownCwd,
   resolvedTheme,
   workspaceRoot,
+  threadSearchQuery,
+  threadSearchOccurrencesBySourceId,
+  activeThreadSearchSourceId,
+  activeThreadSearchOccurrenceIndex,
 }: MessagesTimelineProps) {
   const timelineRootRef = useRef<HTMLDivElement | null>(null);
   const [timelineWidthPx, setTimelineWidthPx] = useState<number | null>(null);
@@ -156,7 +169,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     return nextRows;
   }, [timelineEntries, completionDividerBeforeEntryId, isWorking, activeTurnStartedAt]);
 
+  const searchActive = threadSearchQuery.trim().length > 0;
+
   const firstUnvirtualizedRowIndex = useMemo(() => {
+    if (searchActive) {
+      return 0;
+    }
     const firstTailRowIndex = Math.max(rows.length - ALWAYS_UNVIRTUALIZED_TAIL_ROWS, 0);
     if (!activeTurnInProgress) return firstTailRowIndex;
 
@@ -192,7 +210,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }
 
     return Math.min(firstCurrentTurnRowIndex, firstTailRowIndex);
-  }, [activeTurnInProgress, activeTurnStartedAt, rows]);
+  }, [activeTurnInProgress, activeTurnStartedAt, rows, searchActive]);
 
   const virtualizedRowCount = clamp(firstUnvirtualizedRowIndex, {
     minimum: 0,
@@ -259,291 +277,362 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       [turnId]: !(current[turnId] ?? true),
     }));
   }, []);
-
-  const renderRowContent = (row: TimelineRow) => (
-    <div
-      className="pb-4"
-      data-timeline-row-kind={row.kind}
-      data-message-id={row.kind === "message" ? row.message.id : undefined}
-      data-message-role={row.kind === "message" ? row.message.role : undefined}
-    >
-      {row.kind === "work" &&
-        (() => {
-          const groupId = row.id;
-          const groupedEntries = row.groupedEntries;
-          const isExpanded = expandedWorkGroups[groupId] ?? false;
-          const hasOverflow = groupedEntries.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
-          const visibleEntries =
-            hasOverflow && !isExpanded
-              ? groupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES)
-              : groupedEntries;
-          const hiddenCount = groupedEntries.length - visibleEntries.length;
-          const onlyToolEntries = groupedEntries.every((entry) => entry.tone === "tool");
-          const groupLabel = onlyToolEntries
-            ? groupedEntries.length === 1
-              ? "Tool call"
-              : `Tool calls (${groupedEntries.length})`
-            : groupedEntries.length === 1
-              ? "Work event"
-              : `Work log (${groupedEntries.length})`;
-
+  const renderHighlightedUserText = useCallback(
+    (
+      messageId: string,
+      text: string,
+      occurrences: Array<{ start: number; end: number; occurrenceIndexInSource: number }>,
+      rowHasActiveMatch: boolean,
+    ) => {
+      const segments = buildHighlightSegments(
+        text,
+        occurrences.map((occurrence) => ({
+          start: occurrence.start,
+          end: occurrence.end,
+        })),
+      );
+      let occurrenceIndex = 0;
+      return segments.map((segment) => {
+        if (!segment.highlighted) {
           return (
-            <div className="rounded-lg border border-border/80 bg-card/45 px-3 py-2">
-              <div className="mb-1.5 flex items-center justify-between gap-3">
-                <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
-                  {groupLabel}
-                </p>
-                {hasOverflow && (
-                  <button
-                    type="button"
-                    className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors duration-150 hover:text-muted-foreground/80"
-                    onClick={() => onToggleWorkGroup(groupId)}
-                  >
-                    {isExpanded ? "Show less" : `Show ${hiddenCount} more`}
-                  </button>
-                )}
-              </div>
-              <div className="space-y-1">
-                {visibleEntries.map((workEntry) => (
-                  <div key={`work-row:${workEntry.id}`} className="flex items-start gap-2 py-0.5">
-                    <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/30" />
-                    <div className="min-w-0 flex-1 py-[2px]">
-                      <p className={`text-[11px] leading-relaxed ${workToneClass(workEntry.tone)}`}>
-                        {workEntry.label}
-                      </p>
-                      {workEntry.command && (
-                        <pre className="mt-1 overflow-x-auto rounded-md border border-border/70 bg-background/80 px-2 py-1 font-mono text-[11px] leading-relaxed text-foreground/80">
-                          {workEntry.command}
-                        </pre>
-                      )}
-                      {workEntry.changedFiles && workEntry.changedFiles.length > 0 && (
-                        <div className="mt-1 flex flex-wrap gap-1">
-                          {workEntry.changedFiles.slice(0, 6).map((filePath) => (
-                            <span
-                              key={`${workEntry.id}:${filePath}`}
-                              className="rounded-md border border-border/70 bg-background/65 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/85"
-                              title={filePath}
-                            >
-                              {filePath}
-                            </span>
-                          ))}
-                          {workEntry.changedFiles.length > 6 && (
-                            <span className="px-1 text-[10px] text-muted-foreground/65">
-                              +{workEntry.changedFiles.length - 6} more
-                            </span>
-                          )}
-                        </div>
-                      )}
-                      {workEntry.detail &&
-                        (!workEntry.command || workEntry.detail !== workEntry.command) && (
-                          <p
-                            className="mt-1 text-[11px] leading-relaxed text-muted-foreground/75"
-                            title={workEntry.detail}
-                          >
-                            {workEntry.detail}
-                          </p>
-                        )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <span key={`thread-search-user-segment:${messageId}:${segment.key}`}>
+              {segment.text}
+            </span>
           );
-        })()}
+        }
 
-      {row.kind === "message" &&
-        row.message.role === "user" &&
-        (() => {
-          const userImages = row.message.attachments ?? [];
-          const canRevertAgentWork = revertTurnCountByUserMessageId.has(row.message.id);
-          return (
-            <div className="flex justify-end">
-              <div className="group relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
-                {userImages.length > 0 && (
-                  <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
-                    {userImages.map(
-                      (image: NonNullable<TimelineMessage["attachments"]>[number]) => (
-                        <div
-                          key={image.id}
-                          className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
+        const occurrence = occurrences[occurrenceIndex];
+        occurrenceIndex += 1;
+        return (
+          <mark
+            key={`thread-search-user-highlight:${messageId}:${segment.key}`}
+            data-thread-search-occurrence-index={occurrence?.occurrenceIndexInSource}
+            className={cn(
+              "rounded bg-amber-400/40 px-0.5 text-foreground",
+              occurrence?.occurrenceIndexInSource === activeThreadSearchOccurrenceIndex &&
+                rowHasActiveMatch &&
+                "bg-amber-300/70 ring-1 ring-amber-500/45",
+            )}
+          >
+            {segment.text}
+          </mark>
+        );
+      });
+    },
+    [activeThreadSearchOccurrenceIndex],
+  );
+
+  const renderRowContent = (row: TimelineRow) => {
+    const sourceId =
+      row.kind === "message"
+        ? row.message.id
+        : row.kind === "proposed-plan"
+          ? row.proposedPlan.id
+          : null;
+    const sourceMatches = sourceId ? (threadSearchOccurrencesBySourceId.get(sourceId) ?? []) : [];
+    const rowHasSearchMatch = sourceMatches.length > 0;
+    const rowHasActiveSearchMatch =
+      rowHasSearchMatch && sourceId !== null && sourceId === activeThreadSearchSourceId;
+
+    return (
+      <div
+        className={cn(
+          "pb-4",
+          rowHasSearchMatch && "mx-[-0.5rem] rounded-xl bg-amber-400/6 px-2 py-1",
+          rowHasActiveSearchMatch && "ring-1 ring-amber-400/35 bg-amber-400/10",
+        )}
+        data-timeline-row-kind={row.kind}
+        data-message-id={row.kind === "message" ? row.message.id : undefined}
+        data-message-role={row.kind === "message" ? row.message.role : undefined}
+        data-thread-search-source-id={sourceId ?? undefined}
+        data-thread-search-active={rowHasActiveSearchMatch ? "true" : undefined}
+      >
+        {row.kind === "work" &&
+          (() => {
+            const groupId = row.id;
+            const groupedEntries = row.groupedEntries;
+            const isExpanded = expandedWorkGroups[groupId] ?? false;
+            const hasOverflow = groupedEntries.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
+            const visibleEntries =
+              hasOverflow && !isExpanded
+                ? groupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES)
+                : groupedEntries;
+            const hiddenCount = groupedEntries.length - visibleEntries.length;
+            const onlyToolEntries = groupedEntries.every((entry) => entry.tone === "tool");
+            const groupLabel = onlyToolEntries
+              ? groupedEntries.length === 1
+                ? "Tool call"
+                : `Tool calls (${groupedEntries.length})`
+              : groupedEntries.length === 1
+                ? "Work event"
+                : `Work log (${groupedEntries.length})`;
+
+            return (
+              <div className="rounded-lg border border-border/80 bg-card/45 px-3 py-2">
+                <div className="mb-1.5 flex items-center justify-between gap-3">
+                  <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
+                    {groupLabel}
+                  </p>
+                  {hasOverflow && (
+                    <button
+                      type="button"
+                      className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors duration-150 hover:text-muted-foreground/80"
+                      onClick={() => onToggleWorkGroup(groupId)}
+                    >
+                      {isExpanded ? "Show less" : `Show ${hiddenCount} more`}
+                    </button>
+                  )}
+                </div>
+                <div className="space-y-1">
+                  {visibleEntries.map((workEntry) => (
+                    <div key={`work-row:${workEntry.id}`} className="flex items-start gap-2 py-0.5">
+                      <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/30" />
+                      <div className="min-w-0 flex-1 py-[2px]">
+                        <p
+                          className={`text-[11px] leading-relaxed ${workToneClass(workEntry.tone)}`}
                         >
-                          {image.previewUrl ? (
-                            <button
-                              type="button"
-                              className="h-full w-full cursor-zoom-in"
-                              aria-label={`Preview ${image.name}`}
-                              onClick={() => {
-                                const preview = buildExpandedImagePreview(userImages, image.id);
-                                if (!preview) return;
-                                onImageExpand(preview);
-                              }}
+                          {workEntry.label}
+                        </p>
+                        {workEntry.command && (
+                          <pre className="mt-1 overflow-x-auto rounded-md border border-border/70 bg-background/80 px-2 py-1 font-mono text-[11px] leading-relaxed text-foreground/80">
+                            {workEntry.command}
+                          </pre>
+                        )}
+                        {workEntry.changedFiles && workEntry.changedFiles.length > 0 && (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {workEntry.changedFiles.slice(0, 6).map((filePath) => (
+                              <span
+                                key={`${workEntry.id}:${filePath}`}
+                                className="rounded-md border border-border/70 bg-background/65 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/85"
+                                title={filePath}
+                              >
+                                {filePath}
+                              </span>
+                            ))}
+                            {workEntry.changedFiles.length > 6 && (
+                              <span className="px-1 text-[10px] text-muted-foreground/65">
+                                +{workEntry.changedFiles.length - 6} more
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        {workEntry.detail &&
+                          (!workEntry.command || workEntry.detail !== workEntry.command) && (
+                            <p
+                              className="mt-1 text-[11px] leading-relaxed text-muted-foreground/75"
+                              title={workEntry.detail}
                             >
-                              <img
-                                src={image.previewUrl}
-                                alt={image.name}
-                                className="h-full max-h-[220px] w-full object-cover"
-                                onLoad={onTimelineImageLoad}
-                                onError={onTimelineImageLoad}
-                              />
-                            </button>
-                          ) : (
-                            <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-[11px] text-muted-foreground/70">
-                              {image.name}
-                            </div>
+                              {workEntry.detail}
+                            </p>
                           )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
+        {row.kind === "message" &&
+          row.message.role === "user" &&
+          (() => {
+            const userImages = row.message.attachments ?? [];
+            const canRevertAgentWork = revertTurnCountByUserMessageId.has(row.message.id);
+            return (
+              <div className="flex justify-end">
+                <div className="group relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
+                  {userImages.length > 0 && (
+                    <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
+                      {userImages.map(
+                        (image: NonNullable<TimelineMessage["attachments"]>[number]) => (
+                          <div
+                            key={image.id}
+                            className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
+                          >
+                            {image.previewUrl ? (
+                              <button
+                                type="button"
+                                className="h-full w-full cursor-zoom-in"
+                                aria-label={`Preview ${image.name}`}
+                                onClick={() => {
+                                  const preview = buildExpandedImagePreview(userImages, image.id);
+                                  if (!preview) return;
+                                  onImageExpand(preview);
+                                }}
+                              >
+                                <img
+                                  src={image.previewUrl}
+                                  alt={image.name}
+                                  className="h-full max-h-[220px] w-full object-cover"
+                                  onLoad={onTimelineImageLoad}
+                                  onError={onTimelineImageLoad}
+                                />
+                              </button>
+                            ) : (
+                              <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-[11px] text-muted-foreground/70">
+                                {image.name}
+                              </div>
+                            )}
+                          </div>
+                        ),
+                      )}
+                    </div>
+                  )}
+                  {row.message.text && (
+                    <pre className="whitespace-pre-wrap wrap-break-word font-mono text-sm leading-relaxed text-foreground">
+                      {renderHighlightedUserText(
+                        row.message.id,
+                        row.message.text,
+                        sourceMatches,
+                        rowHasActiveSearchMatch,
+                      )}
+                    </pre>
+                  )}
+                  <div className="mt-1.5 flex items-center justify-end gap-2">
+                    <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
+                      {row.message.text && <MessageCopyButton text={row.message.text} />}
+                      {canRevertAgentWork && (
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="outline"
+                          disabled={isRevertingCheckpoint || isWorking}
+                          onClick={() => onRevertUserMessage(row.message.id)}
+                          title="Revert to this message"
+                        >
+                          <Undo2Icon className="size-3" />
+                        </Button>
+                      )}
+                    </div>
+                    <p className="text-right text-[10px] text-muted-foreground/30">
+                      {formatTimestamp(row.message.createdAt)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+        {row.kind === "message" &&
+          row.message.role === "assistant" &&
+          (() => {
+            const messageText =
+              row.message.text || (row.message.streaming ? "" : "(empty response)");
+            return (
+              <>
+                {row.showCompletionDivider && (
+                  <div className="my-3 flex items-center gap-3">
+                    <span className="h-px flex-1 bg-border" />
+                    <span className="rounded-full border border-border bg-background px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/80">
+                      {completionSummary ? `Response • ${completionSummary}` : "Response"}
+                    </span>
+                    <span className="h-px flex-1 bg-border" />
+                  </div>
+                )}
+                <div className="min-w-0 px-1 py-0.5">
+                  <ChatMarkdown
+                    text={messageText}
+                    cwd={markdownCwd}
+                    isStreaming={Boolean(row.message.streaming)}
+                  />
+                  {(() => {
+                    const turnSummary = turnDiffSummaryByAssistantMessageId.get(row.message.id);
+                    if (!turnSummary) return null;
+                    const checkpointFiles = turnSummary.files;
+                    if (checkpointFiles.length === 0) return null;
+                    const summaryStat = summarizeTurnDiffStats(checkpointFiles);
+                    const changedFileCountLabel = String(checkpointFiles.length);
+                    const allDirectoriesExpanded =
+                      allDirectoriesExpandedByTurnId[turnSummary.turnId] ?? true;
+                    return (
+                      <div className="mt-2 rounded-lg border border-border/80 bg-card/45 p-2.5">
+                        <div className="mb-1.5 flex items-center justify-between gap-2">
+                          <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
+                            <span>Changed files ({changedFileCountLabel})</span>
+                            {hasNonZeroStat(summaryStat) && (
+                              <>
+                                <span className="mx-1">•</span>
+                                <DiffStatLabel
+                                  additions={summaryStat.additions}
+                                  deletions={summaryStat.deletions}
+                                />
+                              </>
+                            )}
+                          </p>
+                          <div className="flex items-center gap-1.5">
+                            <Button
+                              type="button"
+                              size="xs"
+                              variant="outline"
+                              onClick={() => onToggleAllDirectories(turnSummary.turnId)}
+                            >
+                              {allDirectoriesExpanded ? "Collapse all" : "Expand all"}
+                            </Button>
+                            <Button
+                              type="button"
+                              size="xs"
+                              variant="outline"
+                              onClick={() =>
+                                onOpenTurnDiff(turnSummary.turnId, checkpointFiles[0]?.path)
+                              }
+                            >
+                              View diff
+                            </Button>
+                          </div>
                         </div>
-                      ),
+                        <ChangedFilesTree
+                          key={`changed-files-tree:${turnSummary.turnId}`}
+                          turnId={turnSummary.turnId}
+                          files={checkpointFiles}
+                          allDirectoriesExpanded={allDirectoriesExpanded}
+                          resolvedTheme={resolvedTheme}
+                          onOpenTurnDiff={onOpenTurnDiff}
+                        />
+                      </div>
+                    );
+                  })()}
+                  <p className="mt-1.5 text-[10px] text-muted-foreground/30">
+                    {formatMessageMeta(
+                      row.message.createdAt,
+                      row.message.streaming
+                        ? formatElapsed(row.message.createdAt, nowIso)
+                        : formatElapsed(row.message.createdAt, row.message.completedAt),
                     )}
-                  </div>
-                )}
-                {row.message.text && (
-                  <pre className="whitespace-pre-wrap wrap-break-word font-mono text-sm leading-relaxed text-foreground">
-                    {row.message.text}
-                  </pre>
-                )}
-                <div className="mt-1.5 flex items-center justify-end gap-2">
-                  <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
-                    {row.message.text && <MessageCopyButton text={row.message.text} />}
-                    {canRevertAgentWork && (
-                      <Button
-                        type="button"
-                        size="xs"
-                        variant="outline"
-                        disabled={isRevertingCheckpoint || isWorking}
-                        onClick={() => onRevertUserMessage(row.message.id)}
-                        title="Revert to this message"
-                      >
-                        <Undo2Icon className="size-3" />
-                      </Button>
-                    )}
-                  </div>
-                  <p className="text-right text-[10px] text-muted-foreground/30">
-                    {formatTimestamp(row.message.createdAt)}
                   </p>
                 </div>
-              </div>
-            </div>
-          );
-        })()}
+              </>
+            );
+          })()}
 
-      {row.kind === "message" &&
-        row.message.role === "assistant" &&
-        (() => {
-          const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
-          return (
-            <>
-              {row.showCompletionDivider && (
-                <div className="my-3 flex items-center gap-3">
-                  <span className="h-px flex-1 bg-border" />
-                  <span className="rounded-full border border-border bg-background px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/80">
-                    {completionSummary ? `Response • ${completionSummary}` : "Response"}
-                  </span>
-                  <span className="h-px flex-1 bg-border" />
-                </div>
-              )}
-              <div className="min-w-0 px-1 py-0.5">
-                <ChatMarkdown
-                  text={messageText}
-                  cwd={markdownCwd}
-                  isStreaming={Boolean(row.message.streaming)}
-                />
-                {(() => {
-                  const turnSummary = turnDiffSummaryByAssistantMessageId.get(row.message.id);
-                  if (!turnSummary) return null;
-                  const checkpointFiles = turnSummary.files;
-                  if (checkpointFiles.length === 0) return null;
-                  const summaryStat = summarizeTurnDiffStats(checkpointFiles);
-                  const changedFileCountLabel = String(checkpointFiles.length);
-                  const allDirectoriesExpanded =
-                    allDirectoriesExpandedByTurnId[turnSummary.turnId] ?? true;
-                  return (
-                    <div className="mt-2 rounded-lg border border-border/80 bg-card/45 p-2.5">
-                      <div className="mb-1.5 flex items-center justify-between gap-2">
-                        <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
-                          <span>Changed files ({changedFileCountLabel})</span>
-                          {hasNonZeroStat(summaryStat) && (
-                            <>
-                              <span className="mx-1">•</span>
-                              <DiffStatLabel
-                                additions={summaryStat.additions}
-                                deletions={summaryStat.deletions}
-                              />
-                            </>
-                          )}
-                        </p>
-                        <div className="flex items-center gap-1.5">
-                          <Button
-                            type="button"
-                            size="xs"
-                            variant="outline"
-                            onClick={() => onToggleAllDirectories(turnSummary.turnId)}
-                          >
-                            {allDirectoriesExpanded ? "Collapse all" : "Expand all"}
-                          </Button>
-                          <Button
-                            type="button"
-                            size="xs"
-                            variant="outline"
-                            onClick={() =>
-                              onOpenTurnDiff(turnSummary.turnId, checkpointFiles[0]?.path)
-                            }
-                          >
-                            View diff
-                          </Button>
-                        </div>
-                      </div>
-                      <ChangedFilesTree
-                        key={`changed-files-tree:${turnSummary.turnId}`}
-                        turnId={turnSummary.turnId}
-                        files={checkpointFiles}
-                        allDirectoriesExpanded={allDirectoriesExpanded}
-                        resolvedTheme={resolvedTheme}
-                        onOpenTurnDiff={onOpenTurnDiff}
-                      />
-                    </div>
-                  );
-                })()}
-                <p className="mt-1.5 text-[10px] text-muted-foreground/30">
-                  {formatMessageMeta(
-                    row.message.createdAt,
-                    row.message.streaming
-                      ? formatElapsed(row.message.createdAt, nowIso)
-                      : formatElapsed(row.message.createdAt, row.message.completedAt),
-                  )}
-                </p>
-              </div>
-            </>
-          );
-        })()}
-
-      {row.kind === "proposed-plan" && (
-        <div className="min-w-0 px-1 py-0.5">
-          <ProposedPlanCard
-            planMarkdown={row.proposedPlan.planMarkdown}
-            cwd={markdownCwd}
-            workspaceRoot={workspaceRoot}
-          />
-        </div>
-      )}
-
-      {row.kind === "working" && (
-        <div className="py-0.5 pl-1.5">
-          <div className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground/70">
-            <span className="inline-flex items-center gap-[3px]">
-              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse" />
-              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:200ms]" />
-              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:400ms]" />
-            </span>
-            <span>
-              {row.createdAt
-                ? `Working for ${formatWorkingTimer(row.createdAt, nowIso) ?? "0s"}`
-                : "Working..."}
-            </span>
+        {row.kind === "proposed-plan" && (
+          <div className="min-w-0 px-1 py-0.5">
+            <ProposedPlanCard
+              planMarkdown={row.proposedPlan.planMarkdown}
+              cwd={markdownCwd}
+              workspaceRoot={workspaceRoot}
+            />
           </div>
-        </div>
-      )}
-    </div>
-  );
+        )}
+
+        {row.kind === "working" && (
+          <div className="py-0.5 pl-1.5">
+            <div className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground/70">
+              <span className="inline-flex items-center gap-[3px]">
+                <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse" />
+                <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:200ms]" />
+                <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:400ms]" />
+              </span>
+              <span>
+                {row.createdAt
+                  ? `Working for ${formatWorkingTimer(row.createdAt, nowIso) ?? "0s"}`
+                  : "Working..."}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   if (!hasMessages && !isWorking) {
     return (
