@@ -6,6 +6,7 @@ import {
   type MessageId,
   type OrchestrationReadModel,
   type ProjectId,
+  type SkillSearchResult,
   type ServerConfig,
   type ThreadId,
   type TurnId,
@@ -50,6 +51,7 @@ interface WsRequestEnvelope {
 interface TestFixture {
   snapshot: OrchestrationReadModel;
   serverConfig: ServerConfig;
+  skillSearchResult: SkillSearchResult;
   welcome: WsWelcomePayload;
 }
 
@@ -273,6 +275,10 @@ function buildFixture(snapshot: OrchestrationReadModel): TestFixture {
   return {
     snapshot,
     serverConfig: createBaseServerConfig(),
+    skillSearchResult: {
+      skills: [],
+      truncated: false,
+    },
     welcome: {
       cwd: "/repo/project",
       projectName: "Project",
@@ -475,6 +481,9 @@ function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
       entries: [],
       truncated: false,
     };
+  }
+  if (tag === WS_METHODS.skillsSearch) {
+    return fixture.skillSearchResult;
   }
   if (tag === WS_METHODS.terminalOpen) {
     return {
@@ -1324,6 +1333,60 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
 
       expect(getComputedStyle(stopButton).cursor).toBe("pointer");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps the full skill title readable in autocomplete rows", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-skill-menu" as MessageId,
+        targetText: "skill autocomplete target",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.skillSearchResult = {
+          skills: [
+            {
+              name: "canal-pr-finish",
+              description:
+                "Idempotent end-to-end PR shipping loop for ROKT/canal from any worktree",
+              skillPath: "/Users/test/.codex/skills/canal-pr-finish/SKILL.md",
+              rootPath: "/Users/test/.codex/skills",
+              source: "codex-home",
+            },
+          ],
+          truncated: false,
+        };
+      },
+    });
+
+    try {
+      const composerEditor = page.getByTestId("composer-editor");
+      await expect.element(composerEditor).toBeVisible();
+      await composerEditor.click();
+      await composerEditor.fill("$canal-pr");
+
+      await vi.waitFor(
+        () => {
+          const searchRequests = wsRequests.filter(
+            (request) => request._tag === WS_METHODS.skillsSearch,
+          );
+          expect(searchRequests.length).toBeGreaterThan(0);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const skillOption = page.getByText("$canal-pr-finish");
+      await expect.element(skillOption).toBeVisible();
+      await expect
+        .element(
+          page.getByText(
+            "Codex home · Idempotent end-to-end PR shipping loop for ROKT/canal from any worktree",
+          ),
+        )
+        .toBeVisible();
     } finally {
       await mounted.cleanup();
     }
