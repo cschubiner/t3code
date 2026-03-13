@@ -1,6 +1,8 @@
 import "../index.css";
 
 import {
+  type CodexImportPeekSessionResult,
+  type CodexImportSessionSummary,
   ORCHESTRATION_WS_METHODS,
   type OrchestrationReadModel,
   type ProjectId,
@@ -43,6 +45,7 @@ interface TestFixture {
   snapshot: OrchestrationReadModel;
   serverConfig: ServerConfig;
   welcome: WsWelcomePayload;
+  codexImportSessions: ReadonlyArray<CodexImportSessionSummary>;
 }
 
 let fixture: TestFixture;
@@ -245,24 +248,81 @@ function buildFixture(): TestFixture {
       bootstrapProjectId: PROJECT_ALPHA_ID,
       bootstrapThreadId: THREAD_A8,
     },
+    codexImportSessions: Array.from({ length: 20 }, (_, index) => {
+      const sessionNumber = index + 1;
+      const sessionId = `codex-session-${String(sessionNumber).padStart(2, "0")}`;
+      return {
+        sessionId,
+        title: `Codex Session ${String(sessionNumber).padStart(2, "0")}`,
+        cwd: `/repo/import-${String(sessionNumber).padStart(2, "0")}`,
+        createdAt: `2026-03-12T${String((sessionNumber % 12) + 1).padStart(2, "0")}:00:00.000Z`,
+        updatedAt: `2026-03-12T${String((sessionNumber % 12) + 1).padStart(2, "0")}:30:00.000Z`,
+        model: "gpt-5",
+        kind: "direct",
+        transcriptAvailable: true,
+        transcriptError: null,
+        alreadyImported: false,
+        importedThreadId: null,
+        lastUserMessage: `User prompt ${String(sessionNumber)}`,
+        lastAssistantMessage: `Assistant response ${String(sessionNumber)}`,
+      } satisfies CodexImportSessionSummary;
+    }),
   };
 }
 
-function resolveWsRpc(tag: string): unknown {
-  if (tag === ORCHESTRATION_WS_METHODS.getSnapshot) {
+function buildCodexImportPreview(sessionId: string): CodexImportPeekSessionResult {
+  const session =
+    fixture.codexImportSessions.find((entry) => entry.sessionId === sessionId) ??
+    fixture.codexImportSessions[0];
+
+  if (!session) {
+    throw new Error("Expected Codex import fixture sessions to exist.");
+  }
+
+  return {
+    sessionId: session.sessionId,
+    title: session.title,
+    cwd: session.cwd,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    model: session.model,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    kind: session.kind,
+    transcriptAvailable: session.transcriptAvailable,
+    transcriptError: session.transcriptError,
+    alreadyImported: session.alreadyImported,
+    importedThreadId: session.importedThreadId,
+    messages: [
+      {
+        role: "user",
+        text: session.lastUserMessage ?? "User prompt",
+        createdAt: session.updatedAt ?? NOW_ISO,
+      },
+      {
+        role: "assistant",
+        text: session.lastAssistantMessage ?? "Assistant response",
+        createdAt: session.updatedAt ?? NOW_ISO,
+      },
+    ],
+  };
+}
+
+function resolveWsRpc(body: { _tag: string; [key: string]: unknown }): unknown {
+  if (body._tag === ORCHESTRATION_WS_METHODS.getSnapshot) {
     return fixture.snapshot;
   }
-  if (tag === WS_METHODS.serverGetConfig) {
+  if (body._tag === WS_METHODS.serverGetConfig) {
     return fixture.serverConfig;
   }
-  if (tag === WS_METHODS.gitListBranches) {
+  if (body._tag === WS_METHODS.gitListBranches) {
     return {
       isRepo: true,
       hasOriginRemote: true,
       branches: [{ name: "main", current: true, isDefault: true, worktreePath: null }],
     };
   }
-  if (tag === WS_METHODS.gitStatus) {
+  if (body._tag === WS_METHODS.gitStatus) {
     return {
       branch: "main",
       hasWorkingTreeChanges: false,
@@ -273,8 +333,17 @@ function resolveWsRpc(tag: string): unknown {
       pr: null,
     };
   }
-  if (tag === WS_METHODS.projectsSearchEntries) {
+  if (body._tag === WS_METHODS.projectsSearchEntries) {
     return { entries: [], truncated: false };
+  }
+  if (body._tag === WS_METHODS.codexImportListSessions) {
+    return fixture.codexImportSessions;
+  }
+  if (body._tag === WS_METHODS.codexImportPeekSession) {
+    return buildCodexImportPreview(String(body.sessionId ?? ""));
+  }
+  if (body._tag === WS_METHODS.codexImportImportSessions) {
+    return { results: [] };
   }
   return {};
 }
@@ -302,7 +371,7 @@ const worker = setupWorker(
       client.send(
         JSON.stringify({
           id: request.id,
-          result: resolveWsRpc(method),
+          result: resolveWsRpc(request.body),
         }),
       );
     });
@@ -677,6 +746,86 @@ describe("Sidebar navigation keybindings", () => {
 
       dispatchSidebarShortcut({ key: "[" }, composerEditor);
       await waitForPath(mounted.router, `/${THREAD_A5}`);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+});
+
+describe("Import From Codex dialog", () => {
+  beforeAll(async () => {
+    fixture = buildFixture();
+    await worker.start({
+      onUnhandledRequest: "bypass",
+      quiet: true,
+      serviceWorker: { url: "/mockServiceWorker.js" },
+    });
+  });
+
+  afterAll(async () => {
+    await worker.stop();
+  });
+
+  beforeEach(async () => {
+    fixture = buildFixture();
+    await setViewport();
+    localStorage.clear();
+    document.body.innerHTML = "";
+    useComposerDraftStore.setState({
+      draftsByThreadId: {},
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
+      queuedTurnsByThreadId: {},
+    });
+    useStore.setState({
+      projects: [],
+      threads: [],
+      threadsHydrated: false,
+    });
+    useThreadNavigationHistoryStore.getState().clearHistory();
+    useThreadSelectionStore.getState().clearSelection();
+  });
+
+  it("lets the left session column overflow and scroll through long result sets", async () => {
+    const mounted = await mountApp(`/${THREAD_A8}`);
+
+    try {
+      const importButton = document.querySelector<HTMLButtonElement>(
+        'button[aria-label="Import from Codex"]',
+      );
+      expect(importButton, "Expected import button to render").toBeTruthy();
+      importButton?.click();
+
+      let dialogTitle: HTMLElement | null = null;
+      await vi.waitFor(
+        () => {
+          dialogTitle =
+            Array.from(document.querySelectorAll<HTMLElement>("h2")).find((node) =>
+              node.textContent?.includes("Import From Codex"),
+            ) ?? null;
+          expect(dialogTitle).toBeTruthy();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      let listViewport: HTMLElement | null = null;
+      await vi.waitFor(
+        () => {
+          listViewport = document.querySelector<HTMLElement>(
+            '[data-testid="codex-import-session-list"] [data-slot="scroll-area-viewport"]',
+          );
+          expect(listViewport, "Expected left import list viewport to render").toBeTruthy();
+          expect(listViewport!.scrollHeight).toBeGreaterThan(listViewport!.clientHeight);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const initialScrollTop = listViewport!.scrollTop;
+      listViewport!.scrollTop = 600;
+      listViewport!.dispatchEvent(new Event("scroll"));
+      await waitForLayout();
+
+      expect(listViewport!.scrollTop).toBeGreaterThan(initialScrollTop);
     } finally {
       await mounted.cleanup();
     }
