@@ -1,4 +1,9 @@
-import { type ProjectEntry, type ModelSlug, type ProviderKind } from "@t3tools/contracts";
+import {
+  type ProjectEntry,
+  type ModelSlug,
+  type ProviderKind,
+  type Snippet,
+} from "@t3tools/contracts";
 import { memo } from "react";
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
 import { BotIcon } from "lucide-react";
@@ -28,6 +33,13 @@ export type ComposerCommandItem =
       type: "model";
       provider: ProviderKind;
       model: ModelSlug;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "snippet";
+      snippet: Snippet;
       label: string;
       description: string;
     };
@@ -65,10 +77,14 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
         {props.items.length === 0 && (
           <p className="px-3 py-2 text-muted-foreground/70 text-xs">
             {props.isLoading
-              ? "Searching workspace files..."
+              ? props.triggerKind === "snippet"
+                ? "Loading snippets..."
+                : "Searching workspace files..."
               : props.triggerKind === "path"
                 ? "No matching files or folders."
-                : "No matching command."}
+                : props.triggerKind === "snippet"
+                  ? "No matching snippets."
+                  : "No matching command."}
           </p>
         )}
       </div>
@@ -111,10 +127,19 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
           model
         </Badge>
       ) : null}
-      <span className="flex min-w-0 items-center gap-1.5 truncate">
-        <span className="truncate">{props.item.label}</span>
-      </span>
-      <span className="truncate text-muted-foreground/70 text-xs">{props.item.description}</span>
+      {props.item.type === "snippet" ? (
+        <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">
+          snippet
+        </Badge>
+      ) : null}
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm leading-tight">{props.item.label}</p>
+        {props.item.description ? (
+          <p className="truncate text-muted-foreground/70 text-xs leading-tight">
+            {props.item.description}
+          </p>
+        ) : null}
+      </div>
     </CommandItem>
   );
 });

@@ -278,6 +278,14 @@ export function isOpenFavoriteEditorShortcut(
   return matchesCommandShortcut(event, keybindings, "editor.openFavorite", options);
 }
 
+export function isSnippetsOpenShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "snippets.open", options);
+}
+
 export function isTerminalClearShortcut(
   event: ShortcutEventLike,
   platform = navigator.platform,

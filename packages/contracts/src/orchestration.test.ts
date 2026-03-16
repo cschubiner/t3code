@@ -221,7 +221,6 @@ it.effect("decodes orchestration session runtime mode defaults", () =>
   }),
 );
 
-
 it.effect("accepts queued turn update, move, and send-now as client orchestration commands", () =>
   Effect.gen(function* () {
     const update = yield* decodeClientOrchestrationCommand({

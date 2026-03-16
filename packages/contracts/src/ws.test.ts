@@ -73,6 +73,47 @@ it.effect("accepts git.preparePullRequestThread requests", () =>
   }),
 );
 
+it.effect("accepts snippets.create requests", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const parsed = yield* decodeWebSocketRequest({
+        id: "req-snippet-create-1",
+        body: {
+          _tag: WS_METHODS.snippetsCreate,
+          text: "  Save this for later  ",
+        },
+      });
+      assert.strictEqual(parsed.body._tag, WS_METHODS.snippetsCreate);
+      if (parsed.body._tag === WS_METHODS.snippetsCreate) {
+        assert.strictEqual(parsed.body.text, "Save this for later");
+      }
+    }),
+  ),
+);
+
+it.effect("accepts snippets.updated push envelopes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const parsed = yield* decodeWsResponse({
+        type: "push",
+        sequence: 3,
+        channel: WS_CHANNELS.snippetsUpdated,
+        data: {
+          kind: "upsert",
+          snippetId: "snippet-1",
+          updatedAt: "2026-03-16T12:30:00.000Z",
+        },
+      });
+
+      if (!("type" in parsed) || parsed.type !== "push") {
+        assert.fail("expected websocket response to decode as a push envelope");
+      }
+
+      assert.strictEqual(parsed.channel, WS_CHANNELS.snippetsUpdated);
+    }),
+  ),
+);
+
 it.effect("accepts typed websocket push envelopes with sequence", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeWsResponse({

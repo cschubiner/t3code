@@ -24,6 +24,13 @@ import type {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project";
+import type {
+  SnippetCreateInput,
+  SnippetCreateResult,
+  SnippetDeleteInput,
+  SnippetLibraryUpdatedPayload,
+  SnippetListResult,
+} from "./snippets";
 import type { ServerConfig } from "./server";
 import type {
   TerminalClearInput,
@@ -128,6 +135,12 @@ export interface NativeApi {
   projects: {
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
+  };
+  snippets: {
+    list: () => Promise<SnippetListResult>;
+    create: (input: SnippetCreateInput) => Promise<SnippetCreateResult>;
+    delete: (input: SnippetDeleteInput) => Promise<void>;
+    onUpdated: (callback: (payload: SnippetLibraryUpdatedPayload) => void) => () => void;
   };
   shell: {
     openInEditor: (cwd: string, editor: EditorId) => Promise<void>;

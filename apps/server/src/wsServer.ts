@@ -19,6 +19,7 @@ import {
   ORCHESTRATION_WS_METHODS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   ProjectId,
+  type SnippetLibraryUpdatedPayload,
   ThreadId,
   WS_CHANNELS,
   WS_METHODS,
@@ -78,6 +79,7 @@ import { expandHomePath } from "./os-jank.ts";
 import { makeServerPushBus } from "./wsServer/pushBus.ts";
 import { makeServerReadiness } from "./wsServer/readiness.ts";
 import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
+import { SnippetRepository } from "./persistence/Services/Snippets.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -215,6 +217,7 @@ export type ServerRuntimeServices =
   | GitManager
   | GitCore
   | TerminalManager
+  | SnippetRepository
   | Keybindings
   | Open
   | AnalyticsService;
@@ -252,6 +255,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
   const gitManager = yield* GitManager;
   const terminalManager = yield* TerminalManager;
+  const snippetRepository = yield* SnippetRepository;
   const keybindingsManager = yield* Keybindings;
   const providerHealth = yield* ProviderHealth;
   const git = yield* GitCore;
@@ -777,6 +781,38 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           ),
         );
         return { relativePath: target.relativePath };
+      }
+
+      case WS_METHODS.snippetsList:
+        return yield* snippetRepository.listAll().pipe(Effect.map((snippets) => ({ snippets })));
+
+      case WS_METHODS.snippetsCreate: {
+        const body = stripRequestTag(request.body);
+        const updatedAt = new Date().toISOString();
+        const result = yield* snippetRepository.upsertByExactText({
+          text: body.text,
+          updatedAt,
+        });
+        const payload: SnippetLibraryUpdatedPayload = {
+          kind: "upsert",
+          snippetId: result.snippet.id,
+          updatedAt: result.snippet.updatedAt,
+        };
+        yield* pushBus.publishAll(WS_CHANNELS.snippetsUpdated, payload);
+        return result;
+      }
+
+      case WS_METHODS.snippetsDelete: {
+        const body = stripRequestTag(request.body);
+        const updatedAt = new Date().toISOString();
+        yield* snippetRepository.deleteById(body);
+        const payload: SnippetLibraryUpdatedPayload = {
+          kind: "delete",
+          snippetId: body.snippetId,
+          updatedAt,
+        };
+        yield* pushBus.publishAll(WS_CHANNELS.snippetsUpdated, payload);
+        return undefined;
       }
 
       case WS_METHODS.shellOpenInEditor: {
