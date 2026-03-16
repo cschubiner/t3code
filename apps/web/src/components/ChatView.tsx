@@ -4074,6 +4074,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   </div>
                 )}
               </div>
+            </div>
             </form>
           </div>
 
