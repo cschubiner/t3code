@@ -3,6 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 
 import { buildGlobalThreadSearchResults } from "../lib/globalThreadSearch";
+import { formatRelativeTime } from "../lib/relativeTime";
 import { buildHighlightSegments, findTextOccurrences } from "../lib/threadSearch";
 import { useStore } from "../store";
 import { useThreadSearchNavigationStore } from "../threadSearchNavigationStore";
@@ -27,6 +28,10 @@ interface GlobalThreadSearchDialogProps {
 }
 
 function formatResultTimestamp(value: string): string {
+  return formatRelativeTime(value, { style: "long" });
+}
+
+function formatExactResultTimestamp(value: string): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
     return value;
@@ -273,7 +278,10 @@ export function GlobalThreadSearchDialog({
                           <span className="text-muted-foreground text-xs">
                             {result.projectName}
                           </span>
-                          <span className="ml-auto text-muted-foreground text-[11px]">
+                          <span
+                            className="ml-auto text-muted-foreground text-[11px]"
+                            title={formatExactResultTimestamp(result.sourceCreatedAt)}
+                          >
                             {formatResultTimestamp(result.sourceCreatedAt)}
                           </span>
                         </div>
