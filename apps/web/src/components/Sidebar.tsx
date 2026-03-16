@@ -74,6 +74,7 @@ import { Collapsible, CollapsibleContent } from "./ui/collapsible";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ImportFromCodexDialog } from "./ImportFromCodexDialog";
 import { GlobalThreadSearchDialog } from "./GlobalThreadSearchDialog";
+import { ProjectFolderSearchDialog } from "./ProjectFolderSearchDialog";
 import {
   SidebarContent,
   SidebarFooter,
@@ -330,6 +331,8 @@ export default function Sidebar() {
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const [isGlobalThreadSearchOpen, setIsGlobalThreadSearchOpen] = useState(false);
   const [globalThreadSearchFocusRequestId, setGlobalThreadSearchFocusRequestId] = useState(0);
+  const [isProjectFolderSearchOpen, setIsProjectFolderSearchOpen] = useState(false);
+  const [projectFolderSearchFocusRequestId, setProjectFolderSearchFocusRequestId] = useState(0);
   const selectedThreadIds = useThreadSelectionStore((s) => s.selectedThreadIds);
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
   const rangeSelectTo = useThreadSelectionStore((s) => s.rangeSelectTo);
@@ -1030,7 +1033,7 @@ export default function Sidebar() {
       return activeElement.closest(".thread-terminal-drawer .xterm") !== null;
     };
     const isAnotherDialogOpen = (): boolean => {
-      if (isGlobalThreadSearchOpen) {
+      if (isGlobalThreadSearchOpen || isProjectFolderSearchOpen) {
         return false;
       }
       return (
@@ -1093,6 +1096,15 @@ export default function Sidebar() {
         event.preventDefault();
         setIsGlobalThreadSearchOpen(true);
         setGlobalThreadSearchFocusRequestId((current) => current + 1);
+        return;
+      }
+      if (resolvedCommand === "projects.search") {
+        if (isAnotherDialogOpen()) {
+          return;
+        }
+        event.preventDefault();
+        setIsProjectFolderSearchOpen(true);
+        setProjectFolderSearchFocusRequestId((current) => current + 1);
         return;
       }
       if (
@@ -1170,6 +1182,7 @@ export default function Sidebar() {
     navigateToThreadFromShortcut,
     router,
     isGlobalThreadSearchOpen,
+    isProjectFolderSearchOpen,
   ]);
 
   useEffect(() => {
@@ -1237,6 +1250,16 @@ export default function Sidebar() {
       shortcutLabelForCommand(keybindings, "chat.newLocal") ??
       shortcutLabelForCommand(keybindings, "chat.new"),
     [keybindings],
+  );
+  const handleProjectFolderSearchSelect = useCallback(
+    async (projectId: ProjectId) => {
+      await handleNewThread(projectId, {
+        envMode: resolveSidebarNewThreadEnvMode({
+          defaultEnvMode: appSettings.defaultThreadEnvMode,
+        }),
+      });
+    },
+    [appSettings.defaultThreadEnvMode, handleNewThread],
   );
 
   const handleDesktopUpdateButtonClick = useCallback(() => {
@@ -1867,6 +1890,13 @@ export default function Sidebar() {
         onOpenChange={setIsGlobalThreadSearchOpen}
         activeThreadId={routeThreadId}
         focusRequestId={globalThreadSearchFocusRequestId}
+      />
+      <ProjectFolderSearchDialog
+        open={isProjectFolderSearchOpen}
+        onOpenChange={setIsProjectFolderSearchOpen}
+        projects={projects}
+        focusRequestId={projectFolderSearchFocusRequestId}
+        onSelectProject={handleProjectFolderSearchSelect}
       />
 
       <SidebarSeparator />

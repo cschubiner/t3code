@@ -118,6 +118,11 @@ const DEFAULT_BINDINGS = compile([
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
   {
+    shortcut: modShortcut("k", { shiftKey: true }),
+    command: "projects.search",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
     shortcut: { ...modShortcut("arrowup"), modKey: false, altKey: true },
     command: "sidebar.thread.previous",
   },
@@ -286,6 +291,10 @@ describe("shortcutLabelForCommand", () => {
       "⇧⌘F",
     );
     assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "projects.search", "Linux"),
+      "Ctrl+Shift+K",
+    );
+    assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "sidebar.history.next", "Linux"),
       "Ctrl+]",
     );
@@ -394,6 +403,13 @@ describe("chat/editor shortcuts", () => {
           context: { terminalFocus: false },
         },
       ),
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "k", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+      "projects.search",
     );
   });
 
@@ -545,6 +561,13 @@ describe("resolveShortcutCommand", () => {
         context: { terminalFocus: false },
       }),
       "threads.search",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "k", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+      "projects.search",
     );
   });
 });
