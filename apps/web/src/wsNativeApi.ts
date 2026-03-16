@@ -115,6 +115,9 @@ export function createWsNativeApi(): NativeApi {
       searchEntries: (input) => transport.request(WS_METHODS.projectsSearchEntries, input),
       writeFile: (input) => transport.request(WS_METHODS.projectsWriteFile, input),
     },
+    skills: {
+      search: (input) => transport.request(WS_METHODS.skillsSearch, input),
+    },
     shell: {
       openInEditor: (cwd, editor) =>
         transport.request(WS_METHODS.shellOpenInEditor, { cwd, editor }),
@@ -159,7 +162,13 @@ export function createWsNativeApi(): NativeApi {
     },
     server: {
       getConfig: () => transport.request(WS_METHODS.serverGetConfig),
+      generateSecretUrl: (input) => transport.request(WS_METHODS.serverGenerateSecretUrl, input),
       upsertKeybinding: (input) => transport.request(WS_METHODS.serverUpsertKeybinding, input),
+    },
+    codexImport: {
+      listSessions: (input) => transport.request(WS_METHODS.codexImportListSessions, input),
+      peekSession: (input) => transport.request(WS_METHODS.codexImportPeekSession, input),
+      importSessions: (input) => transport.request(WS_METHODS.codexImportImportSessions, input),
     },
     orchestration: {
       getSnapshot: () => transport.request(ORCHESTRATION_WS_METHODS.getSnapshot),
