@@ -12,6 +12,7 @@ import { CSS } from "@dnd-kit/utilities";
 import type { ProviderInteractionMode } from "@t3tools/contracts";
 import {
   GripVerticalIcon,
+  HeartIcon,
   LoaderCircleIcon,
   PencilIcon,
   SendHorizontalIcon,
@@ -58,6 +59,7 @@ function SortableQueuedFollowUpRow({
   onSave,
   onCancel,
   onDelete,
+  onSaveAsSnippet,
   onSendNow,
 }: {
   queuedTurn: ThreadQueuedTurn;
@@ -71,6 +73,7 @@ function SortableQueuedFollowUpRow({
   onSave: () => void;
   onCancel: () => void;
   onDelete: () => void;
+  onSaveAsSnippet: () => void;
   onSendNow: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -78,6 +81,7 @@ function SortableQueuedFollowUpRow({
     disabled: isInteractionDisabled || isEditing,
   });
   const canSave = draftText.trim().length > 0 || queuedTurn.attachments.length > 0;
+  const canSaveAsSnippet = queuedTurn.text.trim().length > 0;
   const preview = summarizeQueuedTurn(queuedTurn);
 
   return (
@@ -162,6 +166,18 @@ function SortableQueuedFollowUpRow({
               size="sm"
               variant="ghost"
               className="h-8 rounded-full px-2.5 text-xs"
+              onClick={onSaveAsSnippet}
+              disabled={isInteractionDisabled || !canSaveAsSnippet}
+              data-testid={`queued-follow-up-save-snippet-${queuedTurn.messageId}`}
+            >
+              <HeartIcon className="mr-1 size-3.5" />
+              Save as snippet
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-8 rounded-full px-2.5 text-xs"
               onClick={onEdit}
               disabled={isInteractionDisabled}
             >
@@ -211,6 +227,7 @@ export default function QueuedFollowUpsPanel({
   isQueueInteractionDisabled,
   onDelete,
   onClearAll,
+  onSaveAsSnippet,
   onSaveEdit,
   onSendNow,
   onReorder,
@@ -220,6 +237,7 @@ export default function QueuedFollowUpsPanel({
   isQueueInteractionDisabled: boolean;
   onDelete: (queuedTurnId: ThreadQueuedTurn["messageId"]) => void;
   onClearAll: () => void;
+  onSaveAsSnippet: (queuedTurnId: ThreadQueuedTurn["messageId"]) => void;
   onSaveEdit: (queuedTurnId: ThreadQueuedTurn["messageId"], text: string) => void;
   onSendNow: (queuedTurnId: ThreadQueuedTurn["messageId"]) => void;
   onReorder: (
@@ -334,6 +352,7 @@ export default function QueuedFollowUpsPanel({
                     setDraftText("");
                   }
                 }}
+                onSaveAsSnippet={() => onSaveAsSnippet(queuedTurn.messageId)}
                 onSendNow={() => onSendNow(queuedTurn.messageId)}
               />
             ))}

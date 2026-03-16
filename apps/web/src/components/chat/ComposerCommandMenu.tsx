@@ -3,6 +3,7 @@ import {
   type ModelSlug,
   type ProviderKind,
   type SkillSource,
+  type Snippet,
 } from "@t3tools/contracts";
 import { memo } from "react";
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
@@ -43,6 +44,13 @@ export type ComposerCommandItem =
       source: SkillSource;
       label: string;
       description: string;
+    }
+  | {
+      id: string;
+      type: "snippet";
+      snippet: Snippet;
+      label: string;
+      description: string;
     };
 
 export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
@@ -80,12 +88,16 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
             {props.isLoading
               ? props.triggerKind === "skill"
                 ? "Searching skills..."
-                : "Searching workspace files..."
+                : props.triggerKind === "snippet"
+                  ? "Loading snippets..."
+                  : "Searching workspace files..."
               : props.triggerKind === "path"
                 ? "No matching files or folders."
                 : props.triggerKind === "skill"
                   ? "No matching skills."
-                  : "No matching command."}
+                  : props.triggerKind === "snippet"
+                    ? "No matching snippets."
+                    : "No matching command."}
           </p>
         )}
       </div>
@@ -146,6 +158,11 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       {props.item.type === "model" ? (
         <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">
           model
+        </Badge>
+      ) : null}
+      {props.item.type === "snippet" ? (
+        <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">
+          snippet
         </Badge>
       ) : null}
       <div className="min-w-0 flex-1">
