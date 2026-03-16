@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { DesktopBridge } from "@t3tools/contracts";
+import type { DesktopBridge, DesktopRemoteAccessStatus } from "@t3tools/contracts";
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const CONFIRM_CHANNEL = "desktop:confirm";
@@ -51,7 +51,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   getRemoteAccessStatus: () => ipcRenderer.invoke(REMOTE_ACCESS_GET_STATUS_CHANNEL),
   setRemoteAccessEnabled: (enabled: boolean) =>
     ipcRenderer.invoke(REMOTE_ACCESS_SET_ENABLED_CHANNEL, enabled),
-  onRemoteAccessStatus: (listener) => {
+  onRemoteAccessStatus: (listener: (status: DesktopRemoteAccessStatus) => void) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, status: unknown) => {
       if (typeof status !== "object" || status === null) return;
       listener(status as Parameters<typeof listener>[0]);
