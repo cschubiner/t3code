@@ -31,6 +31,10 @@
     "./schemaJson": {
       "types": "./src/schemaJson.ts",
       "import": "./src/schemaJson.ts"
+    },
+    "./fuzzySearch": {
+      "types": "./src/fuzzySearch.ts",
+      "import": "./src/fuzzySearch.ts"
     }
   },
   "scripts": {

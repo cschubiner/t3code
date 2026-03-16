@@ -17,6 +17,7 @@ const STATIC_KEYBINDING_COMMANDS = [
   "sidebar.history.next",
   "thread.search",
   "threads.search",
+  "projects.search",
   "sidebar.thread.previous",
   "sidebar.thread.next",
   "sidebar.project.previous",
