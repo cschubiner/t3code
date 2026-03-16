@@ -1,9 +1,8 @@
 import tailwindcss from "@tailwindcss/vite";
-import react, { reactCompilerPreset } from "@vitejs/plugin-react";
-import babel from "@rolldown/plugin-babel";
+import react from "@vitejs/plugin-react";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import { defineConfig } from "vite";
-import pkg from "./package.json" with { type: "json" };
+import { version } from "./package.json" with { type: "json" };
 
 const port = Number(process.env.PORT ?? 5733);
 const sourcemapEnv = process.env.T3CODE_WEB_SOURCEMAP?.trim().toLowerCase();
@@ -14,18 +13,17 @@ const buildSourcemap =
     : sourcemapEnv === "hidden"
       ? "hidden"
       : true;
+const reactCompiler = reactCompilerPreset({ compilationMode: "infer", target: "19" });
+reactCompiler.rolldown.filter ??= {};
+reactCompiler.rolldown.filter.id = /\/apps\/web\/src\/.*\.[tj]sx?$/;
 
 export default defineConfig({
   plugins: [
     tanstackRouter(),
-    react(),
-    babel({
-      // We need to be explicit about the parser options after moving to @vitejs/plugin-react v6.0.0
-      // This is because the babel plugin only automatically parses typescript and jsx based on relative paths (e.g. "**/*.ts")
-      // whereas the previous version of the plugin parsed all files with a .ts extension.
-      // This is causing our packages/ directory to fail to parse, as they are not relative to the CWD.
-      parserOpts: { plugins: ["typescript", "jsx"] },
-      presets: [reactCompilerPreset()],
+    react({
+      babel: {
+        plugins: [["babel-plugin-react-compiler", { target: "19" }]],
+      },
     }),
     tailwindcss(),
   ],
@@ -35,7 +33,7 @@ export default defineConfig({
   define: {
     // In dev mode, tell the web app where the WebSocket server lives
     "import.meta.env.VITE_WS_URL": JSON.stringify(process.env.VITE_WS_URL ?? ""),
-    "import.meta.env.APP_VERSION": JSON.stringify(pkg.version),
+    "import.meta.env.APP_VERSION": JSON.stringify(version),
   },
   resolve: {
     tsconfigPaths: true,

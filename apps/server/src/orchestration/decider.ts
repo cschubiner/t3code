@@ -47,6 +47,10 @@ function withEventBase(
   };
 }
 
+function getThreadFromReadModel(readModel: OrchestrationReadModel, threadId: string) {
+  return readModel.threads.find((entry) => entry.id === threadId);
+}
+
 export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand")(function* ({
   command,
   readModel,
@@ -307,11 +311,142 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             : {}),
           assistantDeliveryMode: command.assistantDeliveryMode ?? DEFAULT_ASSISTANT_DELIVERY_MODE,
           runtimeMode:
-            readModel.threads.find((entry) => entry.id === command.threadId)?.runtimeMode ??
-            command.runtimeMode,
+            getThreadFromReadModel(readModel, command.threadId)?.runtimeMode ?? command.runtimeMode,
           interactionMode:
-            readModel.threads.find((entry) => entry.id === command.threadId)?.interactionMode ??
+            getThreadFromReadModel(readModel, command.threadId)?.interactionMode ??
             command.interactionMode,
+          createdAt: command.createdAt,
+        },
+      };
+      return [userMessageEvent, turnStartRequestedEvent];
+    }
+
+    case "thread.turn.queue.enqueue": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.turn-queued",
+        payload: {
+          threadId: command.threadId,
+          queuedTurn: {
+            messageId: command.message.messageId,
+            text: command.message.text,
+            attachments: command.message.attachments,
+            provider: command.provider ?? null,
+            model: command.model ?? null,
+            modelOptions: command.modelOptions ?? null,
+            providerOptions: command.providerOptions ?? null,
+            assistantDeliveryMode: command.assistantDeliveryMode ?? DEFAULT_ASSISTANT_DELIVERY_MODE,
+            runtimeMode: command.runtimeMode,
+            interactionMode: command.interactionMode,
+            queuedAt: command.createdAt,
+          },
+        },
+      };
+    }
+
+    case "thread.turn.queue.remove": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const thread = getThreadFromReadModel(readModel, command.threadId);
+      const queuedTurn = thread?.queuedTurns.find((entry) => entry.messageId === command.messageId);
+      if (!queuedTurn) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Queued turn '${command.messageId}' was not found on thread '${command.threadId}'.`,
+        });
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.turn-queue-removed",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.messageId,
+          removedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.turn.queue.promote": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const thread = getThreadFromReadModel(readModel, command.threadId);
+      const queuedTurn =
+        thread?.queuedTurns.find((entry) => entry.messageId === command.messageId) ?? null;
+      if (!thread || !queuedTurn) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Queued turn '${command.messageId}' was not found on thread '${command.threadId}'.`,
+        });
+      }
+      const headQueuedTurn = thread.queuedTurns[0] ?? null;
+      if (!headQueuedTurn || headQueuedTurn.messageId !== command.messageId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Queued turn '${command.messageId}' is not the next queued turn on thread '${command.threadId}'.`,
+        });
+      }
+      const userMessageEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.message-sent",
+        payload: {
+          threadId: command.threadId,
+          messageId: queuedTurn.messageId,
+          role: "user",
+          text: queuedTurn.text,
+          attachments: queuedTurn.attachments,
+          turnId: null,
+          streaming: false,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+      const turnStartRequestedEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        causationEventId: userMessageEvent.eventId,
+        type: "thread.turn-start-requested",
+        payload: {
+          threadId: command.threadId,
+          messageId: queuedTurn.messageId,
+          ...(queuedTurn.provider !== null ? { provider: queuedTurn.provider } : {}),
+          ...(queuedTurn.model !== null ? { model: queuedTurn.model } : {}),
+          ...(queuedTurn.modelOptions !== null ? { modelOptions: queuedTurn.modelOptions } : {}),
+          ...(queuedTurn.providerOptions !== null
+            ? { providerOptions: queuedTurn.providerOptions }
+            : {}),
+          assistantDeliveryMode: queuedTurn.assistantDeliveryMode,
+          runtimeMode: queuedTurn.runtimeMode,
+          interactionMode: queuedTurn.interactionMode,
           createdAt: command.createdAt,
         },
       };
