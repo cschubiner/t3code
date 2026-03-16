@@ -53,13 +53,9 @@ import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runti
 import { clearPrivateTailscaleServe, setupPrivateTailscaleServe } from "./tailscale";
 
 const { autoUpdater } = electronUpdater;
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = Path.dirname(__filename);
+const CURRENT_DIR = Path.dirname(fileURLToPath(import.meta.url));
 
 fixPath();
-
-const { autoUpdater } = electronUpdater;
-const CURRENT_DIR = Path.dirname(fileURLToPath(import.meta.url));
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const CONFIRM_CHANNEL = "desktop:confirm";
