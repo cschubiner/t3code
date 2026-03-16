@@ -537,6 +537,43 @@ export function projectEvent(
         };
       });
 
+    case "thread.turn-queue-updated":
+      return Effect.gen(function* () {
+        const payload = yield* decodeForEvent(
+          ThreadTurnQueueUpdatedPayload,
+          event.payload,
+          event.type,
+          "payload",
+        );
+        const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+        if (!thread) {
+          return nextBase;
+        }
+
+        const queuedTurn: OrchestrationQueuedTurn = yield* decodeForEvent(
+          OrchestrationQueuedTurn,
+          payload.queuedTurn,
+          event.type,
+          "queuedTurn",
+        );
+        const queuedTurnIndex = thread.queuedTurns.findIndex(
+          (entry) => entry.messageId === queuedTurn.messageId,
+        );
+        if (queuedTurnIndex < 0) {
+          return nextBase;
+        }
+        const queuedTurns = [...thread.queuedTurns];
+        queuedTurns[queuedTurnIndex] = queuedTurn;
+
+        return {
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            queuedTurns,
+            updatedAt: event.occurredAt,
+          }),
+        };
+      });
+
     case "thread.turn-queue-moved":
       return Effect.gen(function* () {
         const payload = yield* decodeForEvent(

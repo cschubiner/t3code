@@ -11,6 +11,9 @@ export default mergeConfig(
   defineConfig({
     resolve: {
       alias: {
+        "@pierre/diffs/react": fileURLToPath(
+          new URL("./src/test/diffReact.browser-shim.tsx", import.meta.url),
+        ),
         "~": srcPath,
       },
     },

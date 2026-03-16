@@ -13,7 +13,12 @@ import { TurnQueueReactor, type TurnQueueReactorShape } from "../Services/TurnQu
 type TurnQueueRelevantEvent = Extract<
   OrchestrationEvent,
   {
-    type: "thread.turn-queued" | "thread.turn-queue-removed" | "thread.session-set";
+    type:
+      | "thread.turn-queued"
+      | "thread.turn-queue-removed"
+      | "thread.turn-queue-updated"
+      | "thread.turn-queue-moved"
+      | "thread.session-set";
   }
 >;
 
@@ -191,7 +196,9 @@ const make = Effect.gen(function* () {
       const event = input.event;
       switch (event.type) {
         case "thread.turn-queued":
-        case "thread.turn-queue-removed": {
+        case "thread.turn-queue-removed":
+        case "thread.turn-queue-updated":
+        case "thread.turn-queue-moved": {
           yield* attemptDispatchNextQueuedTurn(event.payload.threadId);
           return;
         }
@@ -247,6 +254,8 @@ const make = Effect.gen(function* () {
         if (
           event.type !== "thread.turn-queued" &&
           event.type !== "thread.turn-queue-removed" &&
+          event.type !== "thread.turn-queue-updated" &&
+          event.type !== "thread.turn-queue-moved" &&
           event.type !== "thread.session-set"
         ) {
           return Effect.void;

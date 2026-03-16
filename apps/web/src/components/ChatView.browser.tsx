@@ -33,6 +33,7 @@ const PROJECT_ID = "project-1" as ProjectId;
 const NOW_ISO = "2026-03-04T12:00:00.000Z";
 const BASE_TIME_MS = Date.parse(NOW_ISO);
 const ATTACHMENT_SVG = "<svg xmlns='http://www.w3.org/2000/svg' width='120' height='300'></svg>";
+const dispatchCommandErrorsByType = new Map<string, string>();
 
 interface WsRequestEnvelope {
   id: string;
@@ -488,6 +489,27 @@ const worker = setupWorker(
       const method = request.body?._tag;
       if (typeof method !== "string") return;
       wsRequests.push(request.body);
+      if (
+        method === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+        typeof request.body.command === "object" &&
+        request.body.command !== null &&
+        "type" in request.body.command
+      ) {
+        const commandType = (request.body.command as { type?: string }).type;
+        const errorMessage =
+          typeof commandType === "string" ? dispatchCommandErrorsByType.get(commandType) : null;
+        if (errorMessage) {
+          client.send(
+            JSON.stringify({
+              id: request.id,
+              error: {
+                message: errorMessage,
+              },
+            }),
+          );
+          return;
+        }
+      }
       client.send(
         JSON.stringify({
           id: request.id,
@@ -582,6 +604,19 @@ async function waitForComposerEditor(): Promise<HTMLElement> {
   );
 }
 
+async function waitForQueuedRow(queuedTurnId: string): Promise<HTMLElement> {
+  return waitForElement(
+    () =>
+      document.querySelector<HTMLElement>(`[data-testid="queued-follow-up-row-${queuedTurnId}"]`),
+    `Unable to find queued row ${queuedTurnId}.`,
+  );
+}
+
+function findButtonByText(scope: ParentNode, text: string): HTMLButtonElement | null {
+  return Array.from(scope.querySelectorAll("button")).find(
+    (button) => button.textContent?.trim() === text,
+  ) as HTMLButtonElement | null;
+}
 function listDispatchCommandsByType(type: string) {
   return wsRequests.filter(
     (request) =>
@@ -778,6 +813,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     localStorage.clear();
     document.body.innerHTML = "";
     wsRequests.length = 0;
+    dispatchCommandErrorsByType.clear();
     useComposerDraftStore.setState({
       draftsByThreadId: {},
       draftThreadsByThreadId: {},
@@ -1383,7 +1419,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("shows server queued turns in the banner and removes them via queue.remove", async () => {
+  it("renders the queued follow-ups panel and deletes a middle queued turn", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createRunningSnapshot(),
@@ -1391,7 +1427,66 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
     try {
       const queuedSnapshot = createRunningSnapshot();
-      const queuedMessageId = "msg-user-queued-banner" as MessageId;
+      const queuedMessageId = "msg-user-queued-b" as MessageId;
+      useStore.getState().syncServerReadModel({
+        ...queuedSnapshot,
+        threads: [
+          {
+            ...queuedSnapshot.threads[0]!,
+            queuedTurns: [
+              createQueuedTurn({
+                messageId: "msg-user-queued-a" as MessageId,
+                text: "First queued",
+                queuedAt: isoAt(40),
+              }),
+              createQueuedTurn({
+                messageId: queuedMessageId,
+                text: "Second queued",
+                queuedAt: isoAt(41),
+              }),
+              createQueuedTurn({
+                messageId: "msg-user-queued-c" as MessageId,
+                text: "Third queued",
+                queuedAt: isoAt(42),
+              }),
+            ],
+          },
+        ],
+      });
+
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain("3 queued follow-ups");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const secondRow = await waitForQueuedRow(String(queuedMessageId));
+      findButtonByText(secondRow, "Delete")?.click();
+
+      await vi.waitFor(
+        () => {
+          const removeRequest = listDispatchCommandsByType("thread.turn.queue.remove").at(-1);
+          expect((removeRequest?.command as { messageId?: string } | undefined)?.messageId).toBe(
+            queuedMessageId,
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("edits a queued follow-up and dispatches queue.update with trimmed text", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshot(),
+    });
+
+    try {
+      const queuedMessageId = "msg-user-queued-edit" as MessageId;
+      const queuedSnapshot = createRunningSnapshot();
       useStore.getState().syncServerReadModel({
         ...queuedSnapshot,
         threads: [
@@ -1400,28 +1495,129 @@ describe("ChatView timeline estimator parity (full app)", () => {
             queuedTurns: [
               createQueuedTurn({
                 messageId: queuedMessageId,
-                text: "Queue from button",
+                text: "Before edit",
+                queuedAt: isoAt(50),
               }),
             ],
           },
         ],
       });
 
-      const removeButton = await waitForElement(
-        () =>
-          Array.from(document.querySelectorAll("button")).find(
-            (button) => button.textContent?.trim() === "Remove next",
-          ) as HTMLButtonElement | null,
-        "Unable to find Remove next button.",
-      );
-      removeButton.click();
+      const row = await waitForQueuedRow(String(queuedMessageId));
+      findButtonByText(row, "Edit")?.click();
+
+      await expect
+        .element(page.getByTestId("queued-follow-up-editor-msg-user-queued-edit"))
+        .toBeVisible();
+      await page.getByTestId("queued-follow-up-editor-msg-user-queued-edit").fill("  After edit  ");
+      findButtonByText(row, "Save")?.click();
 
       await vi.waitFor(
         () => {
-          const removeRequest = listDispatchCommandsByType("thread.turn.queue.remove").at(-1);
-          expect((removeRequest?.command as { messageId?: string } | undefined)?.messageId).toBe(
+          const updateRequest = listDispatchCommandsByType("thread.turn.queue.update").at(-1);
+          expect((updateRequest?.command as { messageId?: string } | undefined)?.messageId).toBe(
             queuedMessageId,
           );
+          expect((updateRequest?.command as { text?: string } | undefined)?.text).toBe(
+            "After edit",
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("sends a queued follow-up now through queue.send-now", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshot(),
+    });
+
+    try {
+      const queuedSnapshot = createRunningSnapshot();
+      const queuedMessageId = "msg-user-queued-send-now" as MessageId;
+      useStore.getState().syncServerReadModel({
+        ...queuedSnapshot,
+        threads: [
+          {
+            ...queuedSnapshot.threads[0]!,
+            queuedTurns: [
+              createQueuedTurn({
+                messageId: "msg-user-queued-a" as MessageId,
+                text: "First queued",
+                queuedAt: isoAt(70),
+              }),
+              createQueuedTurn({
+                messageId: queuedMessageId,
+                text: "Send this now",
+                queuedAt: isoAt(71),
+              }),
+            ],
+          },
+        ],
+      });
+
+      const row = await waitForQueuedRow(String(queuedMessageId));
+      findButtonByText(row, "Send now")?.click();
+
+      await vi.waitFor(
+        () => {
+          const sendNowRequest = listDispatchCommandsByType("thread.turn.queue.send-now").at(-1);
+          expect((sendNowRequest?.command as { messageId?: string } | undefined)?.messageId).toBe(
+            queuedMessageId,
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("clears all queued follow-ups via queue.remove", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshot(),
+    });
+
+    try {
+      const queuedSnapshot = createRunningSnapshot();
+      useStore.getState().syncServerReadModel({
+        ...queuedSnapshot,
+        threads: [
+          {
+            ...queuedSnapshot.threads[0]!,
+            queuedTurns: [
+              createQueuedTurn({
+                messageId: "msg-user-queued-a" as MessageId,
+                text: "First queued",
+                queuedAt: isoAt(80),
+              }),
+              createQueuedTurn({
+                messageId: "msg-user-queued-b" as MessageId,
+                text: "Second queued",
+                queuedAt: isoAt(81),
+              }),
+            ],
+          },
+        ],
+      });
+
+      const clearAllButton = await waitForElement(
+        () => findButtonByText(document, "Clear all"),
+        "Unable to find Clear all button.",
+      );
+      clearAllButton.click();
+
+      await vi.waitFor(
+        () => {
+          const removeRequests = listDispatchCommandsByType("thread.turn.queue.remove");
+          const messageIds = removeRequests
+            .map((request) => (request.command as { messageId?: string } | undefined)?.messageId)
+            .filter(Boolean);
+          expect(messageIds).toEqual(["msg-user-queued-a", "msg-user-queued-b"]);
         },
         { timeout: 8_000, interval: 16 },
       );

@@ -570,6 +570,8 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
         case "thread.turn-queue-updated":
         case "thread.turn-queue-moved":
         case "thread.turn-queue-removed":
+        case "thread.turn-queue-updated":
+        case "thread.turn-queue-moved":
         case "thread.proposed-plan-upserted":
         case "thread.activity-appended": {
           const existingRow = yield* projectionThreadRepository.getById({
@@ -725,14 +727,20 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
   ) =>
     Effect.gen(function* () {
       switch (event.type) {
-        case "thread.turn-queued":
-        case "thread.turn-queue-updated": {
+        case "thread.turn-queued": {
+          const existingRow = yield* projectionThreadQueuedTurnRepository.getByMessageId({
+            messageId: event.payload.queuedTurn.messageId,
+          });
           const attachments = yield* materializeAttachmentsForProjection({
             attachments: event.payload.queuedTurn.attachments,
+          });
+          const existingQueuedTurns = yield* projectionThreadQueuedTurnRepository.listByThreadId({
+            threadId: event.payload.threadId,
           });
           const row: ProjectionThreadQueuedTurn = {
             messageId: event.payload.queuedTurn.messageId,
             threadId: event.payload.threadId,
+            sortOrder: existingRow?.sortOrder ?? existingQueuedTurns.length,
             text: event.payload.queuedTurn.text,
             attachments: [...attachments],
             provider: event.payload.queuedTurn.provider,
@@ -746,6 +754,60 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             queuedAt: event.payload.queuedTurn.queuedAt,
           };
           yield* projectionThreadQueuedTurnRepository.upsert(row);
+          return;
+        }
+
+        case "thread.turn-queue-updated": {
+          const existingRow = yield* projectionThreadQueuedTurnRepository.getByMessageId({
+            messageId: event.payload.queuedTurn.messageId,
+          });
+          if (!existingRow) {
+            return;
+          }
+          const attachments = yield* materializeAttachmentsForProjection({
+            attachments: event.payload.queuedTurn.attachments,
+          });
+          yield* projectionThreadQueuedTurnRepository.upsert({
+            ...existingRow,
+            text: event.payload.queuedTurn.text,
+            attachments: [...attachments],
+            provider: event.payload.queuedTurn.provider,
+            model: event.payload.queuedTurn.model,
+            serviceTier: event.payload.queuedTurn.serviceTier ?? null,
+            modelOptions: event.payload.queuedTurn.modelOptions,
+            providerOptions: event.payload.queuedTurn.providerOptions,
+            assistantDeliveryMode: event.payload.queuedTurn.assistantDeliveryMode,
+            runtimeMode: event.payload.queuedTurn.runtimeMode,
+            interactionMode: event.payload.queuedTurn.interactionMode,
+            queuedAt: event.payload.queuedTurn.queuedAt,
+          });
+          return;
+        }
+
+        case "thread.turn-queue-moved": {
+          const existingQueuedTurns = yield* projectionThreadQueuedTurnRepository.listByThreadId({
+            threadId: event.payload.threadId,
+          });
+          const reorderedQueuedTurns = moveQueuedTurnBeforeTarget(
+            existingQueuedTurns,
+            event.payload.messageId,
+            event.payload.targetMessageId,
+          );
+          if (reorderedQueuedTurns === existingQueuedTurns) {
+            return;
+          }
+          yield* projectionThreadQueuedTurnRepository.deleteByThreadId({
+            threadId: event.payload.threadId,
+          });
+          yield* Effect.forEach(
+            reorderedQueuedTurns,
+            (queuedTurn, sortOrder) =>
+              projectionThreadQueuedTurnRepository.upsert({
+                ...queuedTurn,
+                sortOrder,
+              }),
+            { concurrency: 1 },
+          ).pipe(Effect.asVoid);
           return;
         }
 

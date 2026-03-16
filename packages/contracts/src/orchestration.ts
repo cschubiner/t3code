@@ -472,6 +472,32 @@ const ThreadTurnQueueRemoveCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadTurnQueueUpdateCommand = Schema.Struct({
+  type: Schema.Literal("thread.turn.queue.update"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  text: Schema.String,
+  createdAt: IsoDateTime,
+});
+
+const ThreadTurnQueueMoveCommand = Schema.Struct({
+  type: Schema.Literal("thread.turn.queue.move"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  targetMessageId: MessageId,
+  createdAt: IsoDateTime,
+});
+
+const ThreadTurnQueueSendNowCommand = Schema.Struct({
+  type: Schema.Literal("thread.turn.queue.send-now"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  createdAt: IsoDateTime,
+});
+
 const ThreadTurnQueuePromoteCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.queue.promote"),
   commandId: CommandId,
@@ -533,6 +559,9 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadTurnStartCommand,
   ThreadTurnQueueEnqueueCommand,
   ThreadTurnQueueRemoveCommand,
+  ThreadTurnQueueUpdateCommand,
+  ThreadTurnQueueMoveCommand,
+  ThreadTurnQueueSendNowCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
@@ -554,6 +583,9 @@ export const ClientOrchestrationCommand = Schema.Union([
   ClientThreadTurnStartCommand,
   ClientThreadTurnQueueEnqueueCommand,
   ThreadTurnQueueRemoveCommand,
+  ThreadTurnQueueUpdateCommand,
+  ThreadTurnQueueMoveCommand,
+  ThreadTurnQueueSendNowCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
