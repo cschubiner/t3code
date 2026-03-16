@@ -83,6 +83,55 @@ interface AttachmentSideEffects {
   readonly prunedThreadRelativePaths: Map<string, Set<string>>;
 }
 
+function moveQueuedTurnBeforeTarget<T extends { readonly messageId: string }>(
+  queuedTurns: ReadonlyArray<T>,
+  messageId: string,
+  targetMessageId: string,
+): ReadonlyArray<T> {
+  const fromIndex = queuedTurns.findIndex((entry) => entry.messageId === messageId);
+  const targetIndex = queuedTurns.findIndex((entry) => entry.messageId === targetMessageId);
+  if (fromIndex < 0 || targetIndex < 0 || fromIndex === targetIndex) {
+    return queuedTurns;
+  }
+
+  const nextQueuedTurns = [...queuedTurns];
+  const [movedTurn] = nextQueuedTurns.splice(fromIndex, 1);
+  if (!movedTurn) {
+    return queuedTurns;
+  }
+  const nextTargetIndex = nextQueuedTurns.findIndex((entry) => entry.messageId === targetMessageId);
+  if (nextTargetIndex < 0) {
+    return queuedTurns;
+  }
+  nextQueuedTurns.splice(nextTargetIndex, 0, movedTurn);
+  return nextQueuedTurns;
+}
+
+function queuedTurnMovedAtForIndex(
+  queuedTurns: ReadonlyArray<ProjectionThreadQueuedTurn>,
+  index: number,
+  fallbackMovedAt: string,
+): string {
+  const beforeQueuedAt = index > 0 ? (queuedTurns[index - 1]?.queuedAt ?? null) : null;
+  const afterQueuedAt = queuedTurns[index + 1]?.queuedAt ?? null;
+  if (beforeQueuedAt === null && afterQueuedAt === null) {
+    return fallbackMovedAt;
+  }
+  if (beforeQueuedAt === null) {
+    return new Date(Date.parse(afterQueuedAt!) - 1).toISOString();
+  }
+  if (afterQueuedAt === null) {
+    return new Date(Date.parse(beforeQueuedAt) + 1).toISOString();
+  }
+
+  const beforeMs = Date.parse(beforeQueuedAt);
+  const afterMs = Date.parse(afterQueuedAt);
+  if (Number.isFinite(beforeMs) && Number.isFinite(afterMs) && afterMs - beforeMs > 1) {
+    return new Date(Math.floor((beforeMs + afterMs) / 2)).toISOString();
+  }
+  return new Date(beforeMs + 1).toISOString();
+}
+
 const materializeAttachmentsForProjection = Effect.fn(
   (input: { readonly attachments: ReadonlyArray<ChatAttachment> }) =>
     Effect.succeed(input.attachments.length === 0 ? [] : input.attachments),
@@ -518,7 +567,11 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
 
         case "thread.message-sent":
         case "thread.turn-queued":
+        case "thread.turn-queue-updated":
+        case "thread.turn-queue-moved":
         case "thread.turn-queue-removed":
+        case "thread.turn-queue-updated":
+        case "thread.turn-queue-moved":
         case "thread.proposed-plan-upserted":
         case "thread.activity-appended": {
           const existingRow = yield* projectionThreadRepository.getById({
@@ -675,12 +728,19 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
     Effect.gen(function* () {
       switch (event.type) {
         case "thread.turn-queued": {
+          const existingRow = yield* projectionThreadQueuedTurnRepository.getByMessageId({
+            messageId: event.payload.queuedTurn.messageId,
+          });
           const attachments = yield* materializeAttachmentsForProjection({
             attachments: event.payload.queuedTurn.attachments,
+          });
+          const existingQueuedTurns = yield* projectionThreadQueuedTurnRepository.listByThreadId({
+            threadId: event.payload.threadId,
           });
           const row: ProjectionThreadQueuedTurn = {
             messageId: event.payload.queuedTurn.messageId,
             threadId: event.payload.threadId,
+            sortOrder: existingRow?.sortOrder ?? existingQueuedTurns.length,
             text: event.payload.queuedTurn.text,
             attachments: [...attachments],
             provider: event.payload.queuedTurn.provider,
@@ -698,12 +758,17 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
         }
 
         case "thread.turn-queue-updated": {
+          const existingRow = yield* projectionThreadQueuedTurnRepository.getByMessageId({
+            messageId: event.payload.queuedTurn.messageId,
+          });
+          if (!existingRow) {
+            return;
+          }
           const attachments = yield* materializeAttachmentsForProjection({
             attachments: event.payload.queuedTurn.attachments,
           });
-          const row: ProjectionThreadQueuedTurn = {
-            messageId: event.payload.queuedTurn.messageId,
-            threadId: event.payload.threadId,
+          yield* projectionThreadQueuedTurnRepository.upsert({
+            ...existingRow,
             text: event.payload.queuedTurn.text,
             attachments: [...attachments],
             provider: event.payload.queuedTurn.provider,
@@ -715,37 +780,34 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             runtimeMode: event.payload.queuedTurn.runtimeMode,
             interactionMode: event.payload.queuedTurn.interactionMode,
             queuedAt: event.payload.queuedTurn.queuedAt,
-          };
-          yield* projectionThreadQueuedTurnRepository.upsert(row);
+          });
           return;
         }
 
         case "thread.turn-queue-moved": {
-          const existingRows = yield* projectionThreadQueuedTurnRepository.listByThreadId({
+          const existingQueuedTurns = yield* projectionThreadQueuedTurnRepository.listByThreadId({
             threadId: event.payload.threadId,
           });
-          const reorderedRows = moveQueuedTurnBeforeTarget(
-            existingRows,
+          const reorderedQueuedTurns = moveQueuedTurnBeforeTarget(
+            existingQueuedTurns,
             event.payload.messageId,
             event.payload.targetMessageId,
           );
-          if (reorderedRows === existingRows) {
+          if (reorderedQueuedTurns === existingQueuedTurns) {
             return;
           }
-          const movedIndex = reorderedRows.findIndex(
-            (row) => row.messageId === event.payload.messageId,
-          );
-          if (movedIndex < 0) {
-            return;
-          }
-          const movedRow = reorderedRows[movedIndex];
-          if (!movedRow) {
-            return;
-          }
-          yield* projectionThreadQueuedTurnRepository.upsert({
-            ...movedRow,
-            queuedAt: queuedTurnMovedAtForIndex(reorderedRows, movedIndex, event.payload.movedAt),
+          yield* projectionThreadQueuedTurnRepository.deleteByThreadId({
+            threadId: event.payload.threadId,
           });
+          yield* Effect.forEach(
+            reorderedQueuedTurns,
+            (queuedTurn, sortOrder) =>
+              projectionThreadQueuedTurnRepository.upsert({
+                ...queuedTurn,
+                sortOrder,
+              }),
+            { concurrency: 1 },
+          ).pipe(Effect.asVoid);
           return;
         }
 
@@ -767,6 +829,37 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
               queuedTurns: queuedTurnRows,
             }),
           );
+          return;
+        }
+
+        case "thread.turn-queue-moved": {
+          const existingRows = yield* projectionThreadQueuedTurnRepository.listByThreadId({
+            threadId: event.payload.threadId,
+          });
+          const reorderedRows = moveQueuedTurnBeforeTarget(
+            existingRows,
+            event.payload.messageId,
+            event.payload.targetMessageId,
+          );
+          if (reorderedRows === existingRows) {
+            return;
+          }
+
+          const movedIndex = reorderedRows.findIndex(
+            (row) => row.messageId === event.payload.messageId,
+          );
+          if (movedIndex < 0) {
+            return;
+          }
+          const movedRow = reorderedRows[movedIndex];
+          if (!movedRow) {
+            return;
+          }
+
+          yield* projectionThreadQueuedTurnRepository.upsert({
+            ...movedRow,
+            queuedAt: queuedTurnMovedAtForIndex(reorderedRows, movedIndex, event.payload.movedAt),
+          });
           return;
         }
 

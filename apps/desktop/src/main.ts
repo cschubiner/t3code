@@ -23,7 +23,7 @@ import type {
   DesktopUpdateActionResult,
   DesktopUpdateState,
 } from "@t3tools/contracts";
-import { autoUpdater } from "electron-updater";
+import { autoUpdater, type UpdateDownloadedEvent } from "electron-updater";
 
 import type { ContextMenuItem } from "@t3tools/contracts";
 import { NetService } from "@t3tools/shared/Net";
@@ -115,6 +115,59 @@ function sanitizeLogValue(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
+function isEpipeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && (error as NodeJS.ErrnoException).code === "EPIPE";
+}
+
+function installEpipeGuards(): void {
+  process.on("uncaughtException", (error) => {
+    if (isEpipeError(error)) {
+      return;
+    }
+    throw error;
+  });
+
+  process.on("unhandledRejection", (reason) => {
+    if (isEpipeError(reason)) {
+      return;
+    }
+    if (reason instanceof Error) {
+      throw reason;
+    }
+    throw new Error(String(reason));
+  });
+}
+
+function safeStdIoWrite(
+  _streamName: string,
+  originalWrite: (
+    chunk: any,
+    encoding?: BufferEncoding,
+    callback?: (error?: Error | null) => void,
+  ) => boolean,
+  chunk: string | Uint8Array,
+  encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void),
+  callback?: (error?: Error | null) => void,
+): boolean {
+  try {
+    if (typeof encodingOrCallback === "string") {
+      return originalWrite(chunk, encodingOrCallback, callback);
+    }
+    if (typeof encodingOrCallback === "function") {
+      return originalWrite(chunk, undefined, encodingOrCallback);
+    }
+    return originalWrite(chunk);
+  } catch (error) {
+    if (isEpipeError(error)) {
+      if (restoreStdIoCapture) {
+        restoreStdIoCapture();
+      }
+      return false;
+    }
+    throw error;
+  }
+}
+
 function writeDesktopLogHeader(message: string): void {
   if (!desktopLogSink) return;
   desktopLogSink.write(`[${logTimestamp()}] [${logScope("desktop")}] ${message}\n`);
@@ -194,17 +247,27 @@ function installStdIoCapture(): void {
       callback?: (error?: Error | null) => void,
     ): boolean => {
       const encoding = typeof encodingOrCallback === "string" ? encodingOrCallback : undefined;
-      writeDesktopStreamChunk(streamName, chunk, encoding);
+      try {
+        writeDesktopStreamChunk(streamName, chunk, encoding);
+      } catch (error) {
+        if (isEpipeError(error)) {
+          if (restoreStdIoCapture) {
+            restoreStdIoCapture();
+          }
+          return false;
+        }
+        throw error;
+      }
       if (typeof encodingOrCallback === "function") {
-        return originalWrite(chunk, encodingOrCallback);
+        return safeStdIoWrite(streamName, originalWrite, chunk, undefined, encodingOrCallback);
       }
       if (callback !== undefined) {
-        return originalWrite(chunk, encoding, callback);
+        return safeStdIoWrite(streamName, originalWrite, chunk, encoding, callback);
       }
       if (encoding !== undefined) {
-        return originalWrite(chunk, encoding);
+        return safeStdIoWrite(streamName, originalWrite, chunk, encoding);
       }
-      return originalWrite(chunk);
+      return safeStdIoWrite(streamName, originalWrite, chunk);
     };
 
   process.stdout.write = patchWrite("stdout", originalStdoutWrite);
@@ -250,6 +313,7 @@ function captureBackendOutput(child: ChildProcess.ChildProcess): void {
 }
 
 initializePackagedLogging();
+installEpipeGuards();
 
 function getDestructiveMenuIcon(): Electron.NativeImage | undefined {
   if (process.platform !== "darwin") return undefined;
@@ -902,7 +966,7 @@ function configureAutoUpdater(): void {
       console.info(`[desktop-updater] Download progress: ${percent}%`);
     }
   });
-  autoUpdater.on("update-downloaded", (info) => {
+  autoUpdater.on("update-downloaded", (info: UpdateDownloadedEvent) => {
     setUpdateState(reduceDesktopUpdateStateOnDownloadComplete(updateState, info.version));
     console.info(`[desktop-updater] Update downloaded: ${info.version}`);
   });
@@ -936,7 +1000,13 @@ function scheduleBackendRestart(reason: string): void {
 
   const delayMs = Math.min(500 * 2 ** restartAttempt, 10_000);
   restartAttempt += 1;
-  console.error(`[desktop] backend exited unexpectedly (${reason}); restarting in ${delayMs}ms`);
+  try {
+    console.error(`[desktop] backend exited unexpectedly (${reason}); restarting in ${delayMs}ms`);
+  } catch (error) {
+    if (!isEpipeError(error)) {
+      throw error;
+    }
+  }
 
   restartTimer = setTimeout(() => {
     restartTimer = null;

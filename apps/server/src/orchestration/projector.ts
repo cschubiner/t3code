@@ -20,11 +20,11 @@ import {
   ThreadInteractionModeSetPayload,
   ThreadMetaUpdatedPayload,
   ThreadProposedPlanUpsertedPayload,
-  ThreadRuntimeModeSetPayload,
-  ThreadTurnQueuedPayload,
-  ThreadTurnQueueMovedPayload,
-  ThreadTurnQueueRemovedPayload,
   ThreadTurnQueueUpdatedPayload,
+  ThreadRuntimeModeSetPayload,
+  ThreadTurnQueueMovedPayload,
+  ThreadTurnQueuedPayload,
+  ThreadTurnQueueRemovedPayload,
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
@@ -46,6 +46,30 @@ function updateThread(
   patch: ThreadPatch,
 ): OrchestrationThread[] {
   return threads.map((thread) => (thread.id === threadId ? { ...thread, ...patch } : thread));
+}
+
+function moveQueuedTurnBeforeTarget<T extends { readonly messageId: string }>(
+  queuedTurns: ReadonlyArray<T>,
+  messageId: string,
+  targetMessageId: string,
+): ReadonlyArray<T> {
+  const fromIndex = queuedTurns.findIndex((entry) => entry.messageId === messageId);
+  const targetIndex = queuedTurns.findIndex((entry) => entry.messageId === targetMessageId);
+  if (fromIndex < 0 || targetIndex < 0 || fromIndex === targetIndex) {
+    return queuedTurns;
+  }
+
+  const nextQueuedTurns = [...queuedTurns];
+  const [movedTurn] = nextQueuedTurns.splice(fromIndex, 1);
+  if (!movedTurn) {
+    return queuedTurns;
+  }
+  const nextTargetIndex = nextQueuedTurns.findIndex((entry) => entry.messageId === targetMessageId);
+  if (nextTargetIndex < 0) {
+    return queuedTurns;
+  }
+  nextQueuedTurns.splice(nextTargetIndex, 0, movedTurn);
+  return nextQueuedTurns;
 }
 
 function decodeForEvent<A>(
@@ -531,6 +555,72 @@ export function projectEvent(
           (entry) => entry.messageId !== payload.messageId,
         );
         if (queuedTurns.length === thread.queuedTurns.length) {
+          return nextBase;
+        }
+        return {
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            queuedTurns,
+            updatedAt: event.occurredAt,
+          }),
+        };
+      });
+
+    case "thread.turn-queue-updated":
+      return Effect.gen(function* () {
+        const payload = yield* decodeForEvent(
+          ThreadTurnQueueUpdatedPayload,
+          event.payload,
+          event.type,
+          "payload",
+        );
+        const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+        if (!thread) {
+          return nextBase;
+        }
+
+        const queuedTurn: OrchestrationQueuedTurn = yield* decodeForEvent(
+          OrchestrationQueuedTurn,
+          payload.queuedTurn,
+          event.type,
+          "queuedTurn",
+        );
+        const queuedTurnIndex = thread.queuedTurns.findIndex(
+          (entry) => entry.messageId === queuedTurn.messageId,
+        );
+        if (queuedTurnIndex < 0) {
+          return nextBase;
+        }
+        const queuedTurns = [...thread.queuedTurns];
+        queuedTurns[queuedTurnIndex] = queuedTurn;
+
+        return {
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            queuedTurns,
+            updatedAt: event.occurredAt,
+          }),
+        };
+      });
+
+    case "thread.turn-queue-moved":
+      return Effect.gen(function* () {
+        const payload = yield* decodeForEvent(
+          ThreadTurnQueueMovedPayload,
+          event.payload,
+          event.type,
+          "payload",
+        );
+        const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+        if (!thread) {
+          return nextBase;
+        }
+        const queuedTurns = moveQueuedTurnBeforeTarget(
+          thread.queuedTurns,
+          payload.messageId,
+          payload.targetMessageId,
+        );
+        if (queuedTurns === thread.queuedTurns) {
           return nextBase;
         }
         return {

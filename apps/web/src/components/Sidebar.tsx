@@ -40,6 +40,7 @@ import { useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { isMacPlatform, newCommandId, newProjectId } from "../lib/utils";
+import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { useStore } from "../store";
 import {
   isChatNewLocalShortcut,
@@ -1576,6 +1577,7 @@ export default function Sidebar() {
                                     derivePendingApprovals(thread.activities).length > 0,
                                   hasPendingUserInput:
                                     derivePendingUserInputs(thread.activities).length > 0,
+                                  hasTransientWork: false,
                                 });
                                 const prStatus = prStatusIndicator(
                                   prByThreadId.get(thread.id) ?? null,

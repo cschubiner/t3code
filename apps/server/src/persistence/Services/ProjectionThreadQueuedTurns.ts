@@ -3,6 +3,7 @@ import {
   ChatAttachment,
   IsoDateTime,
   MessageId,
+  NonNegativeInt,
   ProviderInteractionMode,
   ProviderKind,
   ProviderModelOptions,
@@ -19,6 +20,7 @@ import type { ProjectionRepositoryError } from "../Errors.ts";
 export const ProjectionThreadQueuedTurn = Schema.Struct({
   messageId: MessageId,
   threadId: ThreadId,
+  sortOrder: NonNegativeInt,
   text: Schema.String,
   attachments: Schema.Array(ChatAttachment),
   provider: Schema.NullOr(ProviderKind),
@@ -44,6 +46,11 @@ export const DeleteProjectionThreadQueuedTurnInput = Schema.Struct({
 export type DeleteProjectionThreadQueuedTurnInput =
   typeof DeleteProjectionThreadQueuedTurnInput.Type;
 
+export const GetProjectionThreadQueuedTurnInput = Schema.Struct({
+  messageId: MessageId,
+});
+export type GetProjectionThreadQueuedTurnInput = typeof GetProjectionThreadQueuedTurnInput.Type;
+
 export const DeleteProjectionThreadQueuedTurnsByThreadInput = Schema.Struct({
   threadId: ThreadId,
 });
@@ -57,6 +64,9 @@ export interface ProjectionThreadQueuedTurnRepositoryShape {
   readonly listByThreadId: (
     input: ListProjectionThreadQueuedTurnsInput,
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadQueuedTurn>, ProjectionRepositoryError>;
+  readonly getByMessageId: (
+    input: GetProjectionThreadQueuedTurnInput,
+  ) => Effect.Effect<ProjectionThreadQueuedTurn | null, ProjectionRepositoryError>;
   readonly deleteByMessageId: (
     input: DeleteProjectionThreadQueuedTurnInput,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
