@@ -78,6 +78,9 @@ function createBaseServerConfig(): ServerConfig {
     keybindings: [
       createResolvedKeybinding("[", "sidebar.history.previous"),
       createResolvedKeybinding("]", "sidebar.history.next"),
+      createResolvedKeybinding("k", "projects.search", {
+        shiftKey: true,
+      }),
       createResolvedKeybinding("arrowup", "sidebar.thread.previous", {
         altKey: true,
         modKey: false,
@@ -401,9 +404,10 @@ function shortcutModifiers(): Pick<KeyboardEventInit, "ctrlKey" | "metaKey"> {
 }
 
 function dispatchSidebarShortcut(
-  init: { key: string; altKey?: boolean; shiftKey?: boolean },
+  init: { key: string; altKey?: boolean; shiftKey?: boolean; modKey?: boolean },
   target: EventTarget = window,
 ): void {
+  const shouldApplyModKey = init.modKey ?? (!init.altKey && !init.shiftKey);
   target.dispatchEvent(
     new KeyboardEvent("keydown", {
       key: init.key,
@@ -411,7 +415,7 @@ function dispatchSidebarShortcut(
       shiftKey: init.shiftKey ?? false,
       bubbles: true,
       cancelable: true,
-      ...(init.altKey || init.shiftKey ? {} : shortcutModifiers()),
+      ...(shouldApplyModKey ? shortcutModifiers() : {}),
     }),
   );
 }
@@ -651,6 +655,63 @@ describe("Sidebar navigation keybindings", () => {
 
       dispatchSidebarShortcut({ key: "]" });
       await waitForPath(mounted.router, `/${THREAD_A4}`);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens project folder search with mod+shift+k and creates a new thread for the highlighted project", async () => {
+    const mounted = await mountApp(`/${THREAD_A5}`);
+
+    try {
+      dispatchSidebarShortcut({ key: "k", shiftKey: true, modKey: true });
+
+      const searchInput = page.getByTestId("project-folder-search-input");
+      await expect.element(searchInput).toBeInTheDocument();
+      await searchInput.click();
+
+      const searchInputNode = document.querySelector<HTMLInputElement>(
+        '[data-testid="project-folder-search-input"]',
+      );
+      if (!searchInputNode) {
+        throw new Error("Expected project folder search input to render");
+      }
+
+      searchInputNode.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "ArrowDown",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          const highlightedResult = document.querySelector<HTMLElement>(
+            '[data-project-folder-search-result="true"][data-highlighted="true"]',
+          );
+          expect(highlightedResult?.textContent).toContain("Beta");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      searchInputNode.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          const draftThreadId =
+            useComposerDraftStore.getState().projectDraftThreadIdByProjectId[PROJECT_BETA_ID];
+          expect(draftThreadId).toBeTruthy();
+          expect(mounted.router.state.location.pathname).toBe(`/${draftThreadId}`);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
     } finally {
       await mounted.cleanup();
     }
