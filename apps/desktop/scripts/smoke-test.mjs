@@ -34,6 +34,7 @@ child.on("exit", () => {
   clearTimeout(timeout);
 
   const fatalPatterns = [
+    "App threw an error during load",
     "Cannot find module",
     "MODULE_NOT_FOUND",
     "Refused to execute",
