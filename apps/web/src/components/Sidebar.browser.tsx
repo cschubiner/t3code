@@ -40,6 +40,56 @@ const THREAD_A1 = "thread-a1" as ThreadId;
 const THREAD_B2 = "thread-b2" as ThreadId;
 const THREAD_B1 = "thread-b1" as ThreadId;
 const DESKTOP_VIEWPORT = { width: 1280, height: 960 } as const;
+const MOBILE_VIEWPORT = { width: 430, height: 932 } as const;
+let mockedViewportWidth: number = DESKTOP_VIEWPORT.width;
+let originalMatchMedia: typeof window.matchMedia | null = null;
+
+function viewportQueryMatches(query: string, width: number): boolean | null {
+  const minWidths = [...query.matchAll(/\(min-width:\s*(\d+)px\)/g)].map((match) =>
+    Number.parseInt(match[1] ?? "", 10),
+  );
+  const maxWidths = [...query.matchAll(/\(max-width:\s*(\d+)px\)/g)].map((match) =>
+    Number.parseInt(match[1] ?? "", 10),
+  );
+
+  if (minWidths.length === 0 && maxWidths.length === 0) {
+    return null;
+  }
+
+  return (
+    minWidths.every((minWidth) => width >= minWidth) &&
+    maxWidths.every((maxWidth) => width <= maxWidth)
+  );
+}
+
+function installMatchMediaMock(): void {
+  if (originalMatchMedia !== null) {
+    return;
+  }
+
+  originalMatchMedia = window.matchMedia.bind(window);
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    writable: true,
+    value: (query: string): MediaQueryList => {
+      const viewportMatches = viewportQueryMatches(query, mockedViewportWidth);
+      if (viewportMatches === null && originalMatchMedia) {
+        return originalMatchMedia(query);
+      }
+
+      return {
+        matches: viewportMatches ?? false,
+        media: query,
+        onchange: null,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+        addListener: () => undefined,
+        removeListener: () => undefined,
+        dispatchEvent: () => true,
+      } as MediaQueryList;
+    },
+  });
+}
 
 interface TestFixture {
   snapshot: OrchestrationReadModel;
@@ -395,7 +445,14 @@ async function waitForLayout(): Promise<void> {
 }
 
 async function setViewport(): Promise<void> {
+  mockedViewportWidth = DESKTOP_VIEWPORT.width;
   await page.viewport(DESKTOP_VIEWPORT.width, DESKTOP_VIEWPORT.height);
+  await waitForLayout();
+}
+
+async function setMobileViewport(): Promise<void> {
+  mockedViewportWidth = MOBILE_VIEWPORT.width;
+  await page.viewport(MOBILE_VIEWPORT.width, MOBILE_VIEWPORT.height);
   await waitForLayout();
 }
 
@@ -471,7 +528,10 @@ async function waitForComposerEditor(): Promise<HTMLElement> {
   return element!;
 }
 
-async function mountApp(initialEntry: string): Promise<{
+async function mountApp(
+  initialEntry: string,
+  options?: { waitForSidebarThreadTitle?: string | null },
+): Promise<{
   cleanup: () => Promise<void>;
   router: ReturnType<typeof getRouter>;
 }> {
@@ -488,7 +548,9 @@ async function mountApp(initialEntry: string): Promise<{
   const screen = await render(<RouterProvider router={router} />, { container: host });
   await waitForLayout();
 
-  await waitForSidebarThread("Alpha 5");
+  if (options?.waitForSidebarThreadTitle !== null) {
+    await waitForSidebarThread(options?.waitForSidebarThreadTitle ?? "Alpha 5");
+  }
 
   return {
     cleanup: async () => {
@@ -502,6 +564,7 @@ async function mountApp(initialEntry: string): Promise<{
 describe("Sidebar navigation keybindings", () => {
   beforeAll(async () => {
     fixture = buildFixture();
+    installMatchMediaMock();
     await worker.start({
       onUnhandledRequest: "bypass",
       quiet: true,
@@ -811,11 +874,51 @@ describe("Sidebar navigation keybindings", () => {
       await mounted.cleanup();
     }
   });
+
+  it("closes the mobile thread drawer after selecting a thread", async () => {
+    await setMobileViewport();
+    const mounted = await mountApp(`/${THREAD_A8}`, { waitForSidebarThreadTitle: null });
+
+    try {
+      const sidebarTrigger = document.querySelector<HTMLButtonElement>(
+        'button[data-sidebar="trigger"]',
+      );
+      expect(sidebarTrigger, "Expected mobile sidebar trigger to render").toBeTruthy();
+      sidebarTrigger?.click();
+
+      await vi.waitFor(
+        () => {
+          expect(
+            document.querySelector('[data-mobile="true"][data-sidebar="sidebar"]'),
+          ).toBeTruthy();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: THREAD_A5 },
+      });
+      await waitForPath(mounted.router, `/${THREAD_A5}`);
+      await vi.waitFor(
+        () => {
+          expect(
+            document.querySelector('[data-mobile="true"][data-sidebar="sidebar"][data-closed]'),
+          ).toBeTruthy();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+      await setViewport();
+    }
+  });
 });
 
 describe("Import From Codex dialog", () => {
   beforeAll(async () => {
     fixture = buildFixture();
+    installMatchMediaMock();
     await worker.start({
       onUnhandledRequest: "bypass",
       quiet: true,
