@@ -8,6 +8,7 @@ import {
   WS_CHANNELS,
   WS_METHODS,
   type WsWelcomePayload,
+  type SnippetLibraryUpdatedPayload,
 } from "@t3tools/contracts";
 
 import { showContextMenuFallback } from "./contextMenuFallback";
@@ -17,6 +18,7 @@ let instance: { api: NativeApi; transport: WsTransport } | null = null;
 const welcomeListeners = new Set<(payload: WsWelcomePayload) => void>();
 const serverConfigUpdatedListeners = new Set<(payload: ServerConfigUpdatedPayload) => void>();
 const gitActionProgressListeners = new Set<(payload: GitActionProgressEvent) => void>();
+const snippetUpdatedListeners = new Set<(payload: SnippetLibraryUpdatedPayload) => void>();
 
 /**
  * Subscribe to the server welcome message. If a welcome was already received
@@ -64,6 +66,25 @@ export function onServerConfigUpdated(
   };
 }
 
+export function onSnippetsUpdated(
+  listener: (payload: SnippetLibraryUpdatedPayload) => void,
+): () => void {
+  snippetUpdatedListeners.add(listener);
+
+  const latestUpdate = instance?.transport.getLatestPush(WS_CHANNELS.snippetsUpdated)?.data ?? null;
+  if (latestUpdate) {
+    try {
+      listener(latestUpdate);
+    } catch {
+      // Swallow listener errors
+    }
+  }
+
+  return () => {
+    snippetUpdatedListeners.delete(listener);
+  };
+}
+
 export function createWsNativeApi(): NativeApi {
   if (instance) return instance.api;
 
@@ -92,6 +113,16 @@ export function createWsNativeApi(): NativeApi {
   transport.subscribe(WS_CHANNELS.gitActionProgress, (message) => {
     const payload = message.data;
     for (const listener of gitActionProgressListeners) {
+      try {
+        listener(payload);
+      } catch {
+        // Swallow listener errors
+      }
+    }
+  });
+  transport.subscribe(WS_CHANNELS.snippetsUpdated, (message) => {
+    const payload = message.data;
+    for (const listener of snippetUpdatedListeners) {
       try {
         listener(payload);
       } catch {
@@ -129,6 +160,13 @@ export function createWsNativeApi(): NativeApi {
     },
     skills: {
       search: (input) => transport.request(WS_METHODS.skillsSearch, input),
+    },
+    snippets: {
+      list: () => transport.request(WS_METHODS.snippetsList),
+      create: (input) => transport.request(WS_METHODS.snippetsCreate, input),
+      delete: (input) => transport.request(WS_METHODS.snippetsDelete, input),
+      onUpdated: (callback) =>
+        transport.subscribe(WS_CHANNELS.snippetsUpdated, (message) => callback(message.data)),
     },
     shell: {
       openInEditor: (cwd, editor) =>
