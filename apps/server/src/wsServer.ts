@@ -166,17 +166,11 @@ function formatHostForUrl(host: string): string {
 
 const SECRET_LINK_PATH = "/auth/exchange";
 const SECRET_LINK_QUERY_PARAM = "code";
-const AUTH_SESSION_COOKIE_NAME = "t3_access_session";
 const SECRET_LINK_TTL_MS = 15 * 60 * 1_000;
-const AUTH_SESSION_TTL_MS = 12 * 60 * 60 * 1_000;
 
 interface SecretAccessGrant {
   readonly expiresAt: number;
   readonly redirectTo: string;
-}
-
-interface AuthSession {
-  readonly expiresAt: number;
 }
 
 function isLoopbackHostname(hostname: string): boolean {
@@ -231,28 +225,6 @@ function collectPublicOrigins(
   }
 
   return Array.from(origins);
-}
-
-function parseCookies(header: string | undefined): Map<string, string> {
-  const cookies = new Map<string, string>();
-  if (!header) {
-    return cookies;
-  }
-
-  for (const segment of header.split(";")) {
-    const separatorIndex = segment.indexOf("=");
-    if (separatorIndex <= 0) continue;
-    const key = segment.slice(0, separatorIndex).trim();
-    const value = segment.slice(separatorIndex + 1).trim();
-    if (key.length === 0 || value.length === 0) continue;
-    try {
-      cookies.set(key, decodeURIComponent(value));
-    } catch {
-      cookies.set(key, value);
-    }
-  }
-
-  return cookies;
 }
 
 function resolveRedirectTarget(raw: string | null): string {
@@ -382,7 +354,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
   const clients = yield* Ref.make(new Set<WebSocket>());
   const secretAccessGrants = new Map<string, SecretAccessGrant>();
-  const authSessions = new Map<string, AuthSession>();
   const logger = createLogger("ws");
   const readiness = yield* makeServerReadiness;
 
@@ -392,12 +363,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     for (const [code, grant] of secretAccessGrants) {
       if (grant.expiresAt <= now) {
         secretAccessGrants.delete(code);
-      }
-    }
-
-    for (const [token, session] of authSessions) {
-      if (session.expiresAt <= now) {
-        authSessions.delete(token);
       }
     }
   };
@@ -1063,7 +1028,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
         const code = crypto.randomUUID();
         const expiresAt = new Date(Date.now() + SECRET_LINK_TTL_MS).toISOString();
-        const sessionExpiresAt = new Date(Date.now() + AUTH_SESSION_TTL_MS).toISOString();
         secretAccessGrants.set(code, {
           expiresAt: Date.parse(expiresAt),
           redirectTo: resolveRedirectTarget("/"),
@@ -1074,7 +1038,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return {
           url: publicUrl.toString(),
           expiresAt,
-          sessionExpiresAt,
           oneTime: true,
           remoteReachable: !isLoopbackHostname(publicUrl.hostname),
         };

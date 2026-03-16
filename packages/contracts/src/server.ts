@@ -64,7 +64,6 @@ export type ServerGenerateSecretUrlInput = typeof ServerGenerateSecretUrlInput.T
 export const ServerGenerateSecretUrlResult = Schema.Struct({
   url: TrimmedNonEmptyString,
   expiresAt: IsoDateTime,
-  sessionExpiresAt: IsoDateTime,
   oneTime: Schema.Boolean,
   remoteReachable: Schema.Boolean,
 });
