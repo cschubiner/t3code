@@ -200,6 +200,14 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       );
       assert.isTrue(
         persisted.some(
+          (entry) =>
+            entry.command === "snippets.open" &&
+            entry.key === "mod+shift+s" &&
+            entry.when === "!terminalFocus",
+        ),
+      );
+      assert.isTrue(
+        persisted.some(
           (entry) => entry.command === "sidebar.thread.previous" && entry.key === "alt+arrowup",
         ),
       );
