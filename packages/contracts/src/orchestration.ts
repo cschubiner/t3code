@@ -656,6 +656,8 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.interaction-mode-set",
   "thread.message-sent",
   "thread.turn-queued",
+  "thread.turn-queue-updated",
+  "thread.turn-queue-moved",
   "thread.turn-queue-removed",
   "thread.turn-start-requested",
   "thread.turn-interrupt-requested",
@@ -914,6 +916,16 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.turn-queued"),
     payload: ThreadTurnQueuedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.turn-queue-updated"),
+    payload: ThreadTurnQueueUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.turn-queue-moved"),
+    payload: ThreadTurnQueueMovedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

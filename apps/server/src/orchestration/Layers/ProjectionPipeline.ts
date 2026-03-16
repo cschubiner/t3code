@@ -697,6 +697,58 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
           return;
         }
 
+        case "thread.turn-queue-updated": {
+          const attachments = yield* materializeAttachmentsForProjection({
+            attachments: event.payload.queuedTurn.attachments,
+          });
+          const row: ProjectionThreadQueuedTurn = {
+            messageId: event.payload.queuedTurn.messageId,
+            threadId: event.payload.threadId,
+            text: event.payload.queuedTurn.text,
+            attachments: [...attachments],
+            provider: event.payload.queuedTurn.provider,
+            model: event.payload.queuedTurn.model,
+            serviceTier: event.payload.queuedTurn.serviceTier ?? null,
+            modelOptions: event.payload.queuedTurn.modelOptions,
+            providerOptions: event.payload.queuedTurn.providerOptions,
+            assistantDeliveryMode: event.payload.queuedTurn.assistantDeliveryMode,
+            runtimeMode: event.payload.queuedTurn.runtimeMode,
+            interactionMode: event.payload.queuedTurn.interactionMode,
+            queuedAt: event.payload.queuedTurn.queuedAt,
+          };
+          yield* projectionThreadQueuedTurnRepository.upsert(row);
+          return;
+        }
+
+        case "thread.turn-queue-moved": {
+          const existingRows = yield* projectionThreadQueuedTurnRepository.listByThreadId({
+            threadId: event.payload.threadId,
+          });
+          const reorderedRows = moveQueuedTurnBeforeTarget(
+            existingRows,
+            event.payload.messageId,
+            event.payload.targetMessageId,
+          );
+          if (reorderedRows === existingRows) {
+            return;
+          }
+          const movedIndex = reorderedRows.findIndex(
+            (row) => row.messageId === event.payload.messageId,
+          );
+          if (movedIndex < 0) {
+            return;
+          }
+          const movedRow = reorderedRows[movedIndex];
+          if (!movedRow) {
+            return;
+          }
+          yield* projectionThreadQueuedTurnRepository.upsert({
+            ...movedRow,
+            queuedAt: queuedTurnMovedAtForIndex(reorderedRows, movedIndex, event.payload.movedAt),
+          });
+          return;
+        }
+
         case "thread.turn-queue-removed": {
           yield* projectionThreadQueuedTurnRepository.deleteByMessageId({
             messageId: event.payload.messageId,

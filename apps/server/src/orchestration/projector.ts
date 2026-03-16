@@ -22,7 +22,9 @@ import {
   ThreadProposedPlanUpsertedPayload,
   ThreadRuntimeModeSetPayload,
   ThreadTurnQueuedPayload,
+  ThreadTurnQueueMovedPayload,
   ThreadTurnQueueRemovedPayload,
+  ThreadTurnQueueUpdatedPayload,
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
@@ -445,9 +447,12 @@ export function projectEvent(
       });
 
     case "thread.turn-queued":
+    case "thread.turn-queue-updated":
       return Effect.gen(function* () {
         const payload = yield* decodeForEvent(
-          ThreadTurnQueuedPayload,
+          event.type === "thread.turn-queued"
+            ? ThreadTurnQueuedPayload
+            : ThreadTurnQueueUpdatedPayload,
           event.payload,
           event.type,
           "payload",
@@ -472,6 +477,35 @@ export function projectEvent(
             left.messageId.localeCompare(right.messageId),
         );
 
+        return {
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            queuedTurns,
+            updatedAt: event.occurredAt,
+          }),
+        };
+      });
+
+    case "thread.turn-queue-moved":
+      return Effect.gen(function* () {
+        const payload = yield* decodeForEvent(
+          ThreadTurnQueueMovedPayload,
+          event.payload,
+          event.type,
+          "payload",
+        );
+        const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+        if (!thread) {
+          return nextBase;
+        }
+        const queuedTurns = moveQueuedTurnBeforeTarget(
+          thread.queuedTurns,
+          payload.messageId,
+          payload.targetMessageId,
+        );
+        if (queuedTurns === thread.queuedTurns) {
+          return nextBase;
+        }
         return {
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
