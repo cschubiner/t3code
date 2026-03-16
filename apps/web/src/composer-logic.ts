@@ -1,7 +1,7 @@
 import { splitPromptIntoComposerSegments } from "./composer-editor-mentions";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
-export type ComposerTriggerKind = "path" | "skill" | "slash-command" | "slash-model";
+export type ComposerTriggerKind = "path" | "skill" | "snippet" | "slash-command" | "slash-model";
 export type ComposerSlashCommand = "model" | "plan" | "default" | "delete";
 
 export interface ComposerTrigger {
@@ -238,6 +238,18 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
     }
     return {
       kind: "skill",
+      query,
+      rangeStart: tokenStart,
+      rangeEnd: cursor,
+    };
+  }
+  if (token.startsWith("%")) {
+    const query = token.slice(1);
+    if (!query || query.startsWith("%")) {
+      return null;
+    }
+    return {
+      kind: "snippet",
       query,
       rangeStart: tokenStart,
       rangeEnd: cursor,

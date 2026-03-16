@@ -1717,6 +1717,73 @@ describe("WebSocket Server", () => {
     });
   });
 
+  it("supports snippet create, list, delete, and push updates", async () => {
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const [ws] = await connectAndAwaitWelcome(port);
+    connections.push(ws);
+
+    const createResponse = await sendRequest(ws, WS_METHODS.snippetsCreate, {
+      text: "  Save this for later  ",
+    });
+    expect(createResponse.error).toBeUndefined();
+    expect(createResponse.result).toEqual({
+      snippet: expect.objectContaining({
+        id: expect.any(String),
+        text: "Save this for later",
+      }),
+      deduped: false,
+    });
+
+    const upsertPush = await waitForPush(ws, WS_CHANNELS.snippetsUpdated);
+    expect(upsertPush.data).toEqual({
+      kind: "upsert",
+      snippetId: (createResponse.result as { snippet: { id: string } }).snippet.id,
+      updatedAt: expect.any(String),
+    });
+
+    const dedupeResponse = await sendRequest(ws, WS_METHODS.snippetsCreate, {
+      text: "Save this for later",
+    });
+    expect(dedupeResponse.error).toBeUndefined();
+    expect(dedupeResponse.result).toEqual({
+      snippet: expect.objectContaining({
+        id: (createResponse.result as { snippet: { id: string } }).snippet.id,
+        text: "Save this for later",
+      }),
+      deduped: true,
+    });
+
+    const listResponse = await sendRequest(ws, WS_METHODS.snippetsList);
+    expect(listResponse.error).toBeUndefined();
+    expect(listResponse.result).toEqual({
+      snippets: [
+        expect.objectContaining({
+          id: (createResponse.result as { snippet: { id: string } }).snippet.id,
+          text: "Save this for later",
+        }),
+      ],
+    });
+
+    const deleteResponse = await sendRequest(ws, WS_METHODS.snippetsDelete, {
+      snippetId: (createResponse.result as { snippet: { id: string } }).snippet.id,
+    });
+    expect(deleteResponse.error).toBeUndefined();
+
+    const deletePush = await waitForPush(
+      ws,
+      WS_CHANNELS.snippetsUpdated,
+      (push) => push.data.kind === "delete",
+    );
+    expect(deletePush.data).toEqual({
+      kind: "delete",
+      snippetId: (createResponse.result as { snippet: { id: string } }).snippet.id,
+      updatedAt: expect.any(String),
+    });
+  });
+
   it("supports projects.writeFile within the workspace root", async () => {
     const workspace = makeTempDir("t3code-ws-write-file-");
 

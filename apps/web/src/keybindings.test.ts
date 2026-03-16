@@ -12,6 +12,7 @@ import {
   isChatNewLocalShortcut,
   isDiffToggleShortcut,
   isOpenFavoriteEditorShortcut,
+  isSnippetsOpenShortcut,
   isSidebarHistoryNextShortcut,
   isSidebarHistoryPreviousShortcut,
   isSidebarProjectNextShortcut,
@@ -141,6 +142,7 @@ const DEFAULT_BINDINGS = compile([
   { shortcut: modShortcut("o", { shiftKey: true }), command: "chat.new" },
   { shortcut: modShortcut("n", { shiftKey: true }), command: "chat.newLocal" },
   { shortcut: modShortcut("o"), command: "editor.openFavorite" },
+  { shortcut: modShortcut("s", { shiftKey: true }), command: "snippets.open" },
 ]);
 
 describe("isTerminalToggleShortcut", () => {
@@ -310,6 +312,10 @@ describe("shortcutLabelForCommand", () => {
       shortcutLabelForCommand(DEFAULT_BINDINGS, "editor.openFavorite", "Linux"),
       "Ctrl+O",
     );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "snippets.open", "MacIntel"),
+      "⇧⌘S",
+    );
   });
 });
 
@@ -348,6 +354,19 @@ describe("chat/editor shortcuts", () => {
     );
     assert.isTrue(
       isOpenFavoriteEditorShortcut(event({ key: "o", ctrlKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+      }),
+    );
+  });
+
+  it("matches snippets.open shortcut", () => {
+    assert.isTrue(
+      isSnippetsOpenShortcut(event({ key: "s", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+      }),
+    );
+    assert.isTrue(
+      isSnippetsOpenShortcut(event({ key: "s", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
         platform: "Linux",
       }),
     );
@@ -568,6 +587,13 @@ describe("resolveShortcutCommand", () => {
         context: { terminalFocus: false },
       }),
       "projects.search",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "s", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+      "snippets.open",
     );
   });
 });
