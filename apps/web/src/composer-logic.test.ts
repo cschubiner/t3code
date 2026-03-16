@@ -36,6 +36,18 @@ describe("detectComposerTrigger", () => {
     });
   });
 
+  it("detects %snippet triggers at cursor", () => {
+    const text = "reuse %summ";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "snippet",
+      query: "summ",
+      rangeStart: "reuse ".length,
+      rangeEnd: text.length,
+    });
+  });
+
   it("detects slash command token while typing command name", () => {
     const text = "/mo";
     const trigger = detectComposerTrigger(text, text.length);
@@ -119,6 +131,11 @@ describe("detectComposerTrigger", () => {
     expect(detectComposerTrigger("echo \\$skill", "echo \\$skill".length)).toBeNull();
     expect(detectComposerTrigger("echo $PATH", "echo $PATH".length)).toBeNull();
     expect(detectComposerTrigger("echo $1", "echo $1".length)).toBeNull();
+  });
+
+  it("does not open snippet trigger for bare % or double %%", () => {
+    expect(detectComposerTrigger("reuse %", "reuse %".length)).toBeNull();
+    expect(detectComposerTrigger("reuse %%", "reuse %%".length)).toBeNull();
   });
 });
 
