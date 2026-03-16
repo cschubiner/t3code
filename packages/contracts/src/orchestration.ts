@@ -656,6 +656,8 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.interaction-mode-set",
   "thread.message-sent",
   "thread.turn-queued",
+  "thread.turn-queue-updated",
+  "thread.turn-queue-moved",
   "thread.turn-queue-removed",
   "thread.turn-start-requested",
   "thread.turn-interrupt-requested",
@@ -759,10 +761,22 @@ export const ThreadTurnQueuedPayload = Schema.Struct({
   queuedTurn: OrchestrationQueuedTurn,
 });
 
+export const ThreadTurnQueueUpdatedPayload = Schema.Struct({
+  threadId: ThreadId,
+  queuedTurn: OrchestrationQueuedTurn,
+});
+
 export const ThreadTurnQueueRemovedPayload = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
   removedAt: IsoDateTime,
+});
+
+export const ThreadTurnQueueMovedPayload = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  targetMessageId: MessageId,
+  movedAt: IsoDateTime,
 });
 
 export const ThreadTurnStartRequestedPayload = Schema.Struct({
@@ -914,6 +928,16 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.turn-queued"),
     payload: ThreadTurnQueuedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.turn-queue-updated"),
+    payload: ThreadTurnQueueUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.turn-queue-moved"),
+    payload: ThreadTurnQueueMovedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

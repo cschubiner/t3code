@@ -9,6 +9,8 @@ import {
   ThreadDeletedPayload as ContractsThreadDeletedPayloadSchema,
   ThreadMessageSentPayload as ContractsThreadMessageSentPayloadSchema,
   ThreadTurnQueuedPayload as ContractsThreadTurnQueuedPayloadSchema,
+  ThreadTurnQueueUpdatedPayload as ContractsThreadTurnQueueUpdatedPayloadSchema,
+  ThreadTurnQueueMovedPayload as ContractsThreadTurnQueueMovedPayloadSchema,
   ThreadTurnQueueRemovedPayload as ContractsThreadTurnQueueRemovedPayloadSchema,
   ThreadProposedPlanUpsertedPayload as ContractsThreadProposedPlanUpsertedPayloadSchema,
   ThreadSessionSetPayload as ContractsThreadSessionSetPayloadSchema,
@@ -35,6 +37,8 @@ export const ThreadDeletedPayload = ContractsThreadDeletedPayloadSchema;
 
 export const MessageSentPayloadSchema = ContractsThreadMessageSentPayloadSchema;
 export const ThreadTurnQueuedPayload = ContractsThreadTurnQueuedPayloadSchema;
+export const ThreadTurnQueueUpdatedPayload = ContractsThreadTurnQueueUpdatedPayloadSchema;
+export const ThreadTurnQueueMovedPayload = ContractsThreadTurnQueueMovedPayloadSchema;
 export const ThreadTurnQueueRemovedPayload = ContractsThreadTurnQueueRemovedPayloadSchema;
 export const ThreadProposedPlanUpsertedPayload = ContractsThreadProposedPlanUpsertedPayloadSchema;
 export const ThreadSessionSetPayload = ContractsThreadSessionSetPayloadSchema;

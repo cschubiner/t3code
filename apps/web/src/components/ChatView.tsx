@@ -102,9 +102,10 @@ import {
   XIcon,
 } from "lucide-react";
 import { Button } from "./ui/button";
+import { Badge } from "./ui/badge";
 import { Separator } from "./ui/separator";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
-import { cn, randomUUID } from "~/lib/utils";
+import { cn, isMacPlatform, randomUUID } from "~/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
@@ -160,6 +161,8 @@ import {
   SendPhase,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+
+type ComposerSubmissionDisposition = "queue" | "send" | "steer";
 
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
@@ -1986,10 +1989,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   ]);
 
   const queueComposerTurn = useCallback(
-    async (input?: {
-      text: string;
-      interactionMode: ProviderInteractionMode;
-    }) => {
+    async (input?: { text: string; interactionMode: ProviderInteractionMode }) => {
       const api = readNativeApi();
       if (
         !api ||
@@ -3572,13 +3572,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 </div>
               )}
 
-              <div
-                className={cn(
-                  "relative px-3 pb-2 sm:px-4",
-                  hasComposerHeader ? "pt-2.5 sm:pt-3" : "pt-3.5 sm:pt-4",
-                )}
-              >
-            >
               <div
                 className={`group rounded-[20px] border bg-card transition-colors duration-200 focus-within:border-ring/45 ${
                   isDragOverComposer ? "border-primary/70 bg-accent/30" : "border-border"

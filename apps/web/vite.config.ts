@@ -1,5 +1,6 @@
+import babel from "@rolldown/plugin-babel";
 import tailwindcss from "@tailwindcss/vite";
-import react from "@vitejs/plugin-react";
+import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import { defineConfig } from "vite";
 import { version } from "./package.json" with { type: "json" };
@@ -18,15 +19,7 @@ reactCompiler.rolldown.filter ??= {};
 reactCompiler.rolldown.filter.id = /\/apps\/web\/src\/.*\.[tj]sx?$/;
 
 export default defineConfig({
-  plugins: [
-    tanstackRouter(),
-    react({
-      babel: {
-        plugins: [["babel-plugin-react-compiler", { target: "19" }]],
-      },
-    }),
-    tailwindcss(),
-  ],
+  plugins: [tanstackRouter(), react(), babel({ presets: [reactCompiler] }), tailwindcss()],
   optimizeDeps: {
     include: ["@pierre/diffs", "@pierre/diffs/react", "@pierre/diffs/worker/worker.js"],
   },
