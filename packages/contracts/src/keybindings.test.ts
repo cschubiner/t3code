@@ -88,6 +88,12 @@ it.effect("parses keybinding rules", () =>
       command: "chat.newLocal",
     });
     assert.strictEqual(parsedLocal.command, "chat.newLocal");
+
+    const parsedSnippetsOpen = yield* decode(KeybindingRule, {
+      key: "mod+shift+s",
+      command: "snippets.open",
+    });
+    assert.strictEqual(parsedSnippetsOpen.command, "snippets.open");
   }),
 );
 
