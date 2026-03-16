@@ -2348,6 +2348,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("opens global thread search with mod+shift+f and excludes project metadata and work logs", async () => {
+    const dateNowSpy = vi.spyOn(Date, "now").mockReturnValue(BASE_TIME_MS + 10 * 60_000);
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createSnapshotForGlobalThreadSearch(),
@@ -2366,6 +2367,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(results[0]?.textContent).toContain("Cross-thread assistant result");
           expect(results[0]?.textContent).toContain("Assistant");
           expect(results[0]?.textContent).toContain("Project");
+          expect(results[0]?.textContent).toContain("5 minutes ago");
+          const relativeTimestamp = results[0]?.querySelector("[title]");
+          expect(relativeTimestamp?.textContent).toBe("5 minutes ago");
+          expect(relativeTimestamp?.getAttribute("title")).toBeTruthy();
           expect(
             results.some((result) => result.textContent?.includes("Header Needle Destination")),
           ).toBe(true);
@@ -2391,6 +2396,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         { timeout: 8_000, interval: 16 },
       );
     } finally {
+      dateNowSpy.mockRestore();
       await mounted.cleanup();
     }
   });
