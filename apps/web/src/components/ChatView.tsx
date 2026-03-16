@@ -3578,7 +3578,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   hasComposerHeader ? "pt-2.5 sm:pt-3" : "pt-3.5 sm:pt-4",
                 )}
               >
-            >
               <div
                 className={`group rounded-[20px] border bg-card transition-colors duration-200 focus-within:border-ring/45 ${
                   isDragOverComposer ? "border-primary/70 bg-accent/30" : "border-border"

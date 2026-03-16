@@ -19,12 +19,7 @@ reactCompiler.rolldown.filter ??= {};
 reactCompiler.rolldown.filter.id = /\/apps\/web\/src\/.*\.[tj]sx?$/;
 
 export default defineConfig({
-  plugins: [
-    tanstackRouter(),
-    react(),
-    babel({ presets: [reactCompiler] }),
-    tailwindcss(),
-  ],
+  plugins: [tanstackRouter(), react(), babel({ presets: [reactCompiler] }), tailwindcss()],
   optimizeDeps: {
     include: ["@pierre/diffs", "@pierre/diffs/react", "@pierre/diffs/worker/worker.js"],
   },

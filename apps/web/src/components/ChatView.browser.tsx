@@ -382,6 +382,9 @@ function createSnapshotWithLongProposedPlan(): OrchestrationReadModel {
           })
         : thread,
     ),
+  };
+}
+
 function createRunningSnapshot(): OrchestrationReadModel {
   const snapshot = createSnapshotForTargetUser({
     targetMessageId: "msg-user-running-target" as MessageId,
