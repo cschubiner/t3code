@@ -3,6 +3,7 @@ import * as Crypto from "node:crypto";
 import * as FS from "node:fs";
 import * as OS from "node:os";
 import * as Path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   app,
@@ -23,7 +24,7 @@ import type {
   DesktopUpdateActionResult,
   DesktopUpdateState,
 } from "@t3tools/contracts";
-import { autoUpdater } from "electron-updater";
+import electronUpdater from "electron-updater";
 
 import type { ContextMenuItem } from "@t3tools/contracts";
 import { NetService } from "@t3tools/shared/Net";
@@ -53,6 +54,9 @@ import { clearPrivateTailscaleServe, setupPrivateTailscaleServe } from "./tailsc
 
 fixPath();
 
+const { autoUpdater } = electronUpdater;
+const CURRENT_DIR = Path.dirname(fileURLToPath(import.meta.url));
+
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const CONFIRM_CHANNEL = "desktop:confirm";
 const SET_THEME_CHANNEL = "desktop:set-theme";
@@ -70,7 +74,7 @@ const STATE_DIR =
   process.env.T3CODE_STATE_DIR?.trim() || Path.join(OS.homedir(), ".t3", "userdata");
 const DESKTOP_PREFERENCES_PATH = Path.join(STATE_DIR, "desktop-preferences.json");
 const DESKTOP_SCHEME = "t3";
-const ROOT_DIR = Path.resolve(__dirname, "../../..");
+const ROOT_DIR = Path.resolve(CURRENT_DIR, "../../..");
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 const APP_DISPLAY_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
 const APP_USER_MODEL_ID = "com.t3tools.t3code";
@@ -672,8 +676,8 @@ function configureApplicationMenu(): void {
 
 function resolveResourcePath(fileName: string): string | null {
   const candidates = [
-    Path.join(__dirname, "../resources", fileName),
-    Path.join(__dirname, "../prod-resources", fileName),
+    Path.join(CURRENT_DIR, "../resources", fileName),
+    Path.join(CURRENT_DIR, "../prod-resources", fileName),
     Path.join(process.resourcesPath, "resources", fileName),
     Path.join(process.resourcesPath, fileName),
   ];
@@ -1544,7 +1548,7 @@ function createWindow(): BrowserWindow {
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 16, y: 18 },
     webPreferences: {
-      preload: Path.join(__dirname, "preload.js"),
+      preload: Path.join(CURRENT_DIR, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -1620,6 +1624,12 @@ function createWindow(): BrowserWindow {
 // Chromium session data uses a filesystem-friendly directory name.
 // Must be called synchronously at the top level — before `app.whenReady()`.
 app.setPath("userData", resolveUserDataPath());
+
+// Opt-in hook for local Playwright/Electron smoke automation.
+const remoteDebuggingPort = process.env.T3CODE_ELECTRON_REMOTE_DEBUGGING_PORT?.trim();
+if (remoteDebuggingPort) {
+  app.commandLine.appendSwitch("remote-debugging-port", remoteDebuggingPort);
+}
 
 configureAppIdentity();
 
