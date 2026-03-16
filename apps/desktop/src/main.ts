@@ -45,8 +45,6 @@ import {
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch";
 
 syncShellEnvironment();
-
-const { autoUpdater } = electronUpdater;
 const CURRENT_DIR = Path.dirname(fileURLToPath(import.meta.url));
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
