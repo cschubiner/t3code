@@ -1542,7 +1542,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await mounted.cleanup();
     }
   });
-
   it("deletes the current thread when /delete is submitted", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
