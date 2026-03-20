@@ -601,6 +601,15 @@ export default function Sidebar() {
     renamingInputRef.current = null;
   }, []);
 
+  const startRenameThread = useCallback((threadId: ThreadId) => {
+    const thread = threadsRef.current.find((entry) => entry.id === threadId);
+    if (!thread) return false;
+    setRenamingThreadId(threadId);
+    setRenamingTitle(thread.title);
+    renamingCommittedRef.current = false;
+    return true;
+  }, []);
+
   const commitRename = useCallback(
     async (threadId: ThreadId, newTitle: string, originalTitle: string) => {
       const finishRename = () => {
@@ -737,9 +746,7 @@ export default function Sidebar() {
       );
 
       if (clicked === "rename") {
-        setRenamingThreadId(threadId);
-        setRenamingTitle(thread.title);
-        renamingCommittedRef.current = false;
+        startRenameThread(threadId);
         return;
       }
 
@@ -800,6 +807,7 @@ export default function Sidebar() {
       projects,
       removeWorktreeMutation,
       routeThreadId,
+      startRenameThread,
       threads,
     ],
   );
@@ -1068,7 +1076,8 @@ export default function Sidebar() {
         resolvedCommand === "sidebar.thread.previous" ||
         resolvedCommand === "sidebar.thread.next" ||
         resolvedCommand === "sidebar.project.previous" ||
-        resolvedCommand === "sidebar.project.next"
+        resolvedCommand === "sidebar.project.next" ||
+        resolvedCommand === "sidebar.rename"
       ) {
         if (isTypingInSidebarTextEntry(event.target)) return;
       }
@@ -1140,6 +1149,18 @@ export default function Sidebar() {
         return;
       }
 
+      if (resolvedCommand === "sidebar.rename") {
+        const selectedIds = [...selectedThreadIds];
+        const renameTargetThreadId =
+          selectedIds.length === 1 ? selectedIds[0] : (currentRouteThreadId ?? null);
+        if (!renameTargetThreadId) return;
+        if (!currentThreads.some((thread) => thread.id === renameTargetThreadId)) return;
+
+        event.preventDefault();
+        startRenameThread(renameTargetThreadId);
+        return;
+      }
+
       if (isChatNewLocalShortcut(event, keybindingsRef.current)) {
         const projectId =
           activeThread?.projectId ?? activeDraftThread?.projectId ?? projectsRef.current[0]?.id;
@@ -1182,6 +1203,8 @@ export default function Sidebar() {
     router,
     isGlobalThreadSearchOpen,
     isProjectFolderSearchOpen,
+    selectedThreadIds,
+    startRenameThread,
   ]);
 
   useEffect(() => {
