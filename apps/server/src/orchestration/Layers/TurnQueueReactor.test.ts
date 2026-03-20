@@ -312,6 +312,8 @@ describe("TurnQueueReactor", () => {
                   requestedAt: CREATED_AT,
                   startedAt: CREATED_AT,
                   completedAt: CREATED_AT,
+                  sourceProposedPlanThreadId: null,
+                  sourceProposedPlanId: null,
                   checkpointTurnCount: null,
                   checkpointRef: null,
                   checkpointStatus: null,

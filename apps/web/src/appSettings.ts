@@ -111,7 +111,6 @@ function normalizeAppSettings(settings: AppSettings): AppSettings {
     customClaudeModels: normalizeCustomModelSlugs(settings.customClaudeModels, "claudeAgent"),
   };
 }
-
 export function getProviderStartOptions(
   settings: Pick<AppSettings, "claudeBinaryPath" | "codexBinaryPath" | "codexHomePath">,
 ): ProviderStartOptions | undefined {
