@@ -236,9 +236,9 @@ export function resolveThreadStatusPill(input: {
   thread: ThreadStatusInput;
   hasPendingApprovals: boolean;
   hasPendingUserInput: boolean;
-  hasTransientWork: boolean;
+  hasTransientWork?: boolean;
 }): ThreadStatusPill | null {
-  const { hasPendingApprovals, hasPendingUserInput, hasTransientWork, thread } = input;
+  const { hasPendingApprovals, hasPendingUserInput, hasTransientWork = false, thread } = input;
 
   if (hasPendingApprovals) {
     return {

@@ -113,14 +113,6 @@ export function normalizeSkillRootPaths(roots: Iterable<string | null | undefine
   return normalizedRoots;
 }
 
-function normalizeAppSettings(settings: AppSettings): AppSettings {
-  return {
-    ...settings,
-    extraSkillRoots: normalizeSkillRootPaths(settings.extraSkillRoots),
-    customCodexModels: normalizeCustomModelSlugs(settings.customCodexModels, "codex"),
-    customClaudeModels: normalizeCustomModelSlugs(settings.customClaudeModels, "claudeAgent"),
-  };
-}
 export function getAppModelOptions(
   provider: ProviderKind,
   customModels: readonly string[],
