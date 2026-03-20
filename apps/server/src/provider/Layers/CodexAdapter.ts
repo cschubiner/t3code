@@ -152,6 +152,17 @@ function normalizeCodexTokenUsage(value: unknown): ThreadTokenUsageSnapshot | un
   };
 }
 
+function isPolicyBlockedToolError(message: string, detail: unknown): boolean {
+  const normalizedMessage = message.toLowerCase();
+  const normalizedDetail = JSON.stringify(detail ?? "").toLowerCase();
+  return (
+    normalizedMessage.includes("blocked by policy") ||
+    normalizedMessage.includes(" rejected: blocked by policy") ||
+    normalizedDetail.includes("blocked by policy") ||
+    normalizedDetail.includes("rejected(")
+  );
+}
+
 function toTurnId(value: string | undefined): TurnId | undefined {
   return value?.trim() ? TurnId.makeUnsafe(value) : undefined;
 }
@@ -578,13 +589,16 @@ function mapToRuntimeEvents(
     if (!event.message) {
       return [];
     }
+    const errorType = isPolicyBlockedToolError(event.message, event.payload)
+      ? "runtime.warning"
+      : "runtime.error";
     return [
       {
         ...runtimeEventBase(event, canonicalThreadId),
-        type: "runtime.error",
+        type: errorType,
         payload: {
           message: event.message,
-          class: "provider_error",
+          ...(errorType === "runtime.error" ? { class: "provider_error" as const } : {}),
           ...(event.payload !== undefined ? { detail: event.payload } : {}),
         },
       },
@@ -1253,13 +1267,14 @@ function mapToRuntimeEvents(
     const message =
       asString(asObject(payload?.error)?.message) ?? event.message ?? "Provider runtime error";
     const willRetry = payload?.willRetry === true;
+    const isPolicyBlocked = isPolicyBlockedToolError(message, event.payload);
     return [
       {
-        type: willRetry ? "runtime.warning" : "runtime.error",
+        type: willRetry || isPolicyBlocked ? "runtime.warning" : "runtime.error",
         ...runtimeEventBase(event, canonicalThreadId),
         payload: {
           message,
-          ...(!willRetry ? { class: "provider_error" as const } : {}),
+          ...(!willRetry && !isPolicyBlocked ? { class: "provider_error" as const } : {}),
           ...(event.payload !== undefined ? { detail: event.payload } : {}),
         },
       },
