@@ -64,6 +64,7 @@ snippetRepositoryLayer("SnippetRepository", (it) => {
   it.effect("deletes snippets by id", () =>
     Effect.gen(function* () {
       const repository = yield* SnippetRepository;
+      const before = yield* repository.listAll();
 
       const created = yield* repository.upsertByExactText({
         text: "Keep this handy",
@@ -72,7 +73,7 @@ snippetRepositoryLayer("SnippetRepository", (it) => {
 
       yield* repository.deleteById({ snippetId: created.snippet.id });
       const snippets = yield* repository.listAll();
-      assert.deepEqual(snippets, []);
+      assert.deepEqual(snippets, before);
     }),
   );
 });
