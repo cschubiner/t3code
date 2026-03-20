@@ -32,6 +32,7 @@ import Migration0016 from "./Migrations/016_ProjectionThreadQueuedTurns.ts";
 import Migration0020 from "./Migrations/016_CanonicalizeModelSelections.ts";
 import Migration0017 from "./Migrations/017_ProjectionThreadQueuedTurnSortOrder.ts";
 import Migration0018 from "./Migrations/018_Snippets.ts";
+import Migration0019 from "./Migrations/019_LegacyProjectionSchemaRepair.ts";
 import { Effect } from "effect";
 
 /**
@@ -44,7 +45,6 @@ import { Effect } from "effect";
  * Uses Migrator.fromRecord which parses the key format and
  * returns migrations sorted by ID.
  */
-<<<<<<< HEAD
 export const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
   [2, "OrchestrationCommandReceipts", Migration0002],
@@ -64,6 +64,7 @@ export const migrationEntries = [
   [16, "ProjectionThreadQueuedTurns", Migration0016],
   [17, "ProjectionThreadQueuedTurnSortOrder", Migration0017],
   [18, "Snippets", Migration0018],
+  [19, "LegacyProjectionSchemaRepair", Migration0019],
   [20, "CanonicalizeModelSelections", Migration0020],
 ] as const;
 
