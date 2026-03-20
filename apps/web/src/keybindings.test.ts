@@ -139,6 +139,11 @@ const DEFAULT_BINDINGS = compile([
     shortcut: { ...modShortcut("arrowdown"), modKey: false, altKey: true, shiftKey: true },
     command: "sidebar.project.next",
   },
+  {
+    shortcut: modShortcut("r", { shiftKey: true }),
+    command: "sidebar.rename",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
   { shortcut: modShortcut("o", { shiftKey: true }), command: "chat.new" },
   { shortcut: modShortcut("n", { shiftKey: true }), command: "chat.newLocal" },
   { shortcut: modShortcut("o"), command: "editor.openFavorite" },
@@ -594,6 +599,13 @@ describe("resolveShortcutCommand", () => {
         context: { terminalFocus: false },
       }),
       "snippets.open",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "r", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+      "sidebar.rename",
     );
   });
 });

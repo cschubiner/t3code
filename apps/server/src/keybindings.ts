@@ -79,6 +79,7 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "alt+arrowdown", command: "sidebar.thread.next" },
   { key: "alt+shift+arrowup", command: "sidebar.project.previous" },
   { key: "alt+shift+arrowdown", command: "sidebar.project.next" },
+  { key: "mod+shift+r", command: "sidebar.rename", when: "!terminalFocus" },
   { key: "mod+n", command: "chat.new", when: "!terminalFocus" },
   { key: "mod+shift+o", command: "chat.new", when: "!terminalFocus" },
   { key: "mod+shift+n", command: "chat.newLocal", when: "!terminalFocus" },
