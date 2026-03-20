@@ -83,6 +83,12 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedProjectNext.command, "sidebar.project.next");
 
+    const parsedSidebarRename = yield* decode(KeybindingRule, {
+      key: "mod+shift+r",
+      command: "sidebar.rename",
+    });
+    assert.strictEqual(parsedSidebarRename.command, "sidebar.rename");
+
     const parsedLocal = yield* decode(KeybindingRule, {
       key: "mod+shift+n",
       command: "chat.newLocal",
