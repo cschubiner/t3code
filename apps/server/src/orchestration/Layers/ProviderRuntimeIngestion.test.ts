@@ -2345,11 +2345,11 @@ describe("ProviderRuntimeIngestion", () => {
     const thread = await waitForThread(
       harness.engine,
       (entry) =>
-        entry.session?.status === "running" &&
+        entry.session?.status === "error" &&
         entry.session?.activeTurnId === "turn-after-failure" &&
         entry.session?.lastError === "runtime still processed",
     );
-    expect(thread.session?.status).toBe("running");
+    expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("runtime still processed");
   });
 });

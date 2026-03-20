@@ -69,7 +69,6 @@ const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 const GET_WS_URL_CHANNEL = "desktop:get-ws-url";
 const BASE_DIR = process.env.T3CODE_HOME?.trim() || Path.join(OS.homedir(), ".t3");
-const STATE_DIR = Path.join(BASE_DIR, "userdata");
 const REMOTE_ACCESS_STATUS_CHANNEL = "desktop:remote-access-status";
 const REMOTE_ACCESS_GET_STATUS_CHANNEL = "desktop:remote-access-get-status";
 const REMOTE_ACCESS_SET_ENABLED_CHANNEL = "desktop:remote-access-set-enabled";
