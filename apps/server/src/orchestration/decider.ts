@@ -138,6 +138,9 @@ function buildTurnStartEvents(input: {
   readonly assistantDeliveryMode?: ReadModelQueuedTurn["assistantDeliveryMode"] | undefined;
   readonly runtimeMode: ReadModelQueuedTurn["runtimeMode"];
   readonly interactionMode: ReadModelQueuedTurn["interactionMode"];
+  readonly sourceProposedPlan?:
+    | Extract<OrchestrationCommand, { type: "thread.turn.start" }>["sourceProposedPlan"]
+    | undefined;
 }): ReadonlyArray<Omit<OrchestrationEvent, "sequence">> {
   const userMessageEvent: Omit<OrchestrationEvent, "sequence"> = {
     ...withEventBase({
@@ -179,6 +182,9 @@ function buildTurnStartEvents(input: {
       assistantDeliveryMode: input.assistantDeliveryMode ?? DEFAULT_ASSISTANT_DELIVERY_MODE,
       runtimeMode: input.runtimeMode,
       interactionMode: input.interactionMode,
+      ...(input.sourceProposedPlan !== undefined
+        ? { sourceProposedPlan: input.sourceProposedPlan }
+        : {}),
       createdAt: input.occurredAt,
     },
   };
@@ -494,12 +500,35 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.turn.start": {
-      yield* requireThread({
+      const targetThread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
-      const thread = getThreadFromReadModel(readModel, command.threadId);
+      const sourceProposedPlan = command.sourceProposedPlan;
+      const sourceThread = sourceProposedPlan
+        ? yield* requireThread({
+            readModel,
+            command,
+            threadId: sourceProposedPlan.threadId,
+          })
+        : null;
+      const sourcePlan =
+        sourceProposedPlan && sourceThread
+          ? sourceThread.proposedPlans.find((entry) => entry.id === sourceProposedPlan.planId)
+          : null;
+      if (sourceProposedPlan && !sourcePlan) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Proposed plan '${sourceProposedPlan.planId}' does not exist on thread '${sourceProposedPlan.threadId}'.`,
+        });
+      }
+      if (sourceThread && sourceThread.projectId !== targetThread.projectId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Proposed plan '${sourceProposedPlan?.planId}' belongs to thread '${sourceThread.id}' in a different project.`,
+        });
+      }
       return buildTurnStartEvents({
         command,
         threadId: command.threadId,
@@ -513,8 +542,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         modelOptions: command.modelOptions,
         providerOptions: command.providerOptions,
         assistantDeliveryMode: command.assistantDeliveryMode,
-        runtimeMode: thread?.runtimeMode ?? command.runtimeMode,
-        interactionMode: thread?.interactionMode ?? command.interactionMode,
+        runtimeMode: targetThread.runtimeMode,
+        interactionMode: targetThread.interactionMode,
+        sourceProposedPlan,
       });
     }
 

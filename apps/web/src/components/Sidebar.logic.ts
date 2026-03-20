@@ -1,7 +1,11 @@
 import type { Project, Thread } from "../types";
 import type { ThreadId } from "@t3tools/contracts";
 import { cn } from "../lib/utils";
-import { findLatestProposedPlan, isLatestTurnSettled } from "../session-logic";
+import {
+  findLatestProposedPlan,
+  hasActionableProposedPlan,
+  isLatestTurnSettled,
+} from "../session-logic";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export type SidebarNewThreadEnvMode = "local" | "worktree";
@@ -202,7 +206,7 @@ export function resolveThreadRowClassName(input: {
   isSelected: boolean;
 }): string {
   const baseClassName =
-    "h-7 w-full translate-x-0 cursor-default justify-start px-2 text-left select-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
+    "h-7 w-full translate-x-0 cursor-pointer justify-start px-2 text-left select-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
 
   if (input.isSelected && input.isActive) {
     return cn(
@@ -232,9 +236,9 @@ export function resolveThreadStatusPill(input: {
   thread: ThreadStatusInput;
   hasPendingApprovals: boolean;
   hasPendingUserInput: boolean;
-  hasTransientWork: boolean;
+  hasTransientWork?: boolean;
 }): ThreadStatusPill | null {
-  const { hasPendingApprovals, hasPendingUserInput, hasTransientWork, thread } = input;
+  const { hasPendingApprovals, hasPendingUserInput, hasTransientWork = false, thread } = input;
 
   if (hasPendingApprovals) {
     return {
@@ -281,7 +285,9 @@ export function resolveThreadStatusPill(input: {
     !hasPendingUserInput &&
     thread.interactionMode === "plan" &&
     isLatestTurnSettled(thread.latestTurn, thread.session) &&
-    findLatestProposedPlan(thread.proposedPlans, thread.latestTurn?.turnId ?? null) !== null;
+    hasActionableProposedPlan(
+      findLatestProposedPlan(thread.proposedPlans, thread.latestTurn?.turnId ?? null),
+    );
   if (hasPlanReadyPrompt) {
     return {
       label: "Plan Ready",

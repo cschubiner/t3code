@@ -1,5 +1,14 @@
 import { type MessageId, type TurnId } from "@t3tools/contracts";
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   measureElement as measureVirtualElement,
   type VirtualItem,
@@ -10,7 +19,20 @@ import { AUTO_SCROLL_BOTTOM_THRESHOLD_PX } from "../../chat-scroll";
 import { type TurnDiffSummary } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
 import ChatMarkdown from "../ChatMarkdown";
-import { Undo2Icon } from "lucide-react";
+import {
+  BotIcon,
+  CheckIcon,
+  CircleAlertIcon,
+  EyeIcon,
+  GlobeIcon,
+  HammerIcon,
+  type LucideIcon,
+  SquarePenIcon,
+  TerminalIcon,
+  Undo2Icon,
+  WrenchIcon,
+  ZapIcon,
+} from "lucide-react";
 import { Button } from "../ui/button";
 import { clamp } from "effect/Number";
 import { estimateTimelineMessageHeight } from "../timelineHeight";
@@ -21,9 +43,19 @@ import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
-import { computeMessageDurationStart } from "./MessagesTimeline.logic";
+import { computeMessageDurationStart, normalizeCompactToolLabel } from "./MessagesTimeline.logic";
+import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
+import {
+  deriveDisplayedUserMessageState,
+  type ParsedTerminalContextEntry,
+} from "~/lib/terminalContext";
 import { type TimestampFormat } from "../../appSettings";
 import { formatTimestamp } from "../../timestampFormat";
+import {
+  buildInlineTerminalContextText,
+  formatInlineTerminalContextLabel,
+  textContainsInlineTerminalContextLabels,
+} from "./userMessageTerminalContexts";
 
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 const ALWAYS_UNVIRTUALIZED_TAIL_ROWS = 8;
@@ -393,50 +425,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                     </button>
                   )}
                 </div>
-                <div className="space-y-1">
+                <div className="space-y-0.5">
                   {visibleEntries.map((workEntry) => (
-                    <div key={`work-row:${workEntry.id}`} className="flex items-start gap-2 py-0.5">
-                      <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/30" />
-                      <div className="min-w-0 flex-1 py-[2px]">
-                        <p
-                          className={`text-[11px] leading-relaxed ${workToneClass(workEntry.tone)}`}
-                        >
-                          {workEntry.label}
-                        </p>
-                        {workEntry.command && (
-                          <pre className="mt-1 overflow-x-auto rounded-md border border-border/70 bg-background/80 px-2 py-1 font-mono text-[11px] leading-relaxed text-foreground/80">
-                            {workEntry.command}
-                          </pre>
-                        )}
-                        {workEntry.changedFiles && workEntry.changedFiles.length > 0 && (
-                          <div className="mt-1 flex flex-wrap gap-1">
-                            {workEntry.changedFiles.slice(0, 6).map((filePath) => (
-                              <span
-                                key={`${workEntry.id}:${filePath}`}
-                                className="rounded-md border border-border/70 bg-background/65 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/85"
-                                title={filePath}
-                              >
-                                {filePath}
-                              </span>
-                            ))}
-                            {workEntry.changedFiles.length > 6 && (
-                              <span className="px-1 text-[10px] text-muted-foreground/65">
-                                +{workEntry.changedFiles.length - 6} more
-                              </span>
-                            )}
-                          </div>
-                        )}
-                        {workEntry.detail &&
-                          (!workEntry.command || workEntry.detail !== workEntry.command) && (
-                            <p
-                              className="mt-1 text-[11px] leading-relaxed text-muted-foreground/75"
-                              title={workEntry.detail}
-                            >
-                              {workEntry.detail}
-                            </p>
-                          )}
-                      </div>
-                    </div>
+                    <SimpleWorkEntryRow key={`work-row:${workEntry.id}`} workEntry={workEntry} />
                   ))}
                 </div>
               </div>
@@ -447,6 +438,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           row.message.role === "user" &&
           (() => {
             const userImages = row.message.attachments ?? [];
+            const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
+            const terminalContexts = displayedUserMessage.contexts;
             const canRevertAgentWork = revertTurnCountByUserMessageId.has(row.message.id);
             return (
               <div className="flex justify-end">
@@ -488,19 +481,28 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                       )}
                     </div>
                   )}
-                  {row.message.text && (
-                    <pre className="whitespace-pre-wrap wrap-break-word font-mono text-sm leading-relaxed text-foreground">
-                      {renderHighlightedUserText(
-                        row.message.id,
-                        row.message.text,
-                        sourceMatches,
-                        rowHasActiveSearchMatch,
-                      )}
-                    </pre>
-                  )}
+                  {(displayedUserMessage.visibleText.trim().length > 0 ||
+                    terminalContexts.length > 0) &&
+                    (terminalContexts.length === 0 && sourceMatches.length > 0 ? (
+                      <pre className="whitespace-pre-wrap wrap-break-word font-mono text-sm leading-relaxed text-foreground">
+                        {renderHighlightedUserText(
+                          row.message.id,
+                          displayedUserMessage.visibleText,
+                          sourceMatches,
+                          rowHasActiveSearchMatch,
+                        )}
+                      </pre>
+                    ) : (
+                      <UserMessageBody
+                        text={displayedUserMessage.visibleText}
+                        terminalContexts={terminalContexts}
+                      />
+                    ))}
                   <div className="mt-1.5 flex items-center justify-end gap-2">
                     <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
-                      {row.message.text && <MessageCopyButton text={row.message.text} />}
+                      {displayedUserMessage.copyText && (
+                        <MessageCopyButton text={displayedUserMessage.copyText} />
+                      )}
                       {canRevertAgentWork && (
                         <Button
                           type="button"
@@ -753,9 +755,252 @@ function formatMessageMeta(
   return `${formatTimestamp(createdAt, timestampFormat)} • ${duration}`;
 }
 
+const UserMessageTerminalContextInlineLabel = memo(
+  function UserMessageTerminalContextInlineLabel(props: { context: ParsedTerminalContextEntry }) {
+    const tooltipText =
+      props.context.body.length > 0
+        ? `${props.context.header}\n${props.context.body}`
+        : props.context.header;
+
+    return <TerminalContextInlineChip label={props.context.header} tooltipText={tooltipText} />;
+  },
+);
+
+const UserMessageBody = memo(function UserMessageBody(props: {
+  text: string;
+  terminalContexts: ParsedTerminalContextEntry[];
+}) {
+  if (props.terminalContexts.length > 0) {
+    const hasEmbeddedInlineLabels = textContainsInlineTerminalContextLabels(
+      props.text,
+      props.terminalContexts,
+    );
+    const inlinePrefix = buildInlineTerminalContextText(props.terminalContexts);
+    const inlineNodes: ReactNode[] = [];
+
+    if (hasEmbeddedInlineLabels) {
+      let cursor = 0;
+
+      for (const context of props.terminalContexts) {
+        const label = formatInlineTerminalContextLabel(context.header);
+        const matchIndex = props.text.indexOf(label, cursor);
+        if (matchIndex === -1) {
+          inlineNodes.length = 0;
+          break;
+        }
+        if (matchIndex > cursor) {
+          inlineNodes.push(
+            <span key={`user-terminal-context-inline-before:${context.header}:${cursor}`}>
+              {props.text.slice(cursor, matchIndex)}
+            </span>,
+          );
+        }
+        inlineNodes.push(
+          <UserMessageTerminalContextInlineLabel
+            key={`user-terminal-context-inline:${context.header}`}
+            context={context}
+          />,
+        );
+        cursor = matchIndex + label.length;
+      }
+
+      if (inlineNodes.length > 0) {
+        if (cursor < props.text.length) {
+          inlineNodes.push(
+            <span key={`user-message-terminal-context-inline-rest:${cursor}`}>
+              {props.text.slice(cursor)}
+            </span>,
+          );
+        }
+
+        return (
+          <div className="wrap-break-word whitespace-pre-wrap font-mono text-sm leading-relaxed text-foreground">
+            {inlineNodes}
+          </div>
+        );
+      }
+    }
+
+    for (const context of props.terminalContexts) {
+      inlineNodes.push(
+        <UserMessageTerminalContextInlineLabel
+          key={`user-terminal-context-inline:${context.header}`}
+          context={context}
+        />,
+      );
+      inlineNodes.push(
+        <span key={`user-terminal-context-inline-space:${context.header}`} aria-hidden="true">
+          {" "}
+        </span>,
+      );
+    }
+
+    if (props.text.length > 0) {
+      inlineNodes.push(<span key="user-message-terminal-context-inline-text">{props.text}</span>);
+    } else if (inlinePrefix.length === 0) {
+      return null;
+    }
+
+    return (
+      <div className="wrap-break-word whitespace-pre-wrap font-mono text-sm leading-relaxed text-foreground">
+        {inlineNodes}
+      </div>
+    );
+  }
+
+  if (props.text.length === 0) {
+    return null;
+  }
+
+  return (
+    <pre className="whitespace-pre-wrap wrap-break-word font-mono text-sm leading-relaxed text-foreground">
+      {props.text}
+    </pre>
+  );
+});
+
+function workToneIcon(tone: TimelineWorkEntry["tone"]): {
+  icon: LucideIcon;
+  className: string;
+} {
+  if (tone === "error") {
+    return {
+      icon: CircleAlertIcon,
+      className: "text-foreground/92",
+    };
+  }
+  if (tone === "thinking") {
+    return {
+      icon: BotIcon,
+      className: "text-foreground/92",
+    };
+  }
+  if (tone === "info") {
+    return {
+      icon: CheckIcon,
+      className: "text-foreground/92",
+    };
+  }
+  return {
+    icon: ZapIcon,
+    className: "text-foreground/92",
+  };
+}
+
 function workToneClass(tone: "thinking" | "tool" | "info" | "error"): string {
   if (tone === "error") return "text-rose-300/50 dark:text-rose-300/50";
   if (tone === "tool") return "text-muted-foreground/70";
   if (tone === "thinking") return "text-muted-foreground/50";
   return "text-muted-foreground/40";
 }
+
+function workEntryPreview(
+  workEntry: Pick<TimelineWorkEntry, "detail" | "command" | "changedFiles">,
+) {
+  if (workEntry.command) return workEntry.command;
+  if (workEntry.detail) return workEntry.detail;
+  if ((workEntry.changedFiles?.length ?? 0) === 0) return null;
+  const [firstPath] = workEntry.changedFiles ?? [];
+  if (!firstPath) return null;
+  return workEntry.changedFiles!.length === 1
+    ? firstPath
+    : `${firstPath} +${workEntry.changedFiles!.length - 1} more`;
+}
+
+function workEntryIcon(workEntry: TimelineWorkEntry): LucideIcon {
+  if (workEntry.requestKind === "command") return TerminalIcon;
+  if (workEntry.requestKind === "file-read") return EyeIcon;
+  if (workEntry.requestKind === "file-change") return SquarePenIcon;
+
+  if (workEntry.itemType === "command_execution" || workEntry.command) {
+    return TerminalIcon;
+  }
+  if (workEntry.itemType === "file_change" || (workEntry.changedFiles?.length ?? 0) > 0) {
+    return SquarePenIcon;
+  }
+  if (workEntry.itemType === "web_search") return GlobeIcon;
+  if (workEntry.itemType === "image_view") return EyeIcon;
+
+  switch (workEntry.itemType) {
+    case "mcp_tool_call":
+      return WrenchIcon;
+    case "dynamic_tool_call":
+    case "collab_agent_tool_call":
+      return HammerIcon;
+  }
+
+  return workToneIcon(workEntry.tone).icon;
+}
+
+function capitalizePhrase(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return value;
+  }
+  return `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}`;
+}
+
+function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
+  if (!workEntry.toolTitle) {
+    return capitalizePhrase(normalizeCompactToolLabel(workEntry.label));
+  }
+  return capitalizePhrase(normalizeCompactToolLabel(workEntry.toolTitle));
+}
+
+const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
+  workEntry: TimelineWorkEntry;
+}) {
+  const { workEntry } = props;
+  const iconConfig = workToneIcon(workEntry.tone);
+  const EntryIcon = workEntryIcon(workEntry);
+  const heading = toolWorkEntryHeading(workEntry);
+  const preview = workEntryPreview(workEntry);
+  const displayText = preview ? `${heading} - ${preview}` : heading;
+  const hasChangedFiles = (workEntry.changedFiles?.length ?? 0) > 0;
+  const previewIsChangedFiles = hasChangedFiles && !workEntry.command && !workEntry.detail;
+
+  return (
+    <div className="rounded-lg px-1 py-1">
+      <div className="flex items-center gap-2 transition-[opacity,translate] duration-200">
+        <span
+          className={cn("flex size-5 shrink-0 items-center justify-center", iconConfig.className)}
+        >
+          <EntryIcon className="size-3" />
+        </span>
+        <div className="min-w-0 flex-1 overflow-hidden">
+          <p
+            className={cn(
+              "truncate text-[11px] leading-5",
+              workToneClass(workEntry.tone),
+              preview ? "text-muted-foreground/70" : "",
+            )}
+            title={displayText}
+          >
+            <span className={cn("text-foreground/80", workToneClass(workEntry.tone))}>
+              {heading}
+            </span>
+            {preview && <span className="text-muted-foreground/55"> - {preview}</span>}
+          </p>
+        </div>
+      </div>
+      {hasChangedFiles && !previewIsChangedFiles && (
+        <div className="mt-1 flex flex-wrap gap-1 pl-6">
+          {workEntry.changedFiles?.slice(0, 4).map((filePath) => (
+            <span
+              key={`${workEntry.id}:${filePath}`}
+              className="rounded-md border border-border/55 bg-background/75 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/75"
+              title={filePath}
+            >
+              {filePath}
+            </span>
+          ))}
+          {(workEntry.changedFiles?.length ?? 0) > 4 && (
+            <span className="px-1 text-[10px] text-muted-foreground/55">
+              +{(workEntry.changedFiles?.length ?? 0) - 4}
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+});

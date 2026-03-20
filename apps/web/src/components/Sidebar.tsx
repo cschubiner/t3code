@@ -25,7 +25,7 @@ import {
   type DragEndEvent,
 } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { restrictToParentElement, restrictToVerticalAxis } from "@dnd-kit/modifiers";
+import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { CSS } from "@dnd-kit/utilities";
 import {
   DEFAULT_MODEL_BY_PROVIDER,
@@ -40,7 +40,7 @@ import { useLocation, useNavigate, useParams, useRouter } from "@tanstack/react-
 import { useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
-import { isMacPlatform, newCommandId, newProjectId } from "../lib/utils";
+import { isLinuxPlatform, isMacPlatform, newCommandId, newProjectId } from "../lib/utils";
 import { formatRelativeTime } from "../lib/relativeTime";
 import { useStore } from "../store";
 import {
@@ -338,10 +338,11 @@ export default function Sidebar() {
   const clearSelection = useThreadSelectionStore((s) => s.clearSelection);
   const removeFromSelection = useThreadSelectionStore((s) => s.removeFromSelection);
   const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
+  const isLinuxDesktop = isElectron && isLinuxPlatform(navigator.platform);
   const navigateHistory = useThreadNavigationHistoryStore((s) => s.navigateHistory);
   const recordHistoryVisit = useThreadNavigationHistoryStore((s) => s.recordVisit);
   const router = useRouter();
-  const shouldBrowseForProjectImmediately = isElectron;
+  const shouldBrowseForProjectImmediately = isElectron && !isLinuxDesktop;
   const shouldShowProjectPathEntry = addingProject && !shouldBrowseForProjectImmediately;
   const projectCwdById = useMemo(
     () => new Map(projects.map((project) => [project.id, project.cwd] as const)),
@@ -684,7 +685,7 @@ export default function Sidebar() {
     ],
   );
 
-  const { copyToClipboard } = useCopyToClipboard<{ threadId: ThreadId }>({
+  const { copyToClipboard: copyThreadIdToClipboard } = useCopyToClipboard<{ threadId: ThreadId }>({
     onCopy: (ctx) => {
       toastManager.add({
         type: "success",
@@ -700,21 +701,40 @@ export default function Sidebar() {
       });
     },
   });
+  const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
+    onCopy: (ctx) => {
+      toastManager.add({
+        type: "success",
+        title: "Path copied",
+        description: ctx.path,
+      });
+    },
+    onError: (error) => {
+      toastManager.add({
+        type: "error",
+        title: "Failed to copy path",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      });
+    },
+  });
   const handleThreadContextMenu = useCallback(
     async (threadId: ThreadId, position: { x: number; y: number }) => {
       const api = readNativeApi();
       if (!api) return;
+      const thread = threads.find((t) => t.id === threadId);
+      if (!thread) return;
+      const threadWorkspacePath =
+        thread.worktreePath ?? projectCwdById.get(thread.projectId) ?? null;
       const clicked = await api.contextMenu.show(
         [
           { id: "rename", label: "Rename thread" },
           { id: "mark-unread", label: "Mark unread" },
+          { id: "copy-path", label: "Copy Path" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
           { id: "delete", label: "Delete", destructive: true },
         ],
         position,
       );
-      const thread = threads.find((t) => t.id === threadId);
-      if (!thread) return;
 
       if (clicked === "rename") {
         setRenamingThreadId(threadId);
@@ -727,8 +747,20 @@ export default function Sidebar() {
         markThreadUnread(threadId);
         return;
       }
+      if (clicked === "copy-path") {
+        if (!threadWorkspacePath) {
+          toastManager.add({
+            type: "error",
+            title: "Path unavailable",
+            description: "This thread does not have a workspace path to copy.",
+          });
+          return;
+        }
+        copyPathToClipboard(threadWorkspacePath, { path: threadWorkspacePath });
+        return;
+      }
       if (clicked === "copy-thread-id") {
-        copyToClipboard(threadId, { threadId });
+        copyThreadIdToClipboard(threadId, { threadId });
         return;
       }
       if (clicked !== "delete") return;
@@ -757,12 +789,14 @@ export default function Sidebar() {
     },
     [
       appSettings.confirmThreadDelete,
+      copyPathToClipboard,
+      copyThreadIdToClipboard,
       clearComposerDraftForThread,
       clearProjectDraftThreadById,
       clearTerminalState,
-      copyToClipboard,
       markThreadUnread,
       navigate,
+      projectCwdById,
       projects,
       removeWorktreeMutation,
       routeThreadId,
@@ -1412,7 +1446,7 @@ export default function Sidebar() {
                       type="button"
                       aria-label="Add project"
                       aria-pressed={shouldShowProjectPathEntry}
-                      className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+                      className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
                       onClick={handleStartAddProject}
                     />
                   }
@@ -1496,7 +1530,7 @@ export default function Sidebar() {
           <DndContext
             sensors={projectDnDSensors}
             collisionDetection={projectCollisionDetection}
-            modifiers={[restrictToVerticalAxis, restrictToParentElement]}
+            modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
             onDragStart={handleProjectDragStart}
             onDragEnd={handleProjectDragEnd}
             onDragCancel={handleProjectDragCancel}

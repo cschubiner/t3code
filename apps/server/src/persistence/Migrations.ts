@@ -25,9 +25,12 @@ import Migration0010 from "./Migrations/010_ProjectionThreadsRuntimeMode.ts";
 import Migration0011 from "./Migrations/011_OrchestrationThreadCreatedRuntimeMode.ts";
 import Migration0012 from "./Migrations/012_ProjectionThreadsInteractionMode.ts";
 import Migration0013 from "./Migrations/013_ProjectionThreadProposedPlans.ts";
-import Migration0014 from "./Migrations/014_ProjectionThreadQueuedTurns.ts";
-import Migration0015 from "./Migrations/015_ProjectionThreadQueuedTurnSortOrder.ts";
-import Migration0016 from "./Migrations/016_Snippets.ts";
+import Migration0014 from "./Migrations/014_ProjectionThreadProposedPlanImplementation.ts";
+import Migration0015 from "./Migrations/015_ProjectionTurnsSourceProposedPlan.ts";
+import Migration0016 from "./Migrations/016_ProjectionThreadQueuedTurns.ts";
+import Migration0017 from "./Migrations/017_ProjectionThreadQueuedTurnSortOrder.ts";
+import Migration0018 from "./Migrations/018_Snippets.ts";
+import Migration0019 from "./Migrations/019_LegacyProjectionSchemaRepair.ts";
 import { Effect } from "effect";
 
 /**
@@ -54,9 +57,12 @@ const loader = Migrator.fromRecord({
   "11_OrchestrationThreadCreatedRuntimeMode": Migration0011,
   "12_ProjectionThreadsInteractionMode": Migration0012,
   "13_ProjectionThreadProposedPlans": Migration0013,
-  "14_ProjectionThreadQueuedTurns": Migration0014,
-  "15_ProjectionThreadQueuedTurnSortOrder": Migration0015,
-  "16_Snippets": Migration0016,
+  "14_ProjectionThreadProposedPlanImplementation": Migration0014,
+  "15_ProjectionTurnsSourceProposedPlan": Migration0015,
+  "16_ProjectionThreadQueuedTurns": Migration0016,
+  "17_ProjectionThreadQueuedTurnSortOrder": Migration0017,
+  "18_Snippets": Migration0018,
+  "19_LegacyProjectionSchemaRepair": Migration0019,
 });
 
 /**
