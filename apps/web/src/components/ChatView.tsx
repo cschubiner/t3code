@@ -368,6 +368,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     (store) => store.draftThreadsByThreadId[threadId] ?? null,
   );
   const promptRef = useRef(prompt);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
@@ -2058,6 +2059,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     scrollContainer.scrollTo({ top: scrollContainer.scrollHeight, behavior });
     lastKnownScrollTopRef.current = scrollContainer.scrollTop;
     shouldAutoScrollRef.current = true;
+    setShowScrollToBottom(false);
   }, []);
   const cancelPendingStickToBottom = useCallback(() => {
     const pendingFrame = pendingAutoScrollFrameRef.current;
@@ -2147,6 +2149,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
 
     lastKnownScrollTopRef.current = currentScrollTop;
+    setShowScrollToBottom(!shouldAutoScrollRef.current);
   }, []);
   const onMessagesWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
     if (event.deltaY < 0) {
@@ -4785,7 +4788,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             model={selectedModelForPickerWithCustomFallback}
                             lockedProvider={lockedProvider}
                             modelOptionsByProvider={modelOptionsByProvider}
-                            ultrathinkActive={isClaudeUltrathink}
+                            {...(composerProviderState.modelPickerIconClassName
+                              ? {
+                                  activeProviderIconClassName:
+                                    composerProviderState.modelPickerIconClassName,
+                                }
+                              : {})}
                             onProviderModelChange={onProviderModelSelect}
                           />
 
@@ -4797,42 +4805,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
                               interactionMode={interactionMode}
                               planSidebarOpen={planSidebarOpen}
                               runtimeMode={runtimeMode}
-                              traitsMenuContent={
-                                selectedProvider === "codex" ? (
-                                  <CodexTraitsMenuContent threadId={threadId} />
-                                ) : selectedProvider === "claudeAgent" ? (
-                                  <ClaudeTraitsMenuContent
-                                    threadId={threadId}
-                                    model={selectedModel}
-                                    onPromptChange={setPromptFromTraits}
-                                  />
-                                ) : null
-                              }
+                              traitsMenuContent={providerTraitsMenuContent}
                               onToggleInteractionMode={toggleInteractionMode}
                               onTogglePlanSidebar={togglePlanSidebar}
                               onToggleRuntimeMode={toggleRuntimeMode}
                             />
                           ) : (
                             <>
-                              {selectedProvider === "codex" ? (
+                              {providerTraitsPicker ? (
                                 <>
                                   <Separator
                                     orientation="vertical"
                                     className="mx-0.5 hidden h-4 sm:block"
                                   />
-                                  <CodexTraitsPicker threadId={threadId} />
-                                </>
-                              ) : selectedProvider === "claudeAgent" ? (
-                                <>
-                                  <Separator
-                                    orientation="vertical"
-                                    className="mx-0.5 hidden h-4 sm:block"
-                                  />
-                                  <ClaudeTraitsPicker
-                                    threadId={threadId}
-                                    model={selectedModel}
-                                    onPromptChange={setPromptFromTraits}
-                                  />
+                                  {providerTraitsPicker}
                                 </>
                               ) : null}
 

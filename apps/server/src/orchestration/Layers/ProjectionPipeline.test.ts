@@ -960,8 +960,7 @@ it.layer(
       const runningAt = new Date(Date.now() + 1_000).toISOString();
       const removedAt = new Date(Date.now() + 2_000).toISOString();
       const threadId = ThreadId.makeUnsafe("Thread Queue Confirmed Head");
-      const queuedAttachmentId =
-        "thread-queue-confirmed-head-00000000-0000-4000-8000-000000000001";
+      const queuedAttachmentId = "thread-queue-confirmed-head-00000000-0000-4000-8000-000000000001";
       const otherThreadAttachmentId =
         "thread-queue-confirmed-head-extra-00000000-0000-4000-8000-000000000002";
       const queuedMessageId = MessageId.makeUnsafe("message-queue-confirmed-head");
