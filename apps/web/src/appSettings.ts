@@ -180,7 +180,6 @@ export function getCustomModelsByProvider(
     claudeAgent: getCustomModelsForProvider(settings, "claudeAgent"),
   };
 }
-
 export function getAppModelOptions(
   provider: ProviderKind,
   customModels: readonly string[],
