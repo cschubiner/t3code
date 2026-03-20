@@ -149,6 +149,9 @@ function createBaseServerConfig(): ServerConfig {
         shiftKey: true,
         modKey: false,
       }),
+      createResolvedKeybinding("r", "sidebar.rename", {
+        shiftKey: true,
+      }),
     ],
     issues: [],
     providers: [
@@ -830,6 +833,94 @@ describe("Sidebar navigation keybindings", () => {
       await new Promise((resolve) => window.setTimeout(resolve, 150));
 
       expect(mounted.router.state.location.pathname).toBe(`/${THREAD_A5}`);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens rename for the active thread with mod+shift+r", async () => {
+    const mounted = await mountApp(`/${THREAD_A5}`);
+
+    try {
+      dispatchSidebarShortcut({ key: "r", shiftKey: true, modKey: true });
+
+      await vi.waitFor(
+        () => {
+          const renameInput = document.querySelector<HTMLInputElement>(
+            '[data-thread-item] input[value="Alpha 5"]',
+          );
+          expect(renameInput).toBeTruthy();
+          expect(document.activeElement).toBe(renameInput);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens rename for the single selected thread with mod+shift+r", async () => {
+    const mounted = await mountApp(`/${THREAD_A5}`);
+
+    try {
+      const selectionStore = useThreadSelectionStore.getState();
+      selectionStore.toggleThread(THREAD_A4);
+      await waitForLayout();
+
+      dispatchSidebarShortcut({ key: "r", shiftKey: true, modKey: true });
+
+      await vi.waitFor(
+        () => {
+          const selectedRenameInput = document.querySelector<HTMLInputElement>(
+            '[data-thread-item] input[value="Alpha 4"]',
+          );
+          const activeRenameInput = document.querySelector<HTMLInputElement>(
+            '[data-thread-item] input[value="Alpha 5"]',
+          );
+          expect(selectedRenameInput).toBeTruthy();
+          expect(activeRenameInput).toBeFalsy();
+          expect(document.activeElement).toBe(selectedRenameInput);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("ignores mod+shift+r while a sidebar text input is focused", async () => {
+    const mounted = await mountApp(`/${THREAD_A5}`);
+
+    try {
+      const addProjectButton = document.querySelector<HTMLElement>(
+        'button[aria-label="Add project"]',
+      );
+      expect(addProjectButton).toBeTruthy();
+      addProjectButton?.click();
+
+      let input: HTMLInputElement | null = null;
+      await vi.waitFor(
+        () => {
+          input = document.querySelector<HTMLInputElement>('input[placeholder="/path/to/project"]');
+          expect(input).toBeTruthy();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      const addProjectInput = document.querySelector<HTMLInputElement>(
+        'input[placeholder="/path/to/project"]',
+      );
+      if (!addProjectInput) {
+        throw new Error("Expected add-project input to render");
+      }
+      addProjectInput.focus();
+
+      dispatchSidebarShortcut({ key: "r", shiftKey: true, modKey: true }, addProjectInput);
+      await new Promise((resolve) => window.setTimeout(resolve, 150));
+
+      expect(
+        document.querySelector<HTMLInputElement>('[data-thread-item] input[value="Alpha 5"]'),
+      ).toBeFalsy();
+      expect(document.activeElement).toBe(addProjectInput);
     } finally {
       await mounted.cleanup();
     }

@@ -215,6 +215,14 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
             entry.command === "sidebar.project.next" && entry.key === "alt+shift+arrowdown",
         ),
       );
+      assert.isTrue(
+        persisted.some(
+          (entry) =>
+            entry.command === "sidebar.rename" &&
+            entry.key === "mod+shift+r" &&
+            entry.when === "!terminalFocus",
+        ),
+      );
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
