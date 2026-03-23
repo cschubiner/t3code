@@ -358,12 +358,17 @@ const makeGitCore = Effect.gen(function* () {
     upstream: { upstreamRef: string; remoteName: string; upstreamBranch: string },
   ): Effect.Effect<void, GitCommandError> => {
     const refspec = `+refs/heads/${upstream.upstreamBranch}:refs/remotes/${upstream.upstreamRef}`;
-    return runGit(
+    return executeGit(
       "GitCore.fetchUpstreamRef",
       cwd,
       ["fetch", "--quiet", "--no-tags", upstream.remoteName, refspec],
-      true,
-    );
+      {
+        allowNonZeroExit: true,
+        // This refresh is purely best-effort metadata warming after checkout.
+        // Keep it tightly bounded so a slow remote cannot pin the process.
+        timeoutMs: Duration.toMillis(STATUS_UPSTREAM_REFRESH_TIMEOUT),
+      },
+    ).pipe(Effect.asVoid);
   };
 
   const fetchUpstreamRefForStatus = (
@@ -1375,9 +1380,10 @@ const makeGitCore = Effect.gen(function* () {
         fallbackErrorMessage: "git checkout failed",
       });
 
-      // Refresh upstream refs in the background so checkout remains responsive.
-      yield* Effect.forkScoped(
-        refreshCheckedOutBranchUpstream(input.cwd).pipe(Effect.ignoreCause({ log: true })),
+      // Refresh upstream refs in the background so checkout stays responsive while
+      // the next status read sees a fresh upstream ref.
+      yield* Effect.forkDetach(
+        refreshCheckedOutBranchUpstream(input.cwd).pipe(Effect.catch(() => Effect.void)),
       );
     });
 

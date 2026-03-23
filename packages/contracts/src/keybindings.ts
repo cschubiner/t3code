@@ -13,9 +13,20 @@ const STATIC_KEYBINDING_COMMANDS = [
   "terminal.new",
   "terminal.close",
   "diff.toggle",
+  "sidebar.history.previous",
+  "sidebar.history.next",
+  "thread.search",
+  "threads.search",
+  "projects.search",
+  "sidebar.thread.previous",
+  "sidebar.thread.next",
+  "sidebar.project.previous",
+  "sidebar.project.next",
+  "sidebar.rename",
   "chat.new",
   "chat.newLocal",
   "editor.openFavorite",
+  "snippets.open",
 ] as const;
 
 export const SCRIPT_RUN_COMMAND_PATTERN = Schema.TemplateLiteral([

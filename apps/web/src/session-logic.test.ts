@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
+  derivePhase,
   PROVIDER_OPTIONS,
   derivePendingApprovals,
   derivePendingUserInputs,
@@ -1080,6 +1081,35 @@ describe("deriveActiveWorkStartedAt", () => {
         "2026-02-27T21:11:00.000Z",
       ),
     ).toBe("2026-02-27T21:11:00.000Z");
+  });
+});
+
+describe("derivePhase", () => {
+  it("treats an errored session with an active turn as running", () => {
+    expect(
+      derivePhase({
+        provider: "codex",
+        status: "error",
+        orchestrationStatus: "error",
+        activeTurnId: TurnId.makeUnsafe("turn-1"),
+        createdAt: "2026-02-27T21:10:00.000Z",
+        updatedAt: "2026-02-27T21:10:01.000Z",
+        lastError: "exec command failed",
+      }),
+    ).toBe("running");
+  });
+
+  it("treats an errored idle session as ready", () => {
+    expect(
+      derivePhase({
+        provider: "codex",
+        status: "error",
+        orchestrationStatus: "error",
+        createdAt: "2026-02-27T21:10:00.000Z",
+        updatedAt: "2026-02-27T21:10:01.000Z",
+        lastError: "exec command failed",
+      }),
+    ).toBe("ready");
   });
 });
 

@@ -221,6 +221,87 @@ describe("OrchestrationEngine", () => {
     await system.dispose();
   });
 
+  it("dispatches thread.import atomically into created, message, and activity events", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-project-import-create"),
+        projectId: asProjectId("project-import"),
+        title: "Imported Project",
+        workspaceRoot: "/tmp/project-import",
+        defaultModel: "gpt-5-codex",
+        createdAt,
+      }),
+    );
+
+    await system.run(
+      engine.dispatch({
+        type: "thread.import",
+        commandId: CommandId.makeUnsafe("cmd-thread-import"),
+        threadId: ThreadId.makeUnsafe("thread-import"),
+        projectId: asProjectId("project-import"),
+        title: "Imported thread",
+        model: "gpt-5-codex",
+        runtimeMode: "full-access",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        branch: null,
+        worktreePath: null,
+        createdAt,
+        messages: [
+          {
+            messageId: asMessageId("import-message-1"),
+            role: "user",
+            text: "hello from Codex",
+            createdAt: "2025-12-31T23:59:00.000Z",
+            updatedAt: "2025-12-31T23:59:00.000Z",
+          },
+          {
+            messageId: asMessageId("import-message-2"),
+            role: "assistant",
+            text: "hi from T3",
+            createdAt: "2025-12-31T23:59:30.000Z",
+            updatedAt: "2025-12-31T23:59:30.000Z",
+          },
+        ],
+        source: {
+          provider: "codex",
+          sessionId: "codex-session-1",
+          kind: "direct",
+          originalCwd: "/tmp/project-import",
+          sourceCreatedAt: "2025-12-31T23:58:00.000Z",
+          sourceUpdatedAt: "2025-12-31T23:59:30.000Z",
+        },
+      }),
+    );
+
+    const events = await system.run(
+      Stream.runCollect(engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(events.map((event) => event.type)).toEqual([
+      "project.created",
+      "thread.created",
+      "thread.message-sent",
+      "thread.message-sent",
+      "thread.activity-appended",
+    ]);
+
+    const readModel = await system.run(engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === "thread-import");
+    expect(thread?.messages.map((message) => message.text)).toEqual([
+      "hello from Codex",
+      "hi from T3",
+    ]);
+    expect(thread?.activities.at(-1)?.kind).toBe("codex.imported");
+
+    await system.dispose();
+  });
+
   it("stores completed checkpoint summaries even when no files changed", async () => {
     const system = await createOrchestrationSystem();
     const { engine } = system;

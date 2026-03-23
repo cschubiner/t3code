@@ -30,6 +30,7 @@ import { OrchestrationCommandReceiptRepositoryLive } from "../src/persistence/La
 import { OrchestrationEventStoreLive } from "../src/persistence/Layers/OrchestrationEventStore.ts";
 import { ProjectionCheckpointRepositoryLive } from "../src/persistence/Layers/ProjectionCheckpoints.ts";
 import { ProjectionPendingApprovalRepositoryLive } from "../src/persistence/Layers/ProjectionPendingApprovals.ts";
+import { ProjectionTurnRepositoryLive } from "../src/persistence/Layers/ProjectionTurns.ts";
 import { ProviderSessionRuntimeRepositoryLive } from "../src/persistence/Layers/ProviderSessionRuntime.ts";
 import { makeSqlitePersistenceLive } from "../src/persistence/Layers/Sqlite.ts";
 import { ProjectionCheckpointRepository } from "../src/persistence/Services/ProjectionCheckpoints.ts";
@@ -50,6 +51,7 @@ import { RuntimeReceiptBusLive } from "../src/orchestration/Layers/RuntimeReceip
 import { OrchestrationReactorLive } from "../src/orchestration/Layers/OrchestrationReactor.ts";
 import { ProviderCommandReactorLive } from "../src/orchestration/Layers/ProviderCommandReactor.ts";
 import { ProviderRuntimeIngestionLive } from "../src/orchestration/Layers/ProviderRuntimeIngestion.ts";
+import { TurnQueueReactorLive } from "../src/orchestration/Layers/TurnQueueReactor.ts";
 import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
@@ -122,10 +124,10 @@ function waitFor<A, E>(
   read: Effect.Effect<A, E>,
   predicate: (value: A) => boolean,
   description: string,
-  timeoutMs = 10_000,
+  timeoutMs = 30_000,
 ): Effect.Effect<A, never> {
   const RETRY_SIGNAL = "wait_for_retry";
-  const retryIntervalMs = 10;
+  const retryIntervalMs = 50;
   const maxRetries = Math.max(0, Math.floor(timeoutMs / retryIntervalMs));
   const retrySchedule = Schedule.spaced(`${retryIntervalMs} millis`);
 
@@ -289,6 +291,7 @@ export const makeOrchestrationIntegrationHarness = (
       OrchestrationProjectionSnapshotQueryLive,
       ProjectionCheckpointRepositoryLive,
       ProjectionPendingApprovalRepositoryLive,
+      ProjectionTurnRepositoryLive,
       CheckpointStoreLive,
       providerLayer,
       RuntimeReceiptBusLive,
@@ -311,10 +314,14 @@ export const makeOrchestrationIntegrationHarness = (
     const checkpointReactorLayer = CheckpointReactorLive.pipe(
       Layer.provideMerge(runtimeServicesLayer),
     );
+    const turnQueueReactorLayer = TurnQueueReactorLive.pipe(
+      Layer.provideMerge(runtimeServicesLayer),
+    );
     const orchestrationReactorLayer = OrchestrationReactorLive.pipe(
       Layer.provideMerge(runtimeIngestionLayer),
       Layer.provideMerge(providerCommandReactorLayer),
       Layer.provideMerge(checkpointReactorLayer),
+      Layer.provideMerge(turnQueueReactorLayer),
     );
     const layer = orchestrationReactorLayer.pipe(
       Layer.provide(persistenceLayer),

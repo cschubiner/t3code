@@ -1,4 +1,10 @@
-import { type ProjectEntry, type ModelSlug, type ProviderKind } from "@t3tools/contracts";
+import {
+  type ProjectEntry,
+  type ModelSlug,
+  type ProviderKind,
+  type SkillSource,
+  type Snippet,
+} from "@t3tools/contracts";
 import { memo } from "react";
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
 import { BotIcon } from "lucide-react";
@@ -28,6 +34,21 @@ export type ComposerCommandItem =
       type: "model";
       provider: ProviderKind;
       model: ModelSlug;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "skill";
+      name: string;
+      source: SkillSource;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "snippet";
+      snippet: Snippet;
       label: string;
       description: string;
     };
@@ -65,16 +86,44 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
         {props.items.length === 0 && (
           <p className="px-3 py-2 text-muted-foreground/70 text-xs">
             {props.isLoading
-              ? "Searching workspace files..."
+              ? props.triggerKind === "skill"
+                ? "Searching skills..."
+                : props.triggerKind === "snippet"
+                  ? "Loading snippets..."
+                  : "Searching workspace files..."
               : props.triggerKind === "path"
                 ? "No matching files or folders."
-                : "No matching command."}
+                : props.triggerKind === "skill"
+                  ? "No matching skills."
+                  : props.triggerKind === "snippet"
+                    ? "No matching snippets."
+                    : "No matching command."}
           </p>
         )}
       </div>
     </Command>
   );
 });
+
+function SkillSourceBadge(props: { source: SkillSource }) {
+  if (props.source === "workspace") {
+    return (
+      <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">
+        local
+      </Badge>
+    );
+  }
+
+  if (props.source === "extra-root") {
+    return (
+      <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">
+        custom
+      </Badge>
+    );
+  }
+
+  return null;
+}
 
 const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
   item: ComposerCommandItem;
@@ -86,7 +135,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
     <CommandItem
       value={props.item.id}
       className={cn(
-        "cursor-pointer select-none gap-2",
+        "cursor-pointer select-none items-start gap-2",
         props.isActive && "bg-accent text-accent-foreground",
       )}
       onMouseDown={(event) => {
@@ -104,17 +153,47 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         />
       ) : null}
       {props.item.type === "slash-command" ? (
-        <BotIcon className="size-4 text-muted-foreground/80" />
+        <BotIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground/80" />
       ) : null}
       {props.item.type === "model" ? (
-        <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+        <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">
           model
         </Badge>
       ) : null}
-      <span className="flex min-w-0 items-center gap-1.5 truncate">
-        <span className="truncate">{props.item.label}</span>
-      </span>
-      <span className="truncate text-muted-foreground/70 text-xs">{props.item.description}</span>
+      {props.item.type === "snippet" ? (
+        <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">
+          snippet
+        </Badge>
+      ) : null}
+      <div className="min-w-0 flex-1">
+        <p
+          className={cn(
+            "text-sm leading-tight",
+            props.item.type === "skill" ? "break-all whitespace-normal" : "truncate",
+          )}
+        >
+          {props.item.label}
+        </p>
+        {props.item.type === "skill" ? (
+          <>
+            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+              <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">
+                skill
+              </Badge>
+              <SkillSourceBadge source={props.item.source} />
+            </div>
+            {props.item.description ? (
+              <p className="mt-1 truncate text-muted-foreground/70 text-xs leading-tight">
+                {props.item.description}
+              </p>
+            ) : null}
+          </>
+        ) : props.item.description ? (
+          <p className="truncate text-muted-foreground/70 text-xs leading-tight">
+            {props.item.description}
+          </p>
+        ) : null}
+      </div>
     </CommandItem>
   );
 });

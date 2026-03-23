@@ -89,6 +89,10 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        threadSearchQuery=""
+        threadSearchOccurrencesBySourceId={new Map()}
+        activeThreadSearchSourceId={null}
+        activeThreadSearchOccurrenceIndex={null}
       />,
     );
 
