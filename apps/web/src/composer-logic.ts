@@ -12,6 +12,37 @@ export interface ComposerTrigger {
 }
 
 const SLASH_COMMANDS: readonly ComposerSlashCommand[] = ["model", "plan", "default", "delete"];
+
+function scoreComposerSlashCommandMatch(
+  command: ComposerSlashCommand,
+  normalizedQuery: string,
+): number | null {
+  if (!normalizedQuery) {
+    return 0;
+  }
+  if (command === normalizedQuery) {
+    return 3;
+  }
+  if (command.startsWith(normalizedQuery)) {
+    return 2;
+  }
+  if (command.includes(normalizedQuery)) {
+    return 1;
+  }
+  return null;
+}
+
+export function getMatchingComposerSlashCommands(query: string): ComposerSlashCommand[] {
+  const normalizedQuery = query.trim().toLowerCase();
+  return [...SLASH_COMMANDS]
+    .flatMap((command) => {
+      const score = scoreComposerSlashCommandMatch(command, normalizedQuery);
+      return score === null ? [] : [{ command, score }];
+    })
+    .toSorted((left, right) => right.score - left.score)
+    .map(({ command }) => command);
+}
+
 const isInlineTokenSegment = (
   segment: { type: "text"; text: string } | { type: "mention" } | { type: "terminal-context" },
 ): boolean => segment.type !== "text";
@@ -201,7 +232,7 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
           rangeEnd: cursor,
         };
       }
-      if (SLASH_COMMANDS.some((command) => command.startsWith(commandQuery.toLowerCase()))) {
+      if (getMatchingComposerSlashCommands(commandQuery).length > 0) {
         return {
           kind: "slash-command",
           query: commandQuery,

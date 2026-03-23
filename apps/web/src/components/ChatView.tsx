@@ -58,6 +58,7 @@ import {
   collapseExpandedComposerCursor,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
+  getMatchingComposerSlashCommands,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
 } from "../composer-logic";
@@ -1297,13 +1298,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
           description: "Delete this thread",
         },
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
-      const query = composerTrigger.query.trim().toLowerCase();
-      if (!query) {
-        return [...slashCommandItems];
-      }
-      return slashCommandItems.filter(
-        (item) => item.command.includes(query) || item.label.slice(1).includes(query),
+      const slashCommandItemsByCommand = new Map(
+        slashCommandItems.map((item) => [item.command, item] as const),
       );
+      return getMatchingComposerSlashCommands(composerTrigger.query)
+        .map((command) => slashCommandItemsByCommand.get(command))
+        .filter((item) => item !== undefined);
     }
 
     if (composerTrigger.kind === "skill") {
