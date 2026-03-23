@@ -163,6 +163,32 @@ function isPolicyBlockedToolError(message: string, detail: unknown): boolean {
   );
 }
 
+function isClosedStdinToolError(message: string, detail: unknown): boolean {
+  const normalizedMessage = message.toLowerCase();
+  const normalizedDetail = JSON.stringify(detail ?? "").toLowerCase();
+  return (
+    normalizedMessage.includes("write_stdin failed: stdin is closed for this session") ||
+    normalizedDetail.includes("write_stdin failed: stdin is closed for this session")
+  );
+}
+
+function isModelsCacheTtlRenewalError(message: string, detail: unknown): boolean {
+  const normalizedMessage = message.toLowerCase();
+  const normalizedDetail = JSON.stringify(detail ?? "").toLowerCase();
+  return (
+    normalizedMessage.includes("codex_core::models_manager::manager: failed to renew cache ttl") ||
+    normalizedDetail.includes("codex_core::models_manager::manager: failed to renew cache ttl")
+  );
+}
+
+function isNonFatalCodexProviderNoise(message: string, detail: unknown): boolean {
+  return (
+    isPolicyBlockedToolError(message, detail) ||
+    isClosedStdinToolError(message, detail) ||
+    isModelsCacheTtlRenewalError(message, detail)
+  );
+}
+
 function toTurnId(value: string | undefined): TurnId | undefined {
   return value?.trim() ? TurnId.makeUnsafe(value) : undefined;
 }
@@ -589,7 +615,7 @@ function mapToRuntimeEvents(
     if (!event.message) {
       return [];
     }
-    const errorType = isPolicyBlockedToolError(event.message, event.payload)
+    const errorType = isNonFatalCodexProviderNoise(event.message, event.payload)
       ? "runtime.warning"
       : "runtime.error";
     return [
@@ -1267,14 +1293,14 @@ function mapToRuntimeEvents(
     const message =
       asString(asObject(payload?.error)?.message) ?? event.message ?? "Provider runtime error";
     const willRetry = payload?.willRetry === true;
-    const isPolicyBlocked = isPolicyBlockedToolError(message, event.payload);
+    const isProviderNoise = isNonFatalCodexProviderNoise(message, event.payload);
     return [
       {
-        type: willRetry || isPolicyBlocked ? "runtime.warning" : "runtime.error",
+        type: willRetry || isProviderNoise ? "runtime.warning" : "runtime.error",
         ...runtimeEventBase(event, canonicalThreadId),
         payload: {
           message,
-          ...(!willRetry && !isPolicyBlocked ? { class: "provider_error" as const } : {}),
+          ...(!willRetry && !isProviderNoise ? { class: "provider_error" as const } : {}),
           ...(event.payload !== undefined ? { detail: event.payload } : {}),
         },
       },
