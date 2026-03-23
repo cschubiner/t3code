@@ -7,6 +7,7 @@
  * @module Server
  */
 import http from "node:http";
+import os from "node:os";
 import type { Duplex } from "node:stream";
 
 import Mime from "@effect/platform-node/Mime";
@@ -19,6 +20,7 @@ import {
   ORCHESTRATION_WS_METHODS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   ProjectId,
+  type SnippetLibraryUpdatedPayload,
   ThreadId,
   WS_CHANNELS,
   WS_METHODS,
@@ -43,13 +45,14 @@ import {
   Stream,
   Struct,
 } from "effect";
-import { WebSocketServer, type WebSocket } from "ws";
+import { WebSocket as NodeWebSocket, WebSocketServer, type WebSocket } from "ws";
 
 import { createLogger } from "./logger";
 import { GitManager } from "./git/Services/GitManager.ts";
 import { TerminalManager } from "./terminal/Services/Manager.ts";
 import { Keybindings } from "./keybindings";
 import { searchWorkspaceEntries } from "./workspaceEntries";
+import { searchSkills } from "./skills";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor";
@@ -78,6 +81,8 @@ import { expandHomePath } from "./os-jank.ts";
 import { makeServerPushBus } from "./wsServer/pushBus.ts";
 import { makeServerReadiness } from "./wsServer/readiness.ts";
 import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
+import { CodexImport } from "./codexImport/Services/CodexImport.ts";
+import { SnippetRepository } from "./persistence/Services/Snippets.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -157,6 +162,81 @@ function toPosixRelativePath(input: string): string {
   return input.replaceAll("\\", "/");
 }
 
+function formatHostForUrl(host: string): string {
+  return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+}
+
+const SECRET_LINK_PATH = "/auth/exchange";
+const SECRET_LINK_QUERY_PARAM = "code";
+const SECRET_LINK_TTL_MS = 15 * 60 * 1_000;
+
+interface SecretAccessGrant {
+  readonly expiresAt: number;
+  readonly redirectTo: string;
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = hostname.trim().toLowerCase();
+  return (
+    normalized === "localhost" ||
+    normalized === "127.0.0.1" ||
+    normalized === "::1" ||
+    normalized === "[::1]"
+  );
+}
+
+function isWildcardHost(host: string | undefined): boolean {
+  return host === undefined || host === "0.0.0.0" || host === "::" || host === "[::]";
+}
+
+function collectPublicOrigins(
+  port: number,
+  host: string | undefined,
+  remoteAccessOrigin: string | undefined,
+): string[] {
+  const origins = new Set<string>();
+
+  if (remoteAccessOrigin && remoteAccessOrigin.trim().length > 0) {
+    origins.add(remoteAccessOrigin.trim());
+  }
+
+  const addOrigin = (hostname: string) => {
+    const normalized = hostname.trim();
+    if (normalized.length === 0) return;
+    origins.add(`http://${formatHostForUrl(normalized)}:${port}`);
+  };
+
+  if (host && !isWildcardHost(host)) {
+    addOrigin(host);
+    if (isLoopbackHostname(host)) {
+      addOrigin("localhost");
+      addOrigin("127.0.0.1");
+    }
+  } else {
+    addOrigin("localhost");
+    addOrigin("127.0.0.1");
+
+    const interfaces = os.networkInterfaces();
+    for (const addresses of Object.values(interfaces)) {
+      for (const address of addresses ?? []) {
+        if (address.internal) continue;
+        if (address.family !== "IPv4") continue;
+        addOrigin(address.address);
+      }
+    }
+  }
+
+  return Array.from(origins);
+}
+
+function resolveRedirectTarget(raw: string | null): string {
+  if (!raw) {
+    return "/";
+  }
+
+  return raw.startsWith("/") && !raw.startsWith("//") ? raw : "/";
+}
+
 function resolveWorkspaceWritePath(params: {
   workspaceRoot: string;
   relativePath: string;
@@ -207,6 +287,7 @@ export type ServerCoreRuntimeServices =
   | ProjectionSnapshotQuery
   | CheckpointDiffQuery
   | OrchestrationReactor
+  | CodexImport
   | ProviderService
   | ProviderHealth;
 
@@ -215,6 +296,7 @@ export type ServerRuntimeServices =
   | GitManager
   | GitCore
   | TerminalManager
+  | SnippetRepository
   | Keybindings
   | Open
   | AnalyticsService;
@@ -244,6 +326,8 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     staticDir,
     devUrl,
     authToken,
+    remoteAccessOrigin,
+    upstreamWsUrl,
     host,
     logWebSocketEvents,
     autoBootstrapProjectFromCwd,
@@ -252,8 +336,10 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
   const gitManager = yield* GitManager;
   const terminalManager = yield* TerminalManager;
+  const snippetRepository = yield* SnippetRepository;
   const keybindingsManager = yield* Keybindings;
   const providerHealth = yield* ProviderHealth;
+  const codexImport = yield* CodexImport;
   const git = yield* GitCore;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -271,8 +357,19 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const providerStatuses = yield* providerHealth.getStatuses;
 
   const clients = yield* Ref.make(new Set<WebSocket>());
+  const secretAccessGrants = new Map<string, SecretAccessGrant>();
   const logger = createLogger("ws");
   const readiness = yield* makeServerReadiness;
+
+  const pruneExpiredAuthEntries = () => {
+    const now = Date.now();
+
+    for (const [code, grant] of secretAccessGrants) {
+      if (grant.expiresAt <= now) {
+        secretAccessGrants.delete(code);
+      }
+    }
+  };
 
   function logOutgoingPush(push: WsPushEnvelopeBase, recipients: number) {
     if (!logWebSocketEvents) return;
@@ -331,13 +428,16 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       } satisfies OrchestrationCommand;
     }
 
-    if (input.command.type !== "thread.turn.start") {
+    if (
+      input.command.type !== "thread.turn.start" &&
+      input.command.type !== "thread.turn.queue.enqueue"
+    ) {
       return input.command as OrchestrationCommand;
     }
-    const turnStartCommand = input.command;
+    const turnCommand = input.command;
 
     const normalizedAttachments = yield* Effect.forEach(
-      turnStartCommand.message.attachments,
+      turnCommand.message.attachments,
       (attachment) =>
         Effect.gen(function* () {
           const parsed = parseBase64DataUrl(attachment.dataUrl);
@@ -354,7 +454,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
             });
           }
 
-          const attachmentId = createAttachmentId(turnStartCommand.threadId);
+          const attachmentId = createAttachmentId(turnCommand.threadId);
           if (!attachmentId) {
             return yield* new RouteRequestError({
               message: "Failed to create a safe attachment id.",
@@ -402,9 +502,9 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     );
 
     return {
-      ...turnStartCommand,
+      ...turnCommand,
       message: {
-        ...turnStartCommand.message,
+        ...turnCommand.message,
         attachments: normalizedAttachments,
       },
     } satisfies OrchestrationCommand;
@@ -688,6 +788,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     ServerRuntimeServices | ServerConfig | FileSystem.FileSystem | Path.Path
   >();
   const runPromise = Effect.runPromiseWith(runtimeServices);
+  const upstreamProxyUrl = upstreamWsUrl?.trim() ? upstreamWsUrl.trim() : undefined;
 
   const unsubscribeTerminalEvents = yield* terminalManager.subscribe(
     (event) => void Effect.runPromise(pushBus.publishAll(WS_CHANNELS.terminalEvent, event)),
@@ -774,6 +875,49 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           ),
         );
         return { relativePath: target.relativePath };
+      }
+
+      case WS_METHODS.skillsSearch: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.tryPromise({
+          try: () => searchSkills(body),
+          catch: (cause) =>
+            new RouteRequestError({
+              message: `Failed to search skills: ${String(cause)}`,
+            }),
+        });
+      }
+
+      case WS_METHODS.snippetsList:
+        return yield* snippetRepository.listAll().pipe(Effect.map((snippets) => ({ snippets })));
+
+      case WS_METHODS.snippetsCreate: {
+        const body = stripRequestTag(request.body);
+        const updatedAt = new Date().toISOString();
+        const result = yield* snippetRepository.upsertByExactText({
+          text: body.text,
+          updatedAt,
+        });
+        const payload: SnippetLibraryUpdatedPayload = {
+          kind: "upsert",
+          snippetId: result.snippet.id,
+          updatedAt: result.snippet.updatedAt,
+        };
+        yield* pushBus.publishAll(WS_CHANNELS.snippetsUpdated, payload);
+        return result;
+      }
+
+      case WS_METHODS.snippetsDelete: {
+        const body = stripRequestTag(request.body);
+        const updatedAt = new Date().toISOString();
+        yield* snippetRepository.deleteById(body);
+        const payload: SnippetLibraryUpdatedPayload = {
+          kind: "delete",
+          snippetId: body.snippetId,
+          updatedAt,
+        };
+        yield* pushBus.publishAll(WS_CHANNELS.snippetsUpdated, payload);
+        return undefined;
       }
 
       case WS_METHODS.shellOpenInEditor: {
@@ -877,10 +1021,82 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           availableEditors,
         };
 
+      case WS_METHODS.serverGenerateSecretUrl: {
+        const body = stripRequestTag(request.body);
+        if (!authToken) {
+          return yield* new RouteRequestError({
+            message: "Secret URLs require T3CODE_AUTH_TOKEN to be configured.",
+          });
+        }
+
+        pruneExpiredAuthEntries();
+
+        const suggestedOrigins = collectPublicOrigins(port, host, remoteAccessOrigin);
+        const preferredSuggestedOrigin =
+          suggestedOrigins.find((candidate) => !isLoopbackHostname(new URL(candidate).hostname)) ??
+          suggestedOrigins[0] ??
+          `http://localhost:${port}`;
+
+        const publicOrigin = yield* Effect.try({
+          try: () => {
+            const requestedOrigin = body.origin
+              ? new URL(body.origin)
+              : new URL(preferredSuggestedOrigin);
+            if (requestedOrigin.protocol !== "http:" && requestedOrigin.protocol !== "https:") {
+              throw new Error("Secret URL origin must use http or https.");
+            }
+            return requestedOrigin.origin;
+          },
+          catch: (error) =>
+            new RouteRequestError({
+              message:
+                error instanceof Error && error.message.trim().length > 0
+                  ? error.message
+                  : "Invalid secret URL origin.",
+            }),
+        });
+
+        const code = crypto.randomUUID();
+        const expiresAt = new Date(Date.now() + SECRET_LINK_TTL_MS).toISOString();
+        secretAccessGrants.set(code, {
+          expiresAt: Date.parse(expiresAt),
+          redirectTo: resolveRedirectTarget("/"),
+        });
+
+        const publicUrl = new URL(SECRET_LINK_PATH, publicOrigin);
+        publicUrl.searchParams.set(SECRET_LINK_QUERY_PARAM, code);
+        return {
+          url: publicUrl.toString(),
+          expiresAt,
+          oneTime: true,
+          remoteReachable: !isLoopbackHostname(publicUrl.hostname),
+        };
+      }
       case WS_METHODS.serverUpsertKeybinding: {
         const body = stripRequestTag(request.body);
         const keybindingsConfig = yield* keybindingsManager.upsertKeybindingRule(body);
         return { keybindings: keybindingsConfig, issues: [] };
+      }
+
+      case WS_METHODS.codexImportListSessions: {
+        const body = stripRequestTag(request.body);
+        return yield* codexImport
+          .listSessions(body)
+          .pipe(Effect.mapError((error) => new RouteRequestError({ message: error.message })));
+      }
+
+      case WS_METHODS.codexImportPeekSession: {
+        const body = stripRequestTag(request.body);
+        return yield* codexImport
+          .peekSession(body)
+          .pipe(Effect.mapError((error) => new RouteRequestError({ message: error.message })));
+      }
+
+      case WS_METHODS.codexImportImportSessions: {
+        const body = stripRequestTag(request.body);
+        return yield* codexImport
+          .importSessions(body)
+          .pipe(Effect.mapError((error) => new RouteRequestError({ message: error.message })));
       }
 
       default: {
@@ -954,6 +1170,88 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   });
 
   wss.on("connection", (ws) => {
+    if (upstreamProxyUrl) {
+      const upstream = new NodeWebSocket(upstreamProxyUrl);
+      const pendingMessages: string[] = [];
+
+      const flushPendingMessages = () => {
+        while (pendingMessages.length > 0 && upstream.readyState === NodeWebSocket.OPEN) {
+          const message = pendingMessages.shift();
+          if (message !== undefined) {
+            upstream.send(message);
+          }
+        }
+      };
+
+      const closeUpstream = () => {
+        if (
+          upstream.readyState === NodeWebSocket.OPEN ||
+          upstream.readyState === NodeWebSocket.CONNECTING
+        ) {
+          upstream.close();
+        }
+      };
+
+      upstream.on("open", () => {
+        flushPendingMessages();
+      });
+
+      upstream.on("message", (raw) => {
+        const text = websocketRawToString(raw);
+        if (text !== null && ws.readyState === ws.OPEN) {
+          ws.send(text);
+        }
+      });
+
+      upstream.on("close", () => {
+        if (ws.readyState === ws.OPEN || ws.readyState === ws.CONNECTING) {
+          ws.close();
+        }
+      });
+
+      upstream.on("error", () => {
+        if (ws.readyState === ws.OPEN || ws.readyState === ws.CONNECTING) {
+          ws.close(1011, "Upstream desktop backend unavailable");
+        }
+      });
+
+      ws.on("message", (raw) => {
+        const text = websocketRawToString(raw);
+        if (text === null) {
+          return;
+        }
+
+        try {
+          const parsed = JSON.parse(text) as { body?: { _tag?: string } };
+          if (parsed.body?._tag?.startsWith("server.")) {
+            void runPromise(
+              handleMessage(ws, raw).pipe(
+                Effect.catch((error) =>
+                  Effect.logError("Error handling local server message", error),
+                ),
+              ),
+            );
+            return;
+          }
+        } catch {
+          // Fall through to upstream proxy handling for malformed JSON so the upstream backend
+          // can respond consistently.
+        }
+
+        if (upstream.readyState === NodeWebSocket.OPEN) {
+          upstream.send(text);
+          return;
+        }
+
+        if (upstream.readyState === NodeWebSocket.CONNECTING) {
+          pendingMessages.push(text);
+        }
+      });
+
+      ws.on("close", closeUpstream);
+      ws.on("error", closeUpstream);
+      return;
+    }
     const segments = cwd.split(/[/\\]/).filter(Boolean);
     const projectName = segments[segments.length - 1] ?? "project";
 

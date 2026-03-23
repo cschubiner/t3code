@@ -1125,6 +1125,8 @@ const make = Effect.gen(function* () {
 
       if (event.type === "runtime.error") {
         const runtimeErrorMessage = runtimeErrorMessageFromEvent(event) ?? "Provider runtime error";
+        const preservesActiveTurn =
+          activeTurnId !== null && (eventTurnId === undefined || sameId(activeTurnId, eventTurnId));
 
         const shouldApplyRuntimeError = !STRICT_PROVIDER_LIFECYCLE_GUARD
           ? true
@@ -1137,10 +1139,10 @@ const make = Effect.gen(function* () {
             threadId: thread.id,
             session: {
               threadId: thread.id,
-              status: "error",
+              status: preservesActiveTurn ? "running" : "error",
               providerName: event.provider,
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
-              activeTurnId: eventTurnId ?? null,
+              activeTurnId: preservesActiveTurn ? activeTurnId : (eventTurnId ?? null),
               lastError: runtimeErrorMessage,
               updatedAt: now,
             },

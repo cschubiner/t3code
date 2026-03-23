@@ -1,4 +1,5 @@
 import {
+  ArrowDownToLineIcon,
   ArrowLeftIcon,
   ChevronRightIcon,
   FolderIcon,
@@ -35,13 +36,19 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
+import { useLocation, useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import { useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { isLinuxPlatform, isMacPlatform, newCommandId, newProjectId } from "../lib/utils";
+import { formatRelativeTime } from "../lib/relativeTime";
 import { useStore } from "../store";
-import { shortcutLabelForCommand } from "../keybindings";
+import {
+  isChatNewLocalShortcut,
+  isChatNewShortcut,
+  resolveShortcutCommand,
+  shortcutLabelForCommand,
+} from "../keybindings";
 import { derivePendingApprovals, derivePendingUserInputs } from "../session-logic";
 import { gitRemoveWorktreeMutationOptions, gitStatusQueryOptions } from "../lib/gitReactQuery";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
@@ -65,6 +72,9 @@ import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
 import { Button } from "./ui/button";
 import { Collapsible, CollapsibleContent } from "./ui/collapsible";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { ImportFromCodexDialog } from "./ImportFromCodexDialog";
+import { GlobalThreadSearchDialog } from "./GlobalThreadSearchDialog";
+import { ProjectFolderSearchDialog } from "./ProjectFolderSearchDialog";
 import {
   SidebarContent,
   SidebarFooter,
@@ -81,28 +91,43 @@ import {
   SidebarTrigger,
 } from "./ui/sidebar";
 import { useThreadSelectionStore } from "../threadSelectionStore";
-import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
+import { useThreadNavigationHistoryStore } from "../threadNavigationHistoryStore";
+import { useThreadActivityStore } from "../threadActivityStore";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 import {
   resolveProjectStatusIndicator,
+  isTypingInSidebarTextEntry,
+  projectNavigationTargetsForSidebar,
   resolveSidebarNewThreadEnvMode,
+  resolveSidebarProjectNavigationTarget,
+  resolveSidebarThreadNavigationTarget,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
+  sortThreadsForSidebar,
+  visibleThreadIdsForSidebar,
+  visibleThreadsForSidebar,
 } from "./Sidebar.logic";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import {
+  confirmAndDeleteThreadWithSidebarBehavior,
+  deleteThreadWithSidebarBehavior,
+} from "../lib/threadDeletion";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
 
-function formatRelativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const minutes = Math.floor(diff / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
+function threadIdFromSidebarPathname(pathname: string): ThreadId | null {
+  if (!pathname.startsWith("/")) {
+    return null;
+  }
+
+  const candidate = pathname.slice(1).split("/", 1)[0];
+  if (!candidate || candidate === "settings") {
+    return null;
+  }
+
+  return ThreadId.makeUnsafe(candidate);
 }
 
 interface TerminalStatusIndicator {
@@ -257,11 +282,14 @@ export default function Sidebar() {
   const threads = useStore((store) => store.threads);
   const markThreadUnread = useStore((store) => store.markThreadUnread);
   const toggleProject = useStore((store) => store.toggleProject);
+  const setProjectExpanded = useStore((store) => store.setProjectExpanded);
   const reorderProjects = useStore((store) => store.reorderProjects);
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearThreadDraft);
   const getDraftThreadByProjectId = useComposerDraftStore(
     (store) => store.getDraftThreadByProjectId,
   );
+  const getDraftThread = useComposerDraftStore((store) => store.getDraftThread);
+  const draftThreadsByThreadId = useComposerDraftStore((store) => store.draftThreadsByThreadId);
   const terminalStateByThreadId = useTerminalStateStore((state) => state.terminalStateByThreadId);
   const clearTerminalState = useTerminalStateStore((state) => state.clearTerminalState);
   const clearProjectDraftThreadId = useComposerDraftStore(
@@ -300,6 +328,11 @@ export default function Sidebar() {
   const dragInProgressRef = useRef(false);
   const suppressProjectClickAfterDragRef = useRef(false);
   const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
+  const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
+  const [isGlobalThreadSearchOpen, setIsGlobalThreadSearchOpen] = useState(false);
+  const [globalThreadSearchFocusRequestId, setGlobalThreadSearchFocusRequestId] = useState(0);
+  const [isProjectFolderSearchOpen, setIsProjectFolderSearchOpen] = useState(false);
+  const [projectFolderSearchFocusRequestId, setProjectFolderSearchFocusRequestId] = useState(0);
   const selectedThreadIds = useThreadSelectionStore((s) => s.selectedThreadIds);
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
   const rangeSelectTo = useThreadSelectionStore((s) => s.rangeSelectTo);
@@ -307,12 +340,58 @@ export default function Sidebar() {
   const removeFromSelection = useThreadSelectionStore((s) => s.removeFromSelection);
   const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
   const isLinuxDesktop = isElectron && isLinuxPlatform(navigator.platform);
+  const navigateHistory = useThreadNavigationHistoryStore((s) => s.navigateHistory);
+  const recordHistoryVisit = useThreadNavigationHistoryStore((s) => s.recordVisit);
+  const router = useRouter();
   const shouldBrowseForProjectImmediately = isElectron && !isLinuxDesktop;
   const shouldShowProjectPathEntry = addingProject && !shouldBrowseForProjectImmediately;
   const projectCwdById = useMemo(
     () => new Map(projects.map((project) => [project.id, project.cwd] as const)),
     [projects],
   );
+  const visibleSidebarThreadIds = useMemo(
+    () =>
+      visibleThreadIdsForSidebar({
+        projects,
+        threads,
+        expandedThreadListsByProject,
+        threadPreviewLimit: THREAD_PREVIEW_LIMIT,
+      }),
+    [expandedThreadListsByProject, projects, threads],
+  );
+  const transientWorkByThreadId = useThreadActivityStore((state) => state.transientWorkByThreadId);
+  const sidebarProjectTargets = useMemo(
+    () =>
+      projectNavigationTargetsForSidebar({
+        projects,
+        threads,
+      }),
+    [projects, threads],
+  );
+  const draftThreadIds = useMemo(
+    () => Object.keys(draftThreadsByThreadId) as ThreadId[],
+    [draftThreadsByThreadId],
+  );
+  const availableHistoryThreadIds = useMemo(
+    () => [...new Set([...threads.map((thread) => thread.id), ...draftThreadIds])],
+    [draftThreadIds, threads],
+  );
+  const keybindingsRef = useRef(keybindings);
+  const projectsRef = useRef(projects);
+  const threadsRef = useRef(threads);
+  const routeThreadIdRef = useRef(routeThreadId);
+  const visibleSidebarThreadIdsRef = useRef(visibleSidebarThreadIds);
+  const sidebarProjectTargetsRef = useRef(sidebarProjectTargets);
+  const availableHistoryThreadIdsRef = useRef(availableHistoryThreadIds);
+  const selectedThreadCountRef = useRef(selectedThreadIds.size);
+  keybindingsRef.current = keybindings;
+  projectsRef.current = projects;
+  threadsRef.current = threads;
+  routeThreadIdRef.current = routeThreadId;
+  visibleSidebarThreadIdsRef.current = visibleSidebarThreadIds;
+  sidebarProjectTargetsRef.current = sidebarProjectTargets;
+  availableHistoryThreadIdsRef.current = availableHistoryThreadIds;
+  selectedThreadCountRef.current = selectedThreadIds.size;
   const threadGitTargets = useMemo(
     () =>
       threads.map((thread) => ({
@@ -385,13 +464,7 @@ export default function Sidebar() {
 
   const focusMostRecentThreadForProject = useCallback(
     (projectId: ProjectId) => {
-      const latestThread = threads
-        .filter((thread) => thread.projectId === projectId)
-        .toSorted((a, b) => {
-          const byDate = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-          if (byDate !== 0) return byDate;
-          return b.id.localeCompare(a.id);
-        })[0];
+      const latestThread = sortThreadsForSidebar(projectId, threads)[0];
       if (!latestThread) return;
 
       void navigate({
@@ -400,6 +473,30 @@ export default function Sidebar() {
       });
     },
     [navigate, threads],
+  );
+
+  const navigateToThreadFromShortcut = useCallback(
+    (
+      threadId: ThreadId,
+      options?: {
+        expandProjectId?: ProjectId;
+        recordHistory?: boolean;
+      },
+    ) => {
+      if (options?.recordHistory ?? true) {
+        recordHistoryVisit(threadId);
+      }
+      if (options?.expandProjectId) {
+        setProjectExpanded(options.expandProjectId, true);
+      }
+      clearSelection();
+      setSelectionAnchor(threadId);
+      void navigate({
+        to: "/$threadId",
+        params: { threadId },
+      });
+    },
+    [clearSelection, navigate, recordHistoryVisit, setProjectExpanded, setSelectionAnchor],
   );
 
   const addProjectFromPath = useCallback(
@@ -505,6 +602,15 @@ export default function Sidebar() {
     renamingInputRef.current = null;
   }, []);
 
+  const startRenameThread = useCallback((threadId: ThreadId) => {
+    const thread = threadsRef.current.find((entry) => entry.id === threadId);
+    if (!thread) return false;
+    setRenamingThreadId(threadId);
+    setRenamingTitle(thread.title);
+    renamingCommittedRef.current = false;
+    return true;
+  }, []);
+
   const commitRename = useCallback(
     async (threadId: ThreadId, newTitle: string, originalTitle: string) => {
       const finishRename = () => {
@@ -549,110 +655,33 @@ export default function Sidebar() {
     [],
   );
 
-  /**
-   * Delete a single thread: stop session, close terminal, dispatch delete,
-   * clean up drafts/state, and optionally remove orphaned worktree.
-   * Callers handle thread-level confirmation; this still prompts for worktree removal.
-   */
   const deleteThread = useCallback(
     async (
       threadId: ThreadId,
       opts: { deletedThreadIds?: ReadonlySet<ThreadId> } = {},
     ): Promise<void> => {
-      const api = readNativeApi();
-      if (!api) return;
-      const thread = threads.find((t) => t.id === threadId);
-      if (!thread) return;
-      const threadProject = projects.find((project) => project.id === thread.projectId);
-      // When bulk-deleting, exclude the other threads being deleted so
-      // getOrphanedWorktreePathForThread correctly detects that no surviving
-      // threads will reference this worktree.
-      const deletedIds = opts.deletedThreadIds;
-      const survivingThreads =
-        deletedIds && deletedIds.size > 0
-          ? threads.filter((t) => t.id === threadId || !deletedIds.has(t.id))
-          : threads;
-      const orphanedWorktreePath = getOrphanedWorktreePathForThread(survivingThreads, threadId);
-      const displayWorktreePath = orphanedWorktreePath
-        ? formatWorktreePathForDisplay(orphanedWorktreePath)
-        : null;
-      const canDeleteWorktree = orphanedWorktreePath !== null && threadProject !== undefined;
-      const shouldDeleteWorktree =
-        canDeleteWorktree &&
-        (await api.dialogs.confirm(
-          [
-            "This thread is the only one linked to this worktree:",
-            displayWorktreePath ?? orphanedWorktreePath,
-            "",
-            "Delete the worktree too?",
-          ].join("\n"),
-        ));
-
-      if (thread.session && thread.session.status !== "closed") {
-        await api.orchestration
-          .dispatchCommand({
-            type: "thread.session.stop",
-            commandId: newCommandId(),
-            threadId,
-            createdAt: new Date().toISOString(),
-          })
-          .catch(() => undefined);
-      }
-
-      try {
-        await api.terminal.close({ threadId, deleteHistory: true });
-      } catch {
-        // Terminal may already be closed
-      }
-
-      const allDeletedIds = deletedIds ?? new Set<ThreadId>();
-      const shouldNavigateToFallback = routeThreadId === threadId;
-      const fallbackThreadId =
-        threads.find((entry) => entry.id !== threadId && !allDeletedIds.has(entry.id))?.id ?? null;
-      await api.orchestration.dispatchCommand({
-        type: "thread.delete",
-        commandId: newCommandId(),
+      await deleteThreadWithSidebarBehavior({
         threadId,
-      });
-      clearComposerDraftForThread(threadId);
-      clearProjectDraftThreadById(thread.projectId, thread.id);
-      clearTerminalState(threadId);
-      if (shouldNavigateToFallback) {
-        if (fallbackThreadId) {
-          void navigate({
-            to: "/$threadId",
-            params: { threadId: fallbackThreadId },
-            replace: true,
-          });
-        } else {
+        deletedThreadIds: opts.deletedThreadIds,
+        threads,
+        projects,
+        routeThreadId,
+        clearComposerDraftForThread,
+        clearProjectDraftThreadById,
+        clearTerminalState,
+        navigateToThread: (nextThreadId) => {
+          if (nextThreadId) {
+            void navigate({
+              to: "/$threadId",
+              params: { threadId: nextThreadId },
+              replace: true,
+            });
+            return;
+          }
           void navigate({ to: "/", replace: true });
-        }
-      }
-
-      if (!shouldDeleteWorktree || !orphanedWorktreePath || !threadProject) {
-        return;
-      }
-
-      try {
-        await removeWorktreeMutation.mutateAsync({
-          cwd: threadProject.cwd,
-          path: orphanedWorktreePath,
-          force: true,
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Unknown error removing worktree.";
-        console.error("Failed to remove orphaned worktree after thread deletion", {
-          threadId,
-          projectCwd: threadProject.cwd,
-          worktreePath: orphanedWorktreePath,
-          error,
-        });
-        toastManager.add({
-          type: "error",
-          title: "Thread deleted, but worktree removal failed",
-          description: `Could not remove ${displayWorktreePath ?? orphanedWorktreePath}. ${message}`,
-        });
-      }
+        },
+        removeWorktree: (input) => removeWorktreeMutation.mutateAsync(input),
+      });
     },
     [
       clearComposerDraftForThread,
@@ -718,9 +747,7 @@ export default function Sidebar() {
       );
 
       if (clicked === "rename") {
-        setRenamingThreadId(threadId);
-        setRenamingTitle(thread.title);
-        renamingCommittedRef.current = false;
+        startRenameThread(threadId);
         return;
       }
 
@@ -745,26 +772,43 @@ export default function Sidebar() {
         return;
       }
       if (clicked !== "delete") return;
-      if (appSettings.confirmThreadDelete) {
-        const confirmed = await api.dialogs.confirm(
-          [
-            `Delete thread "${thread.title}"?`,
-            "This permanently clears conversation history for this thread.",
-          ].join("\n"),
-        );
-        if (!confirmed) {
-          return;
-        }
-      }
-      await deleteThread(threadId);
+      await confirmAndDeleteThreadWithSidebarBehavior({
+        threadId,
+        confirmBeforeDelete: appSettings.confirmThreadDelete,
+        threads,
+        projects,
+        routeThreadId,
+        clearComposerDraftForThread,
+        clearProjectDraftThreadById,
+        clearTerminalState,
+        navigateToThread: (nextThreadId) => {
+          if (nextThreadId) {
+            void navigate({
+              to: "/$threadId",
+              params: { threadId: nextThreadId },
+              replace: true,
+            });
+            return;
+          }
+          void navigate({ to: "/", replace: true });
+        },
+        removeWorktree: (input) => removeWorktreeMutation.mutateAsync(input),
+      });
     },
     [
       appSettings.confirmThreadDelete,
       copyPathToClipboard,
       copyThreadIdToClipboard,
-      deleteThread,
+      clearComposerDraftForThread,
+      clearProjectDraftThreadById,
+      clearTerminalState,
       markThreadUnread,
+      navigate,
       projectCwdById,
+      projects,
+      removeWorktreeMutation,
+      routeThreadId,
+      startRenameThread,
       threads,
     ],
   );
@@ -990,18 +1034,179 @@ export default function Sidebar() {
   );
 
   useEffect(() => {
+    const isTerminalFocused = (): boolean => {
+      const activeElement = document.activeElement;
+      if (!(activeElement instanceof HTMLElement)) return false;
+      if (activeElement.classList.contains("xterm-helper-textarea")) return true;
+      return activeElement.closest(".thread-terminal-drawer .xterm") !== null;
+    };
+    const isAnotherDialogOpen = (): boolean => {
+      if (isGlobalThreadSearchOpen || isProjectFolderSearchOpen) {
+        return false;
+      }
+      return (
+        document.querySelector("[data-slot='dialog-popup']") !== null ||
+        document.querySelector("[data-slot='command-dialog-popup']") !== null
+      );
+    };
+
+    const onWindowKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+
+      if (event.key === "Escape" && selectedThreadCountRef.current > 0) {
+        event.preventDefault();
+        clearSelection();
+        return;
+      }
+
+      const resolvedCommand = resolveShortcutCommand(event, keybindingsRef.current, {
+        context: {
+          terminalFocus: isTerminalFocused(),
+        },
+      });
+      const currentRouteThreadId =
+        threadIdFromSidebarPathname(router.state.location.pathname) ?? routeThreadIdRef.current;
+      const currentThreads = threadsRef.current;
+      const activeThread = currentRouteThreadId
+        ? currentThreads.find((thread) => thread.id === currentRouteThreadId)
+        : undefined;
+      const activeDraftThread = currentRouteThreadId ? getDraftThread(currentRouteThreadId) : null;
+      if (
+        resolvedCommand === "sidebar.history.previous" ||
+        resolvedCommand === "sidebar.history.next" ||
+        resolvedCommand === "sidebar.thread.previous" ||
+        resolvedCommand === "sidebar.thread.next" ||
+        resolvedCommand === "sidebar.project.previous" ||
+        resolvedCommand === "sidebar.project.next" ||
+        resolvedCommand === "sidebar.rename"
+      ) {
+        if (isTypingInSidebarTextEntry(event.target)) return;
+      }
+
+      if (
+        resolvedCommand === "sidebar.history.previous" ||
+        resolvedCommand === "sidebar.history.next"
+      ) {
+        const destinationThreadId = navigateHistory(
+          resolvedCommand === "sidebar.history.previous" ? "previous" : "next",
+          availableHistoryThreadIdsRef.current,
+        );
+        if (!destinationThreadId) return;
+
+        event.preventDefault();
+        navigateToThreadFromShortcut(destinationThreadId, { recordHistory: false });
+        return;
+      }
+
+      if (resolvedCommand === "threads.search") {
+        if (isAnotherDialogOpen()) {
+          return;
+        }
+        event.preventDefault();
+        setIsGlobalThreadSearchOpen(true);
+        setGlobalThreadSearchFocusRequestId((current) => current + 1);
+        return;
+      }
+      if (resolvedCommand === "projects.search") {
+        if (isAnotherDialogOpen()) {
+          return;
+        }
+        event.preventDefault();
+        setIsProjectFolderSearchOpen(true);
+        setProjectFolderSearchFocusRequestId((current) => current + 1);
+        return;
+      }
+      if (
+        resolvedCommand === "sidebar.thread.previous" ||
+        resolvedCommand === "sidebar.thread.next"
+      ) {
+        const destinationThreadId = resolveSidebarThreadNavigationTarget({
+          orderedVisibleThreadIds: visibleSidebarThreadIdsRef.current,
+          currentThreadId: currentRouteThreadId,
+          direction: resolvedCommand === "sidebar.thread.previous" ? "previous" : "next",
+        });
+        if (!destinationThreadId) return;
+
+        event.preventDefault();
+        navigateToThreadFromShortcut(destinationThreadId);
+        return;
+      }
+
+      if (
+        resolvedCommand === "sidebar.project.previous" ||
+        resolvedCommand === "sidebar.project.next"
+      ) {
+        const destination = resolveSidebarProjectNavigationTarget({
+          orderedProjectTargets: sidebarProjectTargetsRef.current,
+          currentProjectId: activeThread?.projectId ?? activeDraftThread?.projectId ?? null,
+          direction: resolvedCommand === "sidebar.project.previous" ? "previous" : "next",
+        });
+        if (!destination) return;
+
+        event.preventDefault();
+        navigateToThreadFromShortcut(destination.threadId, {
+          expandProjectId: destination.projectId,
+        });
+        return;
+      }
+
+      if (resolvedCommand === "sidebar.rename") {
+        const selectedIds = [...selectedThreadIds];
+        const renameTargetThreadId =
+          selectedIds.length === 1 ? selectedIds[0] : (currentRouteThreadId ?? null);
+        if (!renameTargetThreadId) return;
+        if (!currentThreads.some((thread) => thread.id === renameTargetThreadId)) return;
+
+        event.preventDefault();
+        startRenameThread(renameTargetThreadId);
+        return;
+      }
+
+      if (isChatNewLocalShortcut(event, keybindingsRef.current)) {
+        const projectId =
+          activeThread?.projectId ?? activeDraftThread?.projectId ?? projectsRef.current[0]?.id;
+        if (!projectId) return;
+        event.preventDefault();
+        void handleNewThread(projectId);
+        return;
+      }
+
+      if (!isChatNewShortcut(event, keybindingsRef.current)) return;
+      const projectId =
+        activeThread?.projectId ?? activeDraftThread?.projectId ?? projectsRef.current[0]?.id;
+      if (!projectId) return;
+      event.preventDefault();
+      void handleNewThread(projectId, {
+        branch: activeThread?.branch ?? activeDraftThread?.branch ?? null,
+        worktreePath: activeThread?.worktreePath ?? activeDraftThread?.worktreePath ?? null,
+        envMode: activeDraftThread?.envMode ?? (activeThread?.worktreePath ? "worktree" : "local"),
+      });
+    };
     const onMouseDown = (event: globalThis.MouseEvent) => {
-      if (selectedThreadIds.size === 0) return;
+      if (selectedThreadCountRef.current === 0) return;
       const target = event.target instanceof HTMLElement ? event.target : null;
       if (!shouldClearThreadSelectionOnMouseDown(target)) return;
       clearSelection();
     };
 
+    window.addEventListener("keydown", onWindowKeyDown);
     window.addEventListener("mousedown", onMouseDown);
     return () => {
+      window.removeEventListener("keydown", onWindowKeyDown);
       window.removeEventListener("mousedown", onMouseDown);
     };
-  }, [clearSelection, selectedThreadIds.size]);
+  }, [
+    clearSelection,
+    getDraftThread,
+    handleNewThread,
+    navigateHistory,
+    navigateToThreadFromShortcut,
+    router,
+    isGlobalThreadSearchOpen,
+    isProjectFolderSearchOpen,
+    selectedThreadIds,
+    startRenameThread,
+  ]);
 
   useEffect(() => {
     if (!isElectron) return;
@@ -1068,6 +1273,16 @@ export default function Sidebar() {
       shortcutLabelForCommand(keybindings, "chat.newLocal") ??
       shortcutLabelForCommand(keybindings, "chat.new"),
     [keybindings],
+  );
+  const handleProjectFolderSearchSelect = useCallback(
+    async (projectId: ProjectId) => {
+      await handleNewThread(projectId, {
+        envMode: resolveSidebarNewThreadEnvMode({
+          defaultEnvMode: appSettings.defaultThreadEnvMode,
+        }),
+      });
+    },
+    [appSettings.defaultThreadEnvMode, handleNewThread],
   );
 
   const handleDesktopUpdateButtonClick = useCallback(() => {
@@ -1232,28 +1447,45 @@ export default function Sidebar() {
             <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
               Projects
             </span>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <button
-                    type="button"
-                    aria-label={shouldShowProjectPathEntry ? "Cancel add project" : "Add project"}
-                    aria-pressed={shouldShowProjectPathEntry}
-                    className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
-                    onClick={handleStartAddProject}
+            <div className="flex items-center gap-1">
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      aria-label="Import from Codex"
+                      className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+                      onClick={() => setIsImportDialogOpen(true)}
+                    />
+                  }
+                >
+                  <ArrowDownToLineIcon className="size-3.5" />
+                </TooltipTrigger>
+                <TooltipPopup side="right">Import from Codex</TooltipPopup>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      aria-label="Add project"
+                      aria-pressed={shouldShowProjectPathEntry}
+                      className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+                      onClick={handleStartAddProject}
+                    />
+                  }
+                >
+                  <PlusIcon
+                    className={`size-3.5 transition-transform duration-150 ${
+                      shouldShowProjectPathEntry ? "rotate-45" : "rotate-0"
+                    }`}
                   />
-                }
-              >
-                <PlusIcon
-                  className={`size-3.5 transition-transform duration-150 ${
-                    shouldShowProjectPathEntry ? "rotate-45" : "rotate-0"
-                  }`}
-                />
-              </TooltipTrigger>
-              <TooltipPopup side="right">
-                {shouldShowProjectPathEntry ? "Cancel add project" : "Add project"}
-              </TooltipPopup>
-            </Tooltip>
+                </TooltipTrigger>
+                <TooltipPopup side="right">
+                  {shouldShowProjectPathEntry ? "Cancel add project" : "Add project"}
+                </TooltipPopup>
+              </Tooltip>
+            </div>
           </div>
 
           {shouldShowProjectPathEntry && (
@@ -1335,14 +1567,7 @@ export default function Sidebar() {
                 strategy={verticalListSortingStrategy}
               >
                 {projects.map((project) => {
-                  const projectThreads = threads
-                    .filter((thread) => thread.projectId === project.id)
-                    .toSorted((a, b) => {
-                      const byDate =
-                        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-                      if (byDate !== 0) return byDate;
-                      return b.id.localeCompare(a.id);
-                    });
+                  const projectThreads = sortThreadsForSidebar(project.id, threads);
                   const projectStatus = resolveProjectStatusIndicator(
                     projectThreads.map((thread) =>
                       resolveThreadStatusPill({
@@ -1354,10 +1579,11 @@ export default function Sidebar() {
                   );
                   const isThreadListExpanded = expandedThreadListsByProject.has(project.id);
                   const hasHiddenThreads = projectThreads.length > THREAD_PREVIEW_LIMIT;
-                  const visibleThreads =
-                    hasHiddenThreads && !isThreadListExpanded
-                      ? projectThreads.slice(0, THREAD_PREVIEW_LIMIT)
-                      : projectThreads;
+                  const visibleThreads = visibleThreadsForSidebar({
+                    projectThreads,
+                    isThreadListExpanded,
+                    threadPreviewLimit: THREAD_PREVIEW_LIMIT,
+                  });
                   const orderedProjectThreadIds = projectThreads.map((thread) => thread.id);
 
                   return (
@@ -1455,6 +1681,7 @@ export default function Sidebar() {
                                     derivePendingApprovals(thread.activities).length > 0,
                                   hasPendingUserInput:
                                     derivePendingUserInputs(thread.activities).length > 0,
+                                  hasTransientWork: Boolean(transientWorkByThreadId[thread.id]),
                                 });
                                 const prStatus = prStatusIndicator(
                                   prByThreadId.get(thread.id) ?? null,
@@ -1675,6 +1902,25 @@ export default function Sidebar() {
           )}
         </SidebarGroup>
       </SidebarContent>
+
+      <ImportFromCodexDialog
+        open={isImportDialogOpen}
+        codexHomePath={appSettings.codexHomePath}
+        onOpenChange={setIsImportDialogOpen}
+      />
+      <GlobalThreadSearchDialog
+        open={isGlobalThreadSearchOpen}
+        onOpenChange={setIsGlobalThreadSearchOpen}
+        activeThreadId={routeThreadId}
+        focusRequestId={globalThreadSearchFocusRequestId}
+      />
+      <ProjectFolderSearchDialog
+        open={isProjectFolderSearchOpen}
+        onOpenChange={setIsProjectFolderSearchOpen}
+        projects={projects}
+        focusRequestId={projectFolderSearchFocusRequestId}
+        onSelectProject={handleProjectFolderSearchSelect}
+      />
 
       <SidebarSeparator />
       <SidebarFooter className="p-2">

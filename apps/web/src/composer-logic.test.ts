@@ -24,6 +24,30 @@ describe("detectComposerTrigger", () => {
     });
   });
 
+  it("detects $skill triggers at cursor", () => {
+    const text = "run $sla";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "skill",
+      query: "sla",
+      rangeStart: "run ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("detects %snippet triggers at cursor", () => {
+    const text = "reuse %summ";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "snippet",
+      query: "summ",
+      rangeStart: "reuse ".length,
+      rangeEnd: text.length,
+    });
+  });
+
   it("detects slash command token while typing command name", () => {
     const text = "/mo";
     const trigger = detectComposerTrigger(text, text.length);
@@ -98,6 +122,20 @@ describe("detectComposerTrigger", () => {
     expect(trigger).not.toBeNull();
     expect(trigger?.kind).toBe("path");
     expect(trigger?.query).toBe("");
+  });
+
+  it("does not treat shell variable patterns as skill triggers", () => {
+    expect(detectComposerTrigger("echo $$", "echo $$".length)).toBeNull();
+    expect(detectComposerTrigger("echo ${FOO}", "echo ${FOO}".length)).toBeNull();
+    expect(detectComposerTrigger("echo $(pwd)", "echo $(pwd)".length)).toBeNull();
+    expect(detectComposerTrigger("echo \\$skill", "echo \\$skill".length)).toBeNull();
+    expect(detectComposerTrigger("echo $PATH", "echo $PATH".length)).toBeNull();
+    expect(detectComposerTrigger("echo $1", "echo $1".length)).toBeNull();
+  });
+
+  it("does not open snippet trigger for bare % or double %%", () => {
+    expect(detectComposerTrigger("reuse %", "reuse %".length)).toBeNull();
+    expect(detectComposerTrigger("reuse %%", "reuse %%".length)).toBeNull();
   });
 });
 
@@ -242,6 +280,10 @@ describe("parseStandaloneComposerSlashCommand", () => {
 
   it("parses standalone /default command", () => {
     expect(parseStandaloneComposerSlashCommand("/default")).toBe("default");
+  });
+
+  it("parses standalone /delete command", () => {
+    expect(parseStandaloneComposerSlashCommand(" /delete ")).toBe("delete");
   });
 
   it("ignores slash commands with extra message text", () => {
