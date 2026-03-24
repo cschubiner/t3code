@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { ProjectId, ThreadId } from "@t3tools/contracts";
 
 import {
+  deriveThreadSidebarPullRequestReferences,
+  extractSidebarPullRequestReferences,
   getVisibleThreadsForProject,
   getProjectSortTimestamp,
   hasUnseenCompletion,
@@ -68,6 +70,7 @@ function makeNavigationThread(
     proposedPlans: [],
     error: null,
     createdAt,
+    updatedAt: createdAt,
     latestTurn: null,
     branch: null,
     worktreePath: null,
@@ -149,6 +152,96 @@ describe("resolveSidebarNewThreadEnvMode", () => {
         defaultEnvMode: "worktree",
       }),
     ).toBe("local");
+  });
+});
+
+describe("extractSidebarPullRequestReferences", () => {
+  it("extracts GitHub pull request URLs from arbitrary text", () => {
+    expect(
+      extractSidebarPullRequestReferences(
+        "Check https://github.com/pingdotgg/t3code/pull/42 before landing.",
+      ),
+    ).toEqual([
+      {
+        url: "https://github.com/pingdotgg/t3code/pull/42",
+        owner: "pingdotgg",
+        repo: "t3code",
+        number: "42",
+      },
+    ]);
+  });
+
+  it("ignores duplicate references in the same text blob", () => {
+    expect(
+      extractSidebarPullRequestReferences(
+        "Refs https://github.com/pingdotgg/t3code/pull/42 and https://github.com/pingdotgg/t3code/pull/42",
+      ),
+    ).toHaveLength(1);
+  });
+});
+
+describe("deriveThreadSidebarPullRequestReferences", () => {
+  it("returns references in first-seen order across messages and queued turns", () => {
+    const thread: Parameters<typeof deriveThreadSidebarPullRequestReferences>[0] = {
+      messages: [
+        {
+          id: "message-1" as never,
+          role: "user" as const,
+          text: "Compare https://github.com/pingdotgg/t3code/pull/42 first",
+          createdAt: "2026-03-09T10:00:00.000Z",
+          streaming: false,
+        },
+      ],
+      queuedTurns: [
+        {
+          messageId: "message-queued" as never,
+          text: "Also review https://github.com/cschubiner/t3code/pull/55",
+          attachments: [],
+          provider: null,
+          model: null,
+          modelOptions: null,
+          providerOptions: null,
+          assistantDeliveryMode: "streaming" as const,
+          runtimeMode: "full-access" as const,
+          interactionMode: "default" as const,
+          queuedAt: "2026-03-09T10:01:00.000Z",
+        },
+      ],
+      worktreePath: "/tmp/t3code-pr-refs",
+    };
+
+    expect(deriveThreadSidebarPullRequestReferences(thread)).toEqual([
+      {
+        url: "https://github.com/pingdotgg/t3code/pull/42",
+        owner: "pingdotgg",
+        repo: "t3code",
+        number: "42",
+      },
+      {
+        url: "https://github.com/cschubiner/t3code/pull/55",
+        owner: "cschubiner",
+        repo: "t3code",
+        number: "55",
+      },
+    ]);
+  });
+
+  it("skips local threads without a worktree path", () => {
+    expect(
+      deriveThreadSidebarPullRequestReferences({
+        messages: [
+          {
+            id: "message-1" as never,
+            role: "user",
+            text: "https://github.com/pingdotgg/t3code/pull/42",
+            createdAt: "2026-03-09T10:00:00.000Z",
+            streaming: false,
+          },
+        ],
+        queuedTurns: [],
+        worktreePath: null,
+      }),
+    ).toEqual([]);
   });
 });
 
