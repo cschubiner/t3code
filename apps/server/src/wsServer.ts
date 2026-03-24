@@ -63,6 +63,7 @@ import { clamp } from "effect/Number";
 import { Open, resolveAvailableEditors } from "./open";
 import { ServerConfig } from "./config";
 import { GitCore } from "./git/Services/GitCore.ts";
+import { GitHubCli } from "./git/Services/GitHubCli.ts";
 import { tryHandleProjectFaviconRequest } from "./projectFaviconRoute";
 import {
   ATTACHMENTS_ROUTE_PREFIX,
@@ -295,6 +296,7 @@ export type ServerRuntimeServices =
   | ServerCoreRuntimeServices
   | GitManager
   | GitCore
+  | GitHubCli
   | TerminalManager
   | SnippetRepository
   | Keybindings
@@ -341,6 +343,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const providerHealth = yield* ProviderHealth;
   const codexImport = yield* CodexImport;
   const git = yield* GitCore;
+  const gitHubCli = yield* GitHubCli;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -525,6 +528,33 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       Effect.gen(function* () {
         const url = new URL(req.url ?? "/", `http://localhost:${port}`);
         if (tryHandleProjectFaviconRequest(url, res)) {
+          return;
+        }
+
+        if (url.pathname === "/api/github-pr-status") {
+          const cwd = url.searchParams.get("cwd")?.trim();
+          const reference = url.searchParams.get("url")?.trim();
+          if (!cwd || !reference) {
+            respond(400, { "Content-Type": "application/json" }, '{"state":null}');
+            return;
+          }
+
+          const pullRequest = yield* gitHubCli
+            .getPullRequest({
+              cwd,
+              reference,
+            })
+            .pipe(Effect.catch(() => Effect.succeed(null)));
+
+          respond(
+            200,
+            { "Content-Type": "application/json", "Cache-Control": "private, max-age=300" },
+            JSON.stringify({
+              state: pullRequest?.state ?? null,
+              number: pullRequest?.number ?? null,
+              url: pullRequest?.url ?? reference,
+            }),
+          );
           return;
         }
 

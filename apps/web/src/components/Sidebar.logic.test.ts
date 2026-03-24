@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ProjectId, ThreadId } from "@t3tools/contracts";
 
 import {
+  deriveSidebarThreadProjectName,
   deriveThreadSidebarPullRequestReferences,
   extractSidebarPullRequestReferences,
   getVisibleThreadsForProject,
@@ -16,8 +17,11 @@ import {
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   sortProjectsForSidebar,
+  sortThreadsForRecentSidebar,
   sortThreadsForSidebar,
   shouldClearThreadSelectionOnMouseDown,
+  visibleRecentThreadsForSidebar,
+  visibleThreadIdsForRecentSidebar,
   visibleThreadIdsForSidebar,
   visibleThreadsForSidebar,
 } from "./Sidebar.logic";
@@ -433,6 +437,69 @@ describe("sidebar thread ordering", () => {
       THREAD_B2,
       THREAD_B1,
     ]);
+  });
+
+  it("sorts recent threads globally by updatedAt with createdAt and id tie-breakers", () => {
+    const threadA = {
+      ...makeThread(THREAD_A1, PROJECT_A, "2026-03-09T10:00:00.000Z"),
+      updatedAt: "2026-03-09T11:00:00.000Z",
+    };
+    const threadB = {
+      ...makeThread(THREAD_A2, PROJECT_A, "2026-03-09T10:01:00.000Z"),
+      updatedAt: undefined,
+    };
+    const threadC = {
+      ...makeThread(THREAD_B1, PROJECT_B, "2026-03-09T10:02:00.000Z"),
+      updatedAt: "2026-03-09T11:00:00.000Z",
+    };
+    const threadD = {
+      ...makeThread(THREAD_B2, PROJECT_B, "2026-03-09T10:02:00.000Z"),
+      updatedAt: "2026-03-09T11:00:00.000Z",
+    };
+
+    expect(sortThreadsForRecentSidebar([threadA, threadB, threadC, threadD]).map((thread) => thread.id)).toEqual([
+      THREAD_B2,
+      THREAD_B1,
+      THREAD_A1,
+      THREAD_A2,
+    ]);
+  });
+
+  it("limits recent threads without considering project expansion state", () => {
+    expect(
+      visibleRecentThreadsForSidebar({
+        threads,
+        isExpanded: false,
+        threadPreviewLimit: 3,
+      }).map((thread) => thread.id),
+    ).toEqual([THREAD_B2, THREAD_B1, THREAD_A7]);
+
+    expect(
+      visibleThreadIdsForRecentSidebar({
+        threads,
+        isExpanded: true,
+        threadPreviewLimit: 3,
+      }),
+    ).toEqual([
+      THREAD_B2,
+      THREAD_B1,
+      THREAD_A7,
+      THREAD_A6,
+      THREAD_A5,
+      THREAD_A4,
+      THREAD_A3,
+      THREAD_A2,
+      THREAD_A1,
+    ]);
+  });
+
+  it("derives project labels for recent rows", () => {
+    expect(
+      deriveSidebarThreadProjectName({
+        thread: makeThread(THREAD_A1, PROJECT_A, "2026-03-09T10:00:00.000Z"),
+        projects,
+      }),
+    ).toBe("alpha");
   });
 });
 

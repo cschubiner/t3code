@@ -76,6 +76,46 @@ layer("GitHubCliLive", (it) => {
     }),
   );
 
+  it.effect("uses gh-rokt for repos under /rokt/", () =>
+    Effect.gen(function* () {
+      mockedRunProcess.mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          number: 17,
+          title: "ROKT PR",
+          url: "https://github.com/ROKT/example/pull/17",
+          baseRefName: "main",
+          headRefName: "feature/rokt",
+          state: "OPEN",
+          mergedAt: null,
+        }),
+        stderr: "",
+        code: 0,
+        signal: null,
+        timedOut: false,
+      });
+
+      yield* Effect.gen(function* () {
+        const gh = yield* GitHubCli;
+        return yield* gh.getPullRequest({
+          cwd: "/Users/canal/rokt/example",
+          reference: "#17",
+        });
+      });
+
+      expect(mockedRunProcess).toHaveBeenCalledWith(
+        "gh-rokt",
+        [
+          "pr",
+          "view",
+          "#17",
+          "--json",
+          "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
+        ],
+        expect.objectContaining({ cwd: "/Users/canal/rokt/example" }),
+      );
+    }),
+  );
+
   it.effect("reads repository clone URLs", () =>
     Effect.gen(function* () {
       mockedRunProcess.mockResolvedValueOnce({

@@ -14,6 +14,7 @@ import {
 import { create } from "zustand";
 import { type ChatAttachment, type ChatMessage, type Project, type Thread } from "./types";
 import { Debouncer } from "@tanstack/react-pacer";
+import type { SidebarThreadListMode } from "./components/Sidebar.logic";
 
 // ── State ────────────────────────────────────────────────────────────
 
@@ -21,6 +22,7 @@ export interface AppState {
   projects: Project[];
   threads: Thread[];
   threadsHydrated: boolean;
+  sidebarThreadListMode: SidebarThreadListMode;
 }
 
 const PERSISTED_STATE_KEY = "t3code:renderer-state:v8";
@@ -40,6 +42,7 @@ const initialState: AppState = {
   projects: [],
   threads: [],
   threadsHydrated: false,
+  sidebarThreadListMode: "grouped",
 };
 const persistedExpandedProjectCwds = new Set<string>();
 const persistedProjectOrderCwds: string[] = [];
@@ -54,6 +57,7 @@ function readPersistedState(): AppState {
     const parsed = JSON.parse(raw) as {
       expandedProjectCwds?: string[];
       projectOrderCwds?: string[];
+      sidebarThreadListMode?: SidebarThreadListMode;
     };
     persistedExpandedProjectCwds.clear();
     persistedProjectOrderCwds.length = 0;
@@ -67,7 +71,11 @@ function readPersistedState(): AppState {
         persistedProjectOrderCwds.push(cwd);
       }
     }
-    return { ...initialState };
+    return {
+      ...initialState,
+      sidebarThreadListMode:
+        parsed.sidebarThreadListMode === "recent" ? parsed.sidebarThreadListMode : "grouped",
+    };
   } catch {
     return initialState;
   }
@@ -85,6 +93,7 @@ function persistState(state: AppState): void {
           .filter((project) => project.expanded)
           .map((project) => project.cwd),
         projectOrderCwds: state.projects.map((project) => project.cwd),
+        sidebarThreadListMode: state.sidebarThreadListMode,
       }),
     );
     if (!legacyKeysCleanedUp) {
@@ -464,6 +473,7 @@ interface AppStore extends AppState {
   toggleProject: (projectId: Project["id"]) => void;
   setProjectExpanded: (projectId: Project["id"], expanded: boolean) => void;
   reorderProjects: (draggedProjectId: Project["id"], targetProjectId: Project["id"]) => void;
+  setSidebarThreadListMode: (mode: SidebarThreadListMode) => void;
   setError: (threadId: ThreadId, error: string | null) => void;
   setThreadBranch: (threadId: ThreadId, branch: string | null, worktreePath: string | null) => void;
 }
@@ -479,6 +489,10 @@ export const useStore = create<AppStore>((set) => ({
     set((state) => setProjectExpanded(state, projectId, expanded)),
   reorderProjects: (draggedProjectId, targetProjectId) =>
     set((state) => reorderProjects(state, draggedProjectId, targetProjectId)),
+  setSidebarThreadListMode: (mode) =>
+    set((state) =>
+      state.sidebarThreadListMode === mode ? state : { ...state, sidebarThreadListMode: mode },
+    ),
   setError: (threadId, error) => set((state) => setError(state, threadId, error)),
   setThreadBranch: (threadId, branch, worktreePath) =>
     set((state) => setThreadBranch(state, threadId, branch, worktreePath)),
