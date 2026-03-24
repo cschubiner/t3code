@@ -800,6 +800,7 @@ export default function Sidebar() {
         threads,
         projects,
         routeThreadId,
+        orderedThreadIdsForNavigation: visibleSidebarThreadIds,
         clearComposerDraftForThread,
         clearProjectDraftThreadById,
         clearTerminalState,
@@ -826,6 +827,7 @@ export default function Sidebar() {
       removeWorktreeMutation,
       routeThreadId,
       threads,
+      visibleSidebarThreadIds,
     ],
   );
 
@@ -912,6 +914,7 @@ export default function Sidebar() {
         threads,
         projects,
         routeThreadId,
+        orderedThreadIdsForNavigation: visibleSidebarThreadIds,
         clearComposerDraftForThread,
         clearProjectDraftThreadById,
         clearTerminalState,
@@ -944,6 +947,7 @@ export default function Sidebar() {
       routeThreadId,
       startRenameThread,
       threads,
+      visibleSidebarThreadIds,
     ],
   );
 
