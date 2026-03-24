@@ -11,13 +11,19 @@ import {
 } from "../Services/GitHubCli.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const ROKT_PATH_SEGMENT = "/rokt/";
+
+function resolveGitHubCliCommand(cwd: string): string {
+  return cwd.includes(ROKT_PATH_SEGMENT) ? "gh-rokt" : "gh";
+}
 
 function normalizeGitHubCliError(operation: "execute" | "stdout", error: unknown): GitHubCliError {
   if (error instanceof Error) {
     if (error.message.includes("Command not found: gh")) {
       return new GitHubCliError({
         operation,
-        detail: "GitHub CLI (`gh`) is required but not available on PATH.",
+        detail:
+          "GitHub CLI (`gh` or `gh-rokt` for ROKT repos) is required but not available on PATH.",
         cause: error,
       });
     }
@@ -165,7 +171,7 @@ const makeGitHubCli = Effect.sync(() => {
   const execute: GitHubCliShape["execute"] = (input) =>
     Effect.tryPromise({
       try: () =>
-        runProcess("gh", input.args, {
+        runProcess(resolveGitHubCliCommand(input.cwd), input.args, {
           cwd: input.cwd,
           timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         }),

@@ -9,6 +9,7 @@ import {
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export type SidebarNewThreadEnvMode = "local" | "worktree";
+export type SidebarThreadListMode = "grouped" | "recent";
 
 export interface ThreadStatusPill {
   label:
@@ -54,6 +55,10 @@ export interface SidebarProjectNavigationTarget {
   threadId: ThreadId;
 }
 
+function threadRecentSortTimestamp(thread: Pick<Thread, "createdAt" | "updatedAt">): number {
+  return Date.parse(thread.updatedAt ?? thread.createdAt);
+}
+
 export function sortThreadsForSidebar(
   projectId: Project["id"],
   threads: readonly Thread[],
@@ -67,6 +72,18 @@ export function sortThreadsForSidebar(
     });
 }
 
+export function sortThreadsForRecentSidebar(threads: readonly Thread[]): Thread[] {
+  return [...threads].toSorted((a, b) => {
+    const byUpdatedAt = threadRecentSortTimestamp(b) - threadRecentSortTimestamp(a);
+    if (byUpdatedAt !== 0) return byUpdatedAt;
+
+    const byCreatedAt = Date.parse(b.createdAt) - Date.parse(a.createdAt);
+    if (byCreatedAt !== 0) return byCreatedAt;
+
+    return b.id.localeCompare(a.id);
+  });
+}
+
 export function visibleThreadsForSidebar(input: {
   projectThreads: readonly Thread[];
   isThreadListExpanded: boolean;
@@ -77,6 +94,18 @@ export function visibleThreadsForSidebar(input: {
     return [...projectThreads];
   }
   return projectThreads.slice(0, threadPreviewLimit);
+}
+
+export function visibleRecentThreadsForSidebar(input: {
+  threads: readonly Thread[];
+  isExpanded: boolean;
+  threadPreviewLimit: number;
+}): Thread[] {
+  const orderedThreads = sortThreadsForRecentSidebar(input.threads);
+  if (orderedThreads.length <= input.threadPreviewLimit || input.isExpanded) {
+    return orderedThreads;
+  }
+  return orderedThreads.slice(0, input.threadPreviewLimit);
 }
 
 export function visibleThreadIdsForSidebar(input: {
@@ -101,6 +130,14 @@ export function visibleThreadIdsForSidebar(input: {
   }
 
   return visibleThreadIds;
+}
+
+export function visibleThreadIdsForRecentSidebar(input: {
+  threads: readonly Thread[];
+  isExpanded: boolean;
+  threadPreviewLimit: number;
+}): ThreadId[] {
+  return visibleRecentThreadsForSidebar(input).map((thread) => thread.id);
 }
 
 export function resolveSidebarThreadNavigationTarget(input: {
@@ -177,6 +214,13 @@ export function resolveSidebarProjectNavigationTarget(input: {
   }
 
   return orderedProjectTargets[currentIndex + 1] ?? null;
+}
+
+export function deriveSidebarThreadProjectName(input: {
+  thread: Pick<Thread, "projectId">;
+  projects: readonly Pick<Project, "id" | "name">[];
+}): string {
+  return input.projects.find((project) => project.id === input.thread.projectId)?.name ?? "Unknown";
 }
 
 export function isTypingInSidebarTextEntry(target: EventTarget | null): boolean {
