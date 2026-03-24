@@ -102,6 +102,7 @@ import { useThreadNavigationHistoryStore } from "../threadNavigationHistoryStore
 import { useThreadActivityStore } from "../threadActivityStore";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 import {
+  deriveThreadSidebarPullRequestReferences,
   getFallbackThreadIdAfterDelete,
   getVisibleThreadsForProject,
   isTypingInSidebarTextEntry,
@@ -140,6 +141,15 @@ const SIDEBAR_LIST_ANIMATION_OPTIONS = {
 } as const;
 const loadedProjectFaviconSrcs = new Set<string>();
 
+function formatThreadSidebarTimestamp(updatedAt: string | undefined, createdAt: string): string {
+  return `${formatRelativeTime(updatedAt ?? createdAt, { includeSuffix: false })}/${formatRelativeTime(
+    createdAt,
+    {
+      includeSuffix: false,
+    },
+  )}`;
+}
+
 function threadIdFromSidebarPathname(pathname: string): ThreadId | null {
   if (!pathname.startsWith("/")) {
     return null;
@@ -167,6 +177,7 @@ interface PrStatusIndicator {
 }
 
 type ThreadPr = GitStatusResult["pr"];
+const SIDEBAR_REFERENCED_PR_LIMIT = 2;
 
 function terminalStatusFromRunningIds(
   runningTerminalIds: string[],
@@ -209,6 +220,14 @@ function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
     };
   }
   return null;
+}
+
+function formatSidebarPullRequestBadgeLabel(input: {
+  owner: string;
+  repo: string;
+  number: string;
+}): string {
+  return `${input.owner}/${input.repo}#${input.number}`;
 }
 
 function T3Wordmark() {
@@ -560,6 +579,13 @@ export default function Sidebar() {
     }
     return map;
   }, [threadGitStatusCwds, threadGitStatusQueries, threadGitTargets]);
+  const referencedPrsByThreadId = useMemo(() => {
+    const map = new Map<ThreadId, ReturnType<typeof deriveThreadSidebarPullRequestReferences>>();
+    for (const thread of threads) {
+      map.set(thread.id, deriveThreadSidebarPullRequestReferences(thread));
+    }
+    return map;
+  }, [threads]);
 
   const openPrLink = useCallback((event: React.MouseEvent<HTMLElement>, prUrl: string) => {
     event.preventDefault();
@@ -1207,6 +1233,12 @@ export default function Sidebar() {
       const isActive = routeThreadId === thread.id;
       const isSelected = selectedThreadIds.has(thread.id);
       const isHighlighted = isActive || isSelected;
+      const referencedPrs = referencedPrsByThreadId.get(thread.id) ?? [];
+      const visibleReferencedPrs = referencedPrs.slice(0, SIDEBAR_REFERENCED_PR_LIMIT);
+      const hiddenReferencedPrCount = Math.max(
+        0,
+        referencedPrs.length - visibleReferencedPrs.length,
+      );
       const threadStatus = resolveThreadStatusPill({
         thread,
         hasPendingApprovals: derivePendingApprovals(thread.activities).length > 0,
@@ -1227,6 +1259,7 @@ export default function Sidebar() {
             className={resolveThreadRowClassName({
               isActive,
               isSelected,
+              hasSecondaryContent: referencedPrs.length > 0,
             })}
             onClick={(event) => {
               handleThreadClick(event, thread.id, orderedProjectThreadIds);
@@ -1261,71 +1294,97 @@ export default function Sidebar() {
               }
             }}
           >
-            <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
-              {prStatus && (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <button
-                        type="button"
-                        aria-label={prStatus.tooltip}
-                        className={`inline-flex items-center justify-center ${prStatus.colorClass} cursor-pointer rounded-sm outline-hidden focus-visible:ring-1 focus-visible:ring-ring`}
-                        onClick={(event) => {
-                          openPrLink(event, prStatus.url);
-                        }}
-                      >
-                        <GitPullRequestIcon className="size-3" />
-                      </button>
-                    }
-                  />
-                  <TooltipPopup side="top">{prStatus.tooltip}</TooltipPopup>
-                </Tooltip>
-              )}
-              {threadStatus && (
-                <span
-                  className={`inline-flex items-center gap-1 text-[10px] ${threadStatus.colorClass}`}
-                >
+            <div className="flex min-w-0 flex-1 flex-col items-start gap-0.5 text-left">
+              <div className="flex min-w-0 w-full items-center gap-1.5">
+                {prStatus && (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <button
+                          type="button"
+                          aria-label={prStatus.tooltip}
+                          className={`inline-flex items-center justify-center ${prStatus.colorClass} cursor-pointer rounded-sm outline-hidden focus-visible:ring-1 focus-visible:ring-ring`}
+                          onClick={(event) => {
+                            openPrLink(event, prStatus.url);
+                          }}
+                        >
+                          <GitPullRequestIcon className="size-3" />
+                        </button>
+                      }
+                    />
+                    <TooltipPopup side="top">{prStatus.tooltip}</TooltipPopup>
+                  </Tooltip>
+                )}
+                {threadStatus && (
                   <span
-                    className={`h-1.5 w-1.5 rounded-full ${threadStatus.dotClass} ${
-                      threadStatus.pulse ? "animate-pulse" : ""
-                    }`}
+                    className={`inline-flex items-center gap-1 text-[10px] ${threadStatus.colorClass}`}
+                  >
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full ${threadStatus.dotClass} ${
+                        threadStatus.pulse ? "animate-pulse" : ""
+                      }`}
+                    />
+                    <span className="hidden md:inline">{threadStatus.label}</span>
+                  </span>
+                )}
+                {renamingThreadId === thread.id ? (
+                  <input
+                    ref={(el) => {
+                      if (el && renamingInputRef.current !== el) {
+                        renamingInputRef.current = el;
+                        el.focus();
+                        el.select();
+                      }
+                    }}
+                    className="min-w-0 flex-1 truncate text-xs bg-transparent outline-none border border-ring rounded px-0.5"
+                    value={renamingTitle}
+                    onChange={(e) => setRenamingTitle(e.target.value)}
+                    onKeyDown={(e) => {
+                      e.stopPropagation();
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        renamingCommittedRef.current = true;
+                        void commitRename(thread.id, renamingTitle, thread.title);
+                      } else if (e.key === "Escape") {
+                        e.preventDefault();
+                        renamingCommittedRef.current = true;
+                        cancelRename();
+                      }
+                    }}
+                    onBlur={() => {
+                      if (!renamingCommittedRef.current) {
+                        void commitRename(thread.id, renamingTitle, thread.title);
+                      }
+                    }}
+                    onClick={(e) => e.stopPropagation()}
                   />
-                  <span className="hidden md:inline">{threadStatus.label}</span>
-                </span>
-              )}
-              {renamingThreadId === thread.id ? (
-                <input
-                  ref={(el) => {
-                    if (el && renamingInputRef.current !== el) {
-                      renamingInputRef.current = el;
-                      el.focus();
-                      el.select();
-                    }
-                  }}
-                  className="min-w-0 flex-1 truncate text-xs bg-transparent outline-none border border-ring rounded px-0.5"
-                  value={renamingTitle}
-                  onChange={(e) => setRenamingTitle(e.target.value)}
-                  onKeyDown={(e) => {
-                    e.stopPropagation();
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      renamingCommittedRef.current = true;
-                      void commitRename(thread.id, renamingTitle, thread.title);
-                    } else if (e.key === "Escape") {
-                      e.preventDefault();
-                      renamingCommittedRef.current = true;
-                      cancelRename();
-                    }
-                  }}
-                  onBlur={() => {
-                    if (!renamingCommittedRef.current) {
-                      void commitRename(thread.id, renamingTitle, thread.title);
-                    }
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                />
-              ) : (
-                <span className="min-w-0 flex-1 truncate text-xs">{thread.title}</span>
+                ) : (
+                  <span className="min-w-0 flex-1 truncate text-xs">{thread.title}</span>
+                )}
+              </div>
+              {visibleReferencedPrs.length > 0 && (
+                <div className="flex min-w-0 flex-wrap items-center gap-1 pl-[3px]">
+                  {visibleReferencedPrs.map((reference) => (
+                    <button
+                      key={reference.url}
+                      type="button"
+                      className="inline-flex max-w-full items-center rounded-sm border border-border/70 bg-secondary/75 px-1.5 py-0 text-[10px] leading-4 text-muted-foreground/88 transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+                      onClick={(event) => {
+                        openPrLink(event, reference.url);
+                      }}
+                      title={reference.url}
+                    >
+                      <span className="truncate">
+                        {formatSidebarPullRequestBadgeLabel(reference)}
+                      </span>
+                    </button>
+                  ))}
+                  {hiddenReferencedPrCount > 0 && (
+                    <span className="text-[10px] text-muted-foreground/50">
+                      +{hiddenReferencedPrCount}
+                    </span>
+                  )}
+                </div>
               )}
             </div>
             <div className="ml-auto flex shrink-0 items-center gap-1.5">
@@ -1348,7 +1407,7 @@ export default function Sidebar() {
                     : "text-muted-foreground/40"
                 }`}
               >
-                {formatRelativeTime(thread.updatedAt ?? thread.createdAt)}
+                {formatThreadSidebarTimestamp(thread.updatedAt, thread.createdAt)}
               </span>
             </div>
           </SidebarMenuSubButton>
@@ -1758,7 +1817,6 @@ export default function Sidebar() {
         : shouldHighlightDesktopUpdateError(desktopUpdateState)
           ? "text-rose-500 animate-pulse"
           : "text-amber-500 animate-pulse";
-<<<<<<< HEAD
   const newThreadShortcutLabel = useMemo(
     () =>
       shortcutLabelForCommand(keybindings, "chat.newLocal") ??
