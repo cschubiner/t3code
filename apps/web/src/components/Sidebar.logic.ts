@@ -23,6 +23,13 @@ export interface ThreadStatusPill {
   pulse: boolean;
 }
 
+export interface SidebarPullRequestReference {
+  url: string;
+  owner: string;
+  repo: string;
+  number: string;
+}
+
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
   "Pending Approval": 5,
   "Awaiting Input": 4,
@@ -36,6 +43,10 @@ type ThreadStatusInput = Pick<
   Thread,
   "interactionMode" | "latestTurn" | "lastVisitedAt" | "proposedPlans" | "session"
 >;
+type ThreadPullRequestReferenceInput = Pick<Thread, "messages" | "queuedTurns" | "worktreePath">;
+
+const GITHUB_PULL_REQUEST_URL_GLOBAL_PATTERN =
+  /https:\/\/github\.com\/(?<owner>[^/\s]+)\/(?<repo>[^/\s]+)\/pull\/(?<number>\d+)(?:[/?#][^\s)\]}>]*)?/gi;
 
 export type SidebarNavigationDirection = "previous" | "next";
 export interface SidebarProjectNavigationTarget {
@@ -213,9 +224,12 @@ export function resolveSidebarNewThreadEnvMode(input: {
 export function resolveThreadRowClassName(input: {
   isActive: boolean;
   isSelected: boolean;
+  hasSecondaryContent?: boolean;
 }): string {
-  const baseClassName =
-    "h-7 w-full translate-x-0 cursor-pointer justify-start px-2 text-left select-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
+  const baseClassName = cn(
+    "w-full translate-x-0 cursor-pointer justify-start px-2 text-left select-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
+    input.hasSecondaryContent ? "min-h-9 py-1" : "h-7",
+  );
 
   if (input.isSelected && input.isActive) {
     return cn(
@@ -239,6 +253,53 @@ export function resolveThreadRowClassName(input: {
   }
 
   return cn(baseClassName, "text-muted-foreground hover:bg-accent hover:text-foreground");
+}
+
+export function extractSidebarPullRequestReferences(text: string): SidebarPullRequestReference[] {
+  const matches = text.matchAll(GITHUB_PULL_REQUEST_URL_GLOBAL_PATTERN);
+  const references: SidebarPullRequestReference[] = [];
+  const seenUrls = new Set<string>();
+
+  for (const match of matches) {
+    const url = match[0];
+    const owner = match.groups?.owner;
+    const repo = match.groups?.repo;
+    const number = match.groups?.number;
+    if (!url || !owner || !repo || !number || seenUrls.has(url)) {
+      continue;
+    }
+    seenUrls.add(url);
+    references.push({ url, owner, repo, number });
+  }
+
+  return references;
+}
+
+export function deriveThreadSidebarPullRequestReferences(
+  thread: ThreadPullRequestReferenceInput,
+): SidebarPullRequestReference[] {
+  if (thread.worktreePath === null) {
+    return [];
+  }
+
+  const references: SidebarPullRequestReference[] = [];
+  const seenUrls = new Set<string>();
+  const texts = [
+    ...thread.messages.map((message) => message.text),
+    ...thread.queuedTurns.map((queuedTurn) => queuedTurn.text),
+  ];
+
+  for (const text of texts) {
+    for (const reference of extractSidebarPullRequestReferences(text)) {
+      if (seenUrls.has(reference.url)) {
+        continue;
+      }
+      seenUrls.add(reference.url);
+      references.push(reference);
+    }
+  }
+
+  return references;
 }
 
 export function resolveThreadStatusPill(input: {

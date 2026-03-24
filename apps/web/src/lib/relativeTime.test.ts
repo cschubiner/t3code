@@ -28,6 +28,21 @@ describe("formatRelativeTime", () => {
     ).toBe("3d ago");
   });
 
+  it("can omit the compact ago suffix for terse UI labels", () => {
+    expect(
+      formatRelativeTime("2026-03-16T11:15:00.000Z", {
+        now,
+        includeSuffix: false,
+      }),
+    ).toBe("45m");
+    expect(
+      formatRelativeTime("2026-03-16T09:00:00.000Z", {
+        now,
+        includeSuffix: false,
+      }),
+    ).toBe("3h");
+  });
+
   it("returns long relative labels for search surfaces", () => {
     expect(
       formatRelativeTime("2026-03-16T11:00:00.000Z", {
