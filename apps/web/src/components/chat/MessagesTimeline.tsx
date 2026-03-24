@@ -379,7 +379,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     return (
       <div
         className={cn(
-          "pb-4",
+          row.kind === "working" ? "pb-1.5" : "pb-4",
           rowHasSearchMatch && "mx-[-0.5rem] rounded-xl bg-amber-400/6 px-2 py-1",
           rowHasActiveSearchMatch && "ring-1 ring-amber-400/35 bg-amber-400/10",
         )}
