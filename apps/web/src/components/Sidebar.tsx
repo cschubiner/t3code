@@ -106,7 +106,6 @@ import {
   resolveSidebarThreadNavigationTarget,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
-  type SidebarThreadListMode,
   shouldClearThreadSelectionOnMouseDown,
   sortThreadsForSidebar,
   sortThreadsForRecentSidebar,
@@ -1502,7 +1501,10 @@ export default function Sidebar() {
       const isHighlighted = isActive || isSelected;
       const referencedPrs = referencedPrsByThreadId.get(thread.id) ?? [];
       const referencedPrStates = referencedPrs.map((reference) => ({
-        ...reference,
+        url: reference.url,
+        owner: reference.owner,
+        repo: reference.repo,
+        number: reference.number,
         state: referencedPrStateByUrl.get(reference.url) ?? null,
       }));
       const threadStatus = resolveThreadStatusPill({
@@ -1946,7 +1948,8 @@ export default function Sidebar() {
                         resolveThreadStatusPill({
                           thread,
                           hasPendingApprovals: derivePendingApprovals(thread.activities).length > 0,
-                          hasPendingUserInput: derivePendingUserInputs(thread.activities).length > 0,
+                          hasPendingUserInput:
+                            derivePendingUserInputs(thread.activities).length > 0,
                         }),
                       ),
                     );
