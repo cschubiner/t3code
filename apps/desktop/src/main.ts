@@ -660,7 +660,7 @@ function configureApplicationMenu(): void {
       label: "View",
       submenu: [
         { role: "reload" },
-        { role: "forceReload" },
+        { role: "forceReload", accelerator: "CmdOrCtrl+Alt+R" },
         { role: "toggleDevTools" },
         { type: "separator" },
         { role: "resetZoom" },
@@ -1589,6 +1589,16 @@ function createWindow(): BrowserWindow {
       nodeIntegration: false,
       sandbox: true,
     },
+  });
+
+  window.webContents.on("before-input-event", (event, input) => {
+    if (input.type !== "keyDown") return;
+    if (input.key.toLowerCase() !== "r" || !input.shift || !(input.meta || input.control)) {
+      return;
+    }
+
+    event.preventDefault();
+    dispatchMenuAction("sidebar.rename");
   });
 
   window.webContents.on("context-menu", (event, params) => {
