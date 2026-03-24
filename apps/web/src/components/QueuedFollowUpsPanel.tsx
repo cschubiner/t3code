@@ -28,6 +28,12 @@ import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
 
 const QUEUED_TURN_PREVIEW_MAX_CHARS = 72;
+const QUEUED_FOLLOW_UP_VISIBLE_ROWS = 3.75;
+const QUEUED_FOLLOW_UP_ROW_MIN_HEIGHT_REM = 6;
+const QUEUED_FOLLOW_UP_ROW_GAP_REM = 0.5;
+const QUEUED_FOLLOW_UP_SCROLL_MAX_HEIGHT_REM =
+  QUEUED_FOLLOW_UP_VISIBLE_ROWS * QUEUED_FOLLOW_UP_ROW_MIN_HEIGHT_REM +
+  (QUEUED_FOLLOW_UP_VISIBLE_ROWS - 1) * QUEUED_FOLLOW_UP_ROW_GAP_REM;
 
 function summarizeQueuedTurn(turn: ThreadQueuedTurn): string {
   const trimmed = turn.text.trim();
@@ -92,7 +98,7 @@ function SortableQueuedFollowUpRow({
         transition,
       }}
       className={cn(
-        "rounded-xl border border-border/70 bg-background/75 px-3 py-3 transition-shadow",
+        "min-h-24 rounded-xl border border-border/70 bg-background/75 px-3 py-3 transition-shadow",
         isDragging && "z-20 opacity-85 shadow-lg",
         isBusy && "ring-1 ring-primary/35",
       )}
@@ -319,44 +325,50 @@ export default function QueuedFollowUpsPanel({
           items={queuedTurns.map((queuedTurn) => queuedTurn.messageId)}
           strategy={verticalListSortingStrategy}
         >
-          <ol className="mt-2 space-y-2">
-            {queuedTurns.map((queuedTurn, index) => (
-              <SortableQueuedFollowUpRow
-                key={queuedTurn.messageId}
-                queuedTurn={queuedTurn}
-                index={index}
-                isEditing={editingQueuedTurnId === queuedTurn.messageId}
-                isBusy={busyQueuedTurnId === queuedTurn.messageId}
-                isInteractionDisabled={interactionDisabled}
-                draftText={
-                  editingQueuedTurnId === queuedTurn.messageId ? draftText : queuedTurn.text
-                }
-                onDraftTextChange={setDraftText}
-                onEdit={() => {
-                  setEditingQueuedTurnId(queuedTurn.messageId);
-                  setDraftText(queuedTurn.text);
-                }}
-                onSave={() => {
-                  onSaveEdit(queuedTurn.messageId, draftText);
-                  setEditingQueuedTurnId(null);
-                  setDraftText("");
-                }}
-                onCancel={() => {
-                  setEditingQueuedTurnId(null);
-                  setDraftText("");
-                }}
-                onDelete={() => {
-                  onDelete(queuedTurn.messageId);
-                  if (editingQueuedTurnId === queuedTurn.messageId) {
+          <div
+            className="mt-2 overflow-y-auto pr-1"
+            style={{ maxHeight: `${QUEUED_FOLLOW_UP_SCROLL_MAX_HEIGHT_REM}rem` }}
+            data-testid="queued-follow-ups-scroll-area"
+          >
+            <ol className="space-y-2">
+              {queuedTurns.map((queuedTurn, index) => (
+                <SortableQueuedFollowUpRow
+                  key={queuedTurn.messageId}
+                  queuedTurn={queuedTurn}
+                  index={index}
+                  isEditing={editingQueuedTurnId === queuedTurn.messageId}
+                  isBusy={busyQueuedTurnId === queuedTurn.messageId}
+                  isInteractionDisabled={interactionDisabled}
+                  draftText={
+                    editingQueuedTurnId === queuedTurn.messageId ? draftText : queuedTurn.text
+                  }
+                  onDraftTextChange={setDraftText}
+                  onEdit={() => {
+                    setEditingQueuedTurnId(queuedTurn.messageId);
+                    setDraftText(queuedTurn.text);
+                  }}
+                  onSave={() => {
+                    onSaveEdit(queuedTurn.messageId, draftText);
                     setEditingQueuedTurnId(null);
                     setDraftText("");
-                  }
-                }}
-                onSaveAsSnippet={() => onSaveAsSnippet(queuedTurn.messageId)}
-                onSendNow={() => onSendNow(queuedTurn.messageId)}
-              />
-            ))}
-          </ol>
+                  }}
+                  onCancel={() => {
+                    setEditingQueuedTurnId(null);
+                    setDraftText("");
+                  }}
+                  onDelete={() => {
+                    onDelete(queuedTurn.messageId);
+                    if (editingQueuedTurnId === queuedTurn.messageId) {
+                      setEditingQueuedTurnId(null);
+                      setDraftText("");
+                    }
+                  }}
+                  onSaveAsSnippet={() => onSaveAsSnippet(queuedTurn.messageId)}
+                  onSendNow={() => onSendNow(queuedTurn.messageId)}
+                />
+              ))}
+            </ol>
+          </div>
         </SortableContext>
       </DndContext>
     </div>
