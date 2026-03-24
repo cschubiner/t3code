@@ -458,12 +458,9 @@ describe("sidebar thread ordering", () => {
       updatedAt: "2026-03-09T11:00:00.000Z",
     };
 
-    expect(sortThreadsForRecentSidebar([threadA, threadB, threadC, threadD]).map((thread) => thread.id)).toEqual([
-      THREAD_B2,
-      THREAD_B1,
-      THREAD_A1,
-      THREAD_A2,
-    ]);
+    expect(
+      sortThreadsForRecentSidebar([threadA, threadB, threadC, threadD]).map((thread) => thread.id),
+    ).toEqual([THREAD_B2, THREAD_B1, THREAD_A1, THREAD_A2]);
   });
 
   it("limits recent threads without considering project expansion state", () => {
