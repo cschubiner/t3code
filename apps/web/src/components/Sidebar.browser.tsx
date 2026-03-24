@@ -172,6 +172,7 @@ function createThread(options: {
   projectId: ProjectId;
   title: string;
   createdAt: string;
+  updatedAt?: string;
 }): OrchestrationReadModel["threads"][number] {
   return {
     id: options.id,
@@ -184,7 +185,7 @@ function createThread(options: {
     worktreePath: null,
     latestTurn: null,
     createdAt: options.createdAt,
-    updatedAt: options.createdAt,
+    updatedAt: options.updatedAt ?? options.createdAt,
     deletedAt: null,
     messages: [],
     queuedTurns: [],
@@ -198,7 +199,7 @@ function createThread(options: {
       runtimeMode: "full-access",
       activeTurnId: null,
       lastError: null,
-      updatedAt: options.createdAt,
+      updatedAt: options.updatedAt ?? options.createdAt,
     },
   };
 }
@@ -595,6 +596,7 @@ describe("Sidebar navigation keybindings", () => {
       projects: [],
       threads: [],
       threadsHydrated: false,
+      sidebarThreadListMode: "grouped",
     });
     useThreadNavigationHistoryStore.getState().clearHistory();
     useThreadSelectionStore.getState().clearSelection();

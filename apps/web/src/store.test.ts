@@ -27,6 +27,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     proposedPlans: [],
     error: null,
     createdAt: "2026-02-13T00:00:00.000Z",
+    updatedAt: "2026-02-13T00:00:00.000Z",
     latestTurn: null,
     branch: null,
     worktreePath: null,
@@ -48,6 +49,7 @@ function makeState(thread: Thread): AppState {
     ],
     threads: [thread],
     threadsHydrated: true,
+    sidebarThreadListMode: "grouped",
   };
 }
 
@@ -184,6 +186,7 @@ describe("store pure functions", () => {
       ],
       threads: [],
       threadsHydrated: true,
+      sidebarThreadListMode: "grouped",
     };
 
     const next = reorderProjects(state, project1, project3);
@@ -253,6 +256,7 @@ describe("store read model sync", () => {
       ],
       threads: [],
       threadsHydrated: true,
+      sidebarThreadListMode: "grouped",
     };
     const readModel: OrchestrationReadModel = {
       snapshotSequence: 2,
