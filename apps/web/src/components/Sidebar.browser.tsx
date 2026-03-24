@@ -16,7 +16,7 @@ import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { HttpResponse, http, ws } from "msw";
 import { setupWorker } from "msw/browser";
 import { page } from "vitest/browser";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
 import { useComposerDraftStore } from "../composerDraftStore";
@@ -584,6 +584,7 @@ describe("Sidebar navigation keybindings", () => {
     await setViewport();
     localStorage.clear();
     document.body.innerHTML = "";
+    Reflect.deleteProperty(window, "desktopBridge");
     useComposerDraftStore.setState({
       draftsByThreadId: {},
       draftThreadsByThreadId: {},
@@ -599,12 +600,51 @@ describe("Sidebar navigation keybindings", () => {
     useThreadSelectionStore.getState().clearSelection();
   });
 
+  afterEach(() => {
+    Reflect.deleteProperty(window, "desktopBridge");
+  });
+
   it("navigates down the visible sidebar thread list with alt+down", async () => {
     const mounted = await mountApp(`/${THREAD_A5}`);
 
     try {
       dispatchSidebarShortcut({ key: "ArrowDown", altKey: true });
       await waitForPath(mounted.router, `/${THREAD_A4}`);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("deleting the active thread from the sidebar moves to the same thread as alt+down", async () => {
+    const showContextMenu = vi.fn().mockResolvedValue("delete");
+    const confirm = vi.fn().mockResolvedValue(true);
+    Object.defineProperty(window, "desktopBridge", {
+      configurable: true,
+      value: {
+        showContextMenu,
+        confirm,
+        setTheme: vi.fn().mockResolvedValue(undefined),
+      },
+    });
+
+    const mounted = await mountApp(`/${THREAD_A5}`);
+
+    try {
+      const threadRow = await waitForSidebarThread("Alpha 5");
+      const interactiveThreadRow = threadRow.querySelector<HTMLElement>('[role="button"]');
+      expect(interactiveThreadRow).toBeTruthy();
+      interactiveThreadRow?.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 12,
+          clientY: 16,
+        }),
+      );
+
+      await waitForPath(mounted.router, `/${THREAD_A4}`);
+      expect(showContextMenu).toHaveBeenCalled();
+      expect(confirm).toHaveBeenCalled();
     } finally {
       await mounted.cleanup();
     }
