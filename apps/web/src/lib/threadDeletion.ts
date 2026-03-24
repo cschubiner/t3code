@@ -11,6 +11,7 @@ interface DeleteThreadWithSidebarBehaviorInput {
   threads: readonly Thread[];
   projects: readonly Project[];
   routeThreadId: ThreadId | null;
+  orderedThreadIdsForNavigation?: readonly ThreadId[] | undefined;
   deletedThreadIds?: ReadonlySet<ThreadId> | undefined;
   clearComposerDraftForThread: (threadId: ThreadId) => void;
   clearProjectDraftThreadById: (projectId: ProjectId, threadId: ThreadId) => void;
@@ -23,6 +24,29 @@ export type DeleteThreadResult = "deleted" | "cancelled" | "missing" | "unavaila
 
 function findThread(threads: readonly Thread[], threadId: ThreadId): Thread | null {
   return threads.find((thread) => thread.id === threadId) ?? null;
+}
+
+export function resolveThreadDeletionNavigationTarget(input: {
+  deletedThreadId: ThreadId;
+  orderedThreadIds: readonly ThreadId[];
+  deletedThreadIds?: ReadonlySet<ThreadId> | undefined;
+}): ThreadId | null {
+  const { deletedThreadId, orderedThreadIds, deletedThreadIds } = input;
+  const deletedIds = deletedThreadIds ?? new Set<ThreadId>([deletedThreadId]);
+  const currentIndex = orderedThreadIds.indexOf(deletedThreadId);
+
+  if (currentIndex === -1) {
+    return orderedThreadIds.find((threadId) => !deletedIds.has(threadId)) ?? null;
+  }
+
+  for (let index = currentIndex + 1; index < orderedThreadIds.length; index += 1) {
+    const candidateThreadId = orderedThreadIds[index];
+    if (candidateThreadId && !deletedIds.has(candidateThreadId)) {
+      return candidateThreadId;
+    }
+  }
+
+  return null;
 }
 
 async function confirmThreadDeletion(thread: Thread): Promise<boolean | null> {
@@ -92,9 +116,14 @@ export async function deleteThreadWithSidebarBehavior(
 
   const allDeletedIds = deletedIds ?? new Set<ThreadId>();
   const shouldNavigateToFallback = input.routeThreadId === input.threadId;
-  const fallbackThreadId =
-    input.threads.find((entry) => entry.id !== input.threadId && !allDeletedIds.has(entry.id))
-      ?.id ?? null;
+  const fallbackThreadId = shouldNavigateToFallback
+    ? resolveThreadDeletionNavigationTarget({
+        deletedThreadId: input.threadId,
+        orderedThreadIds:
+          input.orderedThreadIdsForNavigation ?? input.threads.map((entry) => entry.id),
+        deletedThreadIds: allDeletedIds,
+      })
+    : null;
 
   await api.orchestration.dispatchCommand({
     type: "thread.delete",
