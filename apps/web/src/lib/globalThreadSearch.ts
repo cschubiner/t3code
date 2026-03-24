@@ -11,6 +11,7 @@ export const GLOBAL_THREAD_SEARCH_RESULT_LIMIT = 300;
 export interface GlobalThreadSearchResult extends ThreadSearchMatch {
   projectName: string;
   displaySnippet: string;
+  matchCount: number;
 }
 
 export interface GlobalThreadSearchResults {
@@ -37,23 +38,41 @@ export function buildGlobalThreadSearchResults(input: {
   const projectNameById = new Map(
     input.projects.map((project) => [project.id, project.name] as const),
   );
-  const unsortedResults: GlobalThreadSearchResult[] = [];
+  const resultsByThreadId = new Map<Thread["id"], GlobalThreadSearchResult>();
 
   for (const thread of input.threads) {
     const sources = buildThreadSearchSources(thread, { includeTitle: true });
     const matches = buildThreadSearchMatches(sources, normalizedQuery);
-    const projectName = projectNameById.get(thread.projectId) ?? "Unknown project";
-    for (const match of matches) {
-      unsortedResults.push({
-        ...match,
-        projectName,
-        displaySnippet:
-          match.kind === "title"
-            ? thread.title
-            : createThreadSearchSnippet(match.matchedText, match.matchStart, match.matchEnd),
-      });
+    if (matches.length === 0) {
+      continue;
     }
+    const projectName = projectNameById.get(thread.projectId) ?? "Unknown project";
+    const representativeMatch = matches.toSorted((left, right) => {
+      const byCreatedAt = right.sourceCreatedAt.localeCompare(left.sourceCreatedAt);
+      if (byCreatedAt !== 0) return byCreatedAt;
+      const bySourceId = right.sourceId.localeCompare(left.sourceId);
+      if (bySourceId !== 0) return bySourceId;
+      return left.occurrenceIndexInSource - right.occurrenceIndexInSource;
+    })[0];
+    if (!representativeMatch) {
+      continue;
+    }
+    resultsByThreadId.set(thread.id, {
+      ...representativeMatch,
+      projectName,
+      matchCount: matches.length,
+      displaySnippet:
+        representativeMatch.kind === "title"
+          ? thread.title
+          : createThreadSearchSnippet(
+              representativeMatch.matchedText,
+              representativeMatch.matchStart,
+              representativeMatch.matchEnd,
+            ),
+    });
   }
+
+  const unsortedResults = Array.from(resultsByThreadId.values());
 
   unsortedResults.sort((left, right) => {
     const byCreatedAt = right.sourceCreatedAt.localeCompare(left.sourceCreatedAt);

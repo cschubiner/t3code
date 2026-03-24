@@ -275,6 +275,9 @@ export function GlobalThreadSearchDialog({
                             )}
                           </span>
                           <Badge variant="outline">{resultKindLabel(result.kind)}</Badge>
+                          {result.matchCount > 1 ? (
+                            <Badge variant="secondary">{result.matchCount} matches</Badge>
+                          ) : null}
                           <span className="text-muted-foreground text-xs">
                             {result.projectName}
                           </span>
