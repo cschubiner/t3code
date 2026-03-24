@@ -778,6 +778,17 @@ export default function Sidebar() {
     [],
   );
 
+  const triggerRename = useCallback(() => {
+    const currentRouteThreadId =
+      threadIdFromSidebarPathname(router.state.location.pathname) ?? routeThreadIdRef.current;
+    const selectedIds = [...selectedThreadIds];
+    const renameTargetThreadId =
+      selectedIds.length === 1 ? selectedIds[0] : (currentRouteThreadId ?? null);
+    if (!renameTargetThreadId) return false;
+    if (!threadsRef.current.some((thread) => thread.id === renameTargetThreadId)) return false;
+    return startRenameThread(renameTargetThreadId);
+  }, [router.state.location.pathname, selectedThreadIds, startRenameThread]);
+
   const deleteThread = useCallback(
     async (
       threadId: ThreadId,
@@ -1613,14 +1624,8 @@ export default function Sidebar() {
       }
 
       if (resolvedCommand === "sidebar.rename") {
-        const selectedIds = [...selectedThreadIds];
-        const renameTargetThreadId =
-          selectedIds.length === 1 ? selectedIds[0] : (currentRouteThreadId ?? null);
-        if (!renameTargetThreadId) return;
-        if (!currentThreads.some((thread) => thread.id === renameTargetThreadId)) return;
-
+        if (!triggerRename()) return;
         event.preventDefault();
-        startRenameThread(renameTargetThreadId);
         return;
       }
 
@@ -1668,7 +1673,21 @@ export default function Sidebar() {
     isProjectFolderSearchOpen,
     selectedThreadIds,
     startRenameThread,
+    triggerRename,
   ]);
+
+  useEffect(() => {
+    const bridge = window.desktopBridge;
+    if (!bridge || typeof bridge.onMenuAction !== "function") {
+      return;
+    }
+
+    return bridge.onMenuAction((action) => {
+      if (action !== "sidebar.rename") return;
+      if (isTypingInSidebarTextEntry(document.activeElement)) return;
+      triggerRename();
+    });
+  }, [triggerRename]);
 
   useEffect(() => {
     if (!isElectron) return;
