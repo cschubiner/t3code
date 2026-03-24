@@ -114,7 +114,6 @@ import {
   resolveSidebarThreadNavigationTarget,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
-  type SidebarThreadListMode,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
   sortThreadsForSidebar,
@@ -1814,7 +1813,10 @@ export default function Sidebar() {
       const isHighlighted = isActive || isSelected;
       const referencedPrs = referencedPrsByThreadId.get(thread.id) ?? [];
       const referencedPrStates = referencedPrs.map((reference) => ({
-        ...reference,
+        url: reference.url,
+        owner: reference.owner,
+        repo: reference.repo,
+        number: reference.number,
         state: referencedPrStateByUrl.get(reference.url) ?? null,
       }));
       const threadStatus = resolveThreadStatusPill({
@@ -2260,12 +2262,12 @@ export default function Sidebar() {
                 <SidebarMenu>
                   <SortableContext
                     items={sortedProjects.map((project) => project.id)}
-                    strategy={verticalListSortingStrategy}
-                  >
-                    {sortedProjects.map((project) => (
-                      <SortableProjectItem key={project.id} projectId={project.id}>
-                        {(dragHandleProps) => renderProjectItem(project, dragHandleProps)}
-                      </SortableProjectItem>
+                  strategy={verticalListSortingStrategy}
+                >
+                  {sortedProjects.map((project) => (
+                    <SortableProjectItem key={project.id} projectId={project.id}>
+                      {(dragHandleProps) => renderProjectItem(project, dragHandleProps)}
+                    </SortableProjectItem>
                     ))}
                   </SortableContext>
                 </SidebarMenu>
