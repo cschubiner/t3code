@@ -2596,6 +2596,13 @@ describe("ChatView timeline estimator parity (full app)", () => {
         { timeout: 8_000, interval: 16 },
       );
 
+      const scrollArea = await waitForElement(
+        () => document.querySelector<HTMLElement>('[data-testid="queued-follow-ups-scroll-area"]'),
+        "Unable to find the queued follow-ups scroll area.",
+      );
+      expect(scrollArea.style.maxHeight).toBe("23.875rem");
+      expect(scrollArea.className).toContain("overflow-y-auto");
+
       const secondRow = await waitForQueuedRow(String(queuedMessageId));
       findButtonByText(secondRow, "Delete")?.click();
 
