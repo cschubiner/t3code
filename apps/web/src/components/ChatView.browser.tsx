@@ -485,7 +485,7 @@ function createSnapshotForGlobalThreadSearch(): OrchestrationReadModel {
         messages: [
           createAssistantMessage({
             id: "msg-assistant-global-content" as MessageId,
-            text: "[Visible global needle](https://hidden.example.com/needle)",
+            text: "[Visible global needle](https://hidden.example.com/needle) plus another needle",
             offsetSeconds: 300,
           }),
         ],
@@ -2475,9 +2475,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await vi.waitFor(
         () => {
           const results = listGlobalThreadSearchResults();
-          expect(results.length).toBeGreaterThanOrEqual(2);
+          expect(results).toHaveLength(2);
           expect(results[0]?.textContent).toContain("Cross-thread assistant result");
           expect(results[0]?.textContent).toContain("Assistant");
+          expect(results[0]?.textContent).toContain("2 matches");
           expect(results[0]?.textContent).toContain("Project");
           expect(results[0]?.textContent).toContain("5 minutes ago");
           const relativeTimestamp = results[0]?.querySelector("[title]");
