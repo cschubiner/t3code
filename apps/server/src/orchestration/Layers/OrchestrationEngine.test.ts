@@ -239,6 +239,79 @@ describe("OrchestrationEngine", () => {
     await system.dispose();
   });
 
+  it("emits project reassignment in thread.meta-updated events", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-project-a-create"),
+        projectId: asProjectId("project-a"),
+        title: "Project A",
+        workspaceRoot: "/tmp/project-a",
+        defaultModel: "gpt-5-codex",
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-project-b-create"),
+        projectId: asProjectId("project-b"),
+        title: "Project B",
+        workspaceRoot: "/tmp/project-b",
+        defaultModel: "gpt-5-codex",
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.makeUnsafe("cmd-thread-project-move-create"),
+        threadId: ThreadId.makeUnsafe("thread-project-move"),
+        projectId: asProjectId("project-a"),
+        title: "Project move",
+        model: "gpt-5-codex",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "full-access",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+
+    const event = await system.run(
+      Effect.gen(function* () {
+        const eventQueue = yield* Queue.unbounded<OrchestrationEvent>();
+        yield* Effect.forkScoped(
+          Stream.take(engine.streamDomainEvents, 1).pipe(
+            Stream.runForEach((domainEvent) =>
+              Queue.offer(eventQueue, domainEvent).pipe(Effect.asVoid),
+            ),
+          ),
+        );
+        yield* Effect.sleep("10 millis");
+        yield* engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.makeUnsafe("cmd-thread-project-move-update"),
+          threadId: ThreadId.makeUnsafe("thread-project-move"),
+          projectId: asProjectId("project-b"),
+        });
+        return yield* Queue.take(eventQueue);
+      }).pipe(Effect.scoped),
+    );
+
+    expect(event.type).toBe("thread.meta-updated");
+    expect(event.payload).toMatchObject({
+      threadId: ThreadId.makeUnsafe("thread-project-move"),
+      projectId: asProjectId("project-b"),
+    });
+
+    await system.dispose();
+  });
+
   it("dispatches thread.import atomically into created, message, and activity events", async () => {
     const system = await createOrchestrationSystem();
     const { engine } = system;
