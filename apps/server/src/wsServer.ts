@@ -535,7 +535,14 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           const cwd = url.searchParams.get("cwd")?.trim();
           const reference = url.searchParams.get("url")?.trim();
           if (!cwd || !reference) {
-            respond(400, { "Content-Type": "application/json" }, '{"state":null}');
+            respond(
+              400,
+              {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": "*",
+              },
+              '{"state":null}',
+            );
             return;
           }
 
@@ -548,7 +555,11 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
           respond(
             200,
-            { "Content-Type": "application/json", "Cache-Control": "private, max-age=300" },
+            {
+              "Content-Type": "application/json",
+              "Cache-Control": "private, max-age=300",
+              "Access-Control-Allow-Origin": "*",
+            },
             JSON.stringify({
               state: pullRequest?.state ?? null,
               number: pullRequest?.number ?? null,
