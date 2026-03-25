@@ -182,6 +182,21 @@ describe("extractSidebarPullRequestReferences", () => {
       ),
     ).toHaveLength(1);
   });
+
+  it("dedupes equivalent PR URLs with query strings or fragments", () => {
+    expect(
+      extractSidebarPullRequestReferences(
+        "Refs https://github.com/pingdotgg/t3code/pull/42/files and https://github.com/pingdotgg/t3code/pull/42#issuecomment-1",
+      ),
+    ).toEqual([
+      {
+        url: "https://github.com/pingdotgg/t3code/pull/42/files",
+        owner: "pingdotgg",
+        repo: "t3code",
+        number: "42",
+      },
+    ]);
+  });
 });
 
 describe("deriveThreadSidebarPullRequestReferences", () => {
@@ -226,6 +241,45 @@ describe("deriveThreadSidebarPullRequestReferences", () => {
         owner: "cschubiner",
         repo: "t3code",
         number: "55",
+      },
+    ]);
+  });
+
+  it("dedupes the same PR across messages and queued turns", () => {
+    const thread: Parameters<typeof deriveThreadSidebarPullRequestReferences>[0] = {
+      messages: [
+        {
+          id: "message-1" as never,
+          role: "user" as const,
+          text: "Compare https://github.com/pingdotgg/t3code/pull/42/files first",
+          createdAt: "2026-03-09T10:00:00.000Z",
+          streaming: false,
+        },
+      ],
+      queuedTurns: [
+        {
+          messageId: "message-queued" as never,
+          text: "Also review https://github.com/pingdotgg/t3code/pull/42#issuecomment-1",
+          attachments: [],
+          provider: null,
+          model: null,
+          modelOptions: null,
+          providerOptions: null,
+          assistantDeliveryMode: "streaming" as const,
+          runtimeMode: "full-access" as const,
+          interactionMode: "default" as const,
+          queuedAt: "2026-03-09T10:01:00.000Z",
+        },
+      ],
+      worktreePath: "/tmp/t3code-pr-refs",
+    };
+
+    expect(deriveThreadSidebarPullRequestReferences(thread)).toEqual([
+      {
+        url: "https://github.com/pingdotgg/t3code/pull/42/files",
+        owner: "pingdotgg",
+        repo: "t3code",
+        number: "42",
       },
     ]);
   });

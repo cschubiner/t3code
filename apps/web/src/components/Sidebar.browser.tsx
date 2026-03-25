@@ -41,6 +41,7 @@ const THREAD_B2 = "thread-b2" as ThreadId;
 const THREAD_B1 = "thread-b1" as ThreadId;
 const DESKTOP_VIEWPORT = { width: 1280, height: 960 } as const;
 const MOBILE_VIEWPORT = { width: 430, height: 932 } as const;
+const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
 let mockedViewportWidth: number = DESKTOP_VIEWPORT.width;
 let originalMatchMedia: typeof window.matchMedia | null = null;
 
@@ -584,6 +585,10 @@ describe("Sidebar navigation keybindings", () => {
     fixture = buildFixture();
     await setViewport();
     localStorage.clear();
+    localStorage.setItem(
+      APP_SETTINGS_STORAGE_KEY,
+      JSON.stringify({ sidebarProjectSortOrder: "manual" }),
+    );
     document.body.innerHTML = "";
     Reflect.deleteProperty(window, "desktopBridge");
     useComposerDraftStore.setState({
