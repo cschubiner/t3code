@@ -528,9 +528,9 @@ export function sortThreadsForSidebar<
   });
 }
 
-export function sortThreadsForRecentSidebar<T extends Pick<Thread, "id" | "createdAt" | "updatedAt">>(
-  threads: readonly T[],
-): T[] {
+export function sortThreadsForRecentSidebar<
+  T extends Pick<Thread, "id" | "createdAt" | "updatedAt">,
+>(threads: readonly T[]): T[] {
   return threads.toSorted((left, right) => {
     const byUpdatedAt = threadRecentSortTimestamp(right) - threadRecentSortTimestamp(left);
     if (byUpdatedAt !== 0) return byUpdatedAt;

@@ -2262,12 +2262,12 @@ export default function Sidebar() {
                 <SidebarMenu>
                   <SortableContext
                     items={sortedProjects.map((project) => project.id)}
-                  strategy={verticalListSortingStrategy}
-                >
-                  {sortedProjects.map((project) => (
-                    <SortableProjectItem key={project.id} projectId={project.id}>
-                      {(dragHandleProps) => renderProjectItem(project, dragHandleProps)}
-                    </SortableProjectItem>
+                    strategy={verticalListSortingStrategy}
+                  >
+                    {sortedProjects.map((project) => (
+                      <SortableProjectItem key={project.id} projectId={project.id}>
+                        {(dragHandleProps) => renderProjectItem(project, dragHandleProps)}
+                      </SortableProjectItem>
                     ))}
                   </SortableContext>
                 </SidebarMenu>
