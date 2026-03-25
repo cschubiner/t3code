@@ -849,9 +849,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [lockedProvider, modelOptionsByProvider],
   );
   const phase = derivePhase(activeThread?.session ?? null);
-  const isSendBusy = sendPhase !== "idle";
+  const isSendBusy = sendPhase === "preparing-worktree" || sendPhase === "submitting-turn";
+  const isAwaitingTurnStart = sendPhase === "awaiting-turn-start";
   const isPreparingWorktree = sendPhase === "preparing-worktree";
-  const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  const hasPendingTurnStart = isSendBusy || isAwaitingTurnStart;
+  const hasLiveFollowUpActions = phase === "running" || isAwaitingTurnStart;
+  const isWorking =
+    phase === "running" || hasPendingTurnStart || isConnecting || isRevertingCheckpoint;
   const nowIso = new Date(nowTick).toISOString();
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
@@ -2507,12 +2511,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
   ]);
 
   useEffect(() => {
-    const hasTransientWork = isSendBusy || isConnecting || isRevertingCheckpoint;
+    const hasTransientWork = hasPendingTurnStart || isConnecting || isRevertingCheckpoint;
     setTransientWorking(threadId, hasTransientWork);
     return () => {
       setTransientWorking(threadId, false);
     };
-  }, [isConnecting, isRevertingCheckpoint, isSendBusy, setTransientWorking, threadId]);
+  }, [hasPendingTurnStart, isConnecting, isRevertingCheckpoint, setTransientWorking, threadId]);
 
   const queueComposerTurn = useCallback(
     async (input?: {
@@ -3153,7 +3157,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         draftText: trimmed,
         planMarkdown: activeProposedPlan.planMarkdown,
       });
-      if (phase === "running" && disposition === "queue") {
+      if (hasLiveFollowUpActions && disposition === "queue") {
         await queueComposerTurn(followUp);
         return;
       }
@@ -3206,7 +3210,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       return;
     }
-    if (phase === "running" && disposition === "queue") {
+    if (hasLiveFollowUpActions && disposition === "queue") {
       if (expiredTerminalContextCount > 0) {
         const toastCopy = buildExpiredTerminalContextToastCopy(
           expiredTerminalContextCount,
@@ -3246,7 +3250,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
 
     sendInFlightRef.current = true;
-    beginSendPhase(baseBranchForWorktree ? "preparing-worktree" : "sending-turn");
+    beginSendPhase(baseBranchForWorktree ? "preparing-worktree" : "submitting-turn");
 
     const composerImagesSnapshot = [...composerImages];
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
@@ -3424,7 +3428,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         });
       }
 
-      beginSendPhase("sending-turn");
+      beginSendPhase("submitting-turn");
       const turnAttachments = await turnAttachmentsPromise;
       await api.orchestration.dispatchCommand({
         type: "thread.turn.start",
@@ -3447,6 +3451,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         interactionMode,
         createdAt: messageCreatedAt,
       });
+      setSendPhase("awaiting-turn-start");
       turnStartSucceeded = true;
     })().catch(async (err: unknown) => {
       if (createdServerThreadForLocalDraft && !turnStartSucceeded) {
@@ -3683,7 +3688,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       });
 
       sendInFlightRef.current = true;
-      beginSendPhase("sending-turn");
+      beginSendPhase("submitting-turn");
       setThreadError(threadIdForSend, null);
       setOptimisticUserMessages((existing) => [
         ...existing,
@@ -3747,6 +3752,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           planSidebarDismissedForTurnRef.current = null;
           setPlanSidebarOpen(true);
         }
+        setSendPhase("awaiting-turn-start");
         sendInFlightRef.current = false;
       } catch (err) {
         setOptimisticUserMessages((existing) =>
@@ -3814,7 +3820,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       DEFAULT_MODEL_BY_PROVIDER.codex;
 
     sendInFlightRef.current = true;
-    beginSendPhase("sending-turn");
+    beginSendPhase("submitting-turn");
     const finish = () => {
       sendInFlightRef.current = false;
       resetSendPhase();
@@ -3856,6 +3862,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
           interactionMode: "default",
           createdAt,
         });
+      })
+      .then(() => {
+        setSendPhase("awaiting-turn-start");
       })
       .then(() => api.orchestration.getSnapshot())
       .then((snapshot) => {
@@ -4304,7 +4313,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
     if (
       key === "Enter" &&
-      phase === "running" &&
+      hasLiveFollowUpActions &&
       composerHasContent &&
       event.shiftKey &&
       !event.altKey &&
@@ -4345,7 +4354,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
     }
 
-    if (key === "Tab" && !event.shiftKey && phase === "running" && composerHasContent) {
+    if (key === "Tab" && !event.shiftKey && hasLiveFollowUpActions && composerHasContent) {
       void onSend(undefined, "queue");
       return true;
     }
@@ -4951,7 +4960,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                     : "Next question"}
                               </Button>
                             </div>
-                          ) : phase === "running" ? (
+                          ) : hasLiveFollowUpActions ? (
                             <div className="flex items-center gap-2">
                               {composerHasContent ? (
                                 <>
@@ -4979,22 +4988,28 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                   </Button>
                                 </>
                               ) : null}
-                              <button
-                                type="button"
-                                className="flex size-8 cursor-pointer items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105 sm:h-8 sm:w-8"
-                                onClick={() => void onInterrupt()}
-                                aria-label="Stop generation"
-                              >
-                                <svg
-                                  width="12"
-                                  height="12"
-                                  viewBox="0 0 12 12"
-                                  fill="currentColor"
-                                  aria-hidden="true"
+                              {phase === "running" ? (
+                                <button
+                                  type="button"
+                                  className="flex size-8 cursor-pointer items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105 sm:h-8 sm:w-8"
+                                  onClick={() => void onInterrupt()}
+                                  aria-label="Stop generation"
                                 >
-                                  <rect x="2" y="2" width="8" height="8" rx="1.5" />
-                                </svg>
-                              </button>
+                                  <svg
+                                    width="12"
+                                    height="12"
+                                    viewBox="0 0 12 12"
+                                    fill="currentColor"
+                                    aria-hidden="true"
+                                  >
+                                    <rect x="2" y="2" width="8" height="8" rx="1.5" />
+                                  </svg>
+                                </button>
+                              ) : (
+                                <span className="text-muted-foreground/70 text-xs">
+                                  Starting turn...
+                                </span>
+                              )}
                             </div>
                           ) : pendingUserInputs.length === 0 ? (
                             showPlanFollowUpPrompt ? (
