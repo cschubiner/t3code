@@ -1,11 +1,12 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CommandId, ProjectId, ThreadId } from "@t3tools/contracts";
-import { Effect, Layer, ManagedRuntime, Option } from "effect";
+import { Effect, Exit, Layer, Option, Scope } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ServerConfig } from "../../config.ts";
@@ -136,6 +137,41 @@ function createCodexHomeFixture(sessions: ReadonlyArray<FixtureSessionInput>): {
   return { homePath };
 }
 
+function runGit(cwd: string, args: ReadonlyArray<string>) {
+  execFileSync("git", [...args], {
+    cwd,
+    stdio: "pipe",
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "T3 Code",
+      GIT_AUTHOR_EMAIL: "t3code@example.com",
+      GIT_COMMITTER_NAME: "T3 Code",
+      GIT_COMMITTER_EMAIL: "t3code@example.com",
+    },
+  });
+}
+
+function createGitWorktreeFixture(prefix: string): {
+  readonly repoRoot: string;
+  readonly worktreePath: string;
+} {
+  const repoRoot = makeTempDir(`${prefix}-repo-`);
+  const worktreePath = makeTempDir(`${prefix}-worktree-`);
+  fs.rmSync(worktreePath, { recursive: true, force: true });
+
+  runGit(repoRoot, ["init", "--initial-branch=main"]);
+  fs.writeFileSync(path.join(repoRoot, "README.md"), "root\n", "utf8");
+  runGit(repoRoot, ["add", "README.md"]);
+  runGit(repoRoot, ["commit", "-m", "Initial commit"]);
+  runGit(repoRoot, ["worktree", "add", worktreePath, "-b", "feature/imported-worktree"]);
+
+  return { repoRoot, worktreePath };
+}
+
+function canonicalPath(targetPath: string): string {
+  return fs.realpathSync.native(targetPath);
+}
+
 async function createCodexImportSystem(serverCwd = makeTempDir("t3code-server-cwd-")) {
   const stateDir = makeTempDir("t3code-state-");
   const persistenceLayer = SqlitePersistenceMemory;
@@ -151,14 +187,36 @@ async function createCodexImportSystem(serverCwd = makeTempDir("t3code-server-cw
     Layer.provideMerge(AnalyticsService.layerTest),
     Layer.provideMerge(NodeServices.layer),
   );
-  const runtime = ManagedRuntime.make(fullLayer);
+  const scope = await Effect.runPromise(Scope.make("sequential"));
+  const runtimeServices = await Effect.runPromise(
+    Layer.build(fullLayer).pipe(Scope.provide(scope)),
+  );
 
   return {
     run: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-      runtime.runPromise(effect as Effect.Effect<A, E, never>),
-    dispose: () => runtime.dispose(),
+      Effect.runPromise(
+        effect.pipe(
+          Effect.provide(runtimeServices as never),
+          Scope.provide(scope),
+        ) as Effect.Effect<A, E, never>,
+      ),
+    dispose: () => Effect.runPromise(Scope.close(scope, Exit.void)),
     serverCwd,
   };
+}
+
+async function waitFor(
+  predicate: () => Promise<boolean>,
+  message: string,
+  attempts = 50,
+): Promise<void> {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (await predicate()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(message);
 }
 
 afterEach(() => {
@@ -448,11 +506,9 @@ describe("CodexImportLive", () => {
     const system = await createCodexImportSystem();
 
     try {
-      const imported = await system.run(
+      await system.run(
         Effect.gen(function* () {
           const engine = yield* OrchestrationEngineService;
-          const codexImport = yield* CodexImport;
-
           yield* engine.dispatch({
             type: "project.create",
             commandId: CommandId.makeUnsafe("cmd-project-existing"),
@@ -461,6 +517,23 @@ describe("CodexImportLive", () => {
             workspaceRoot,
             createdAt: isoOffset(1),
           });
+        }),
+      );
+      await waitFor(async () => {
+        const snapshot = await system.run(
+          Effect.gen(function* () {
+            const snapshots = yield* ProjectionSnapshotQuery;
+            return yield* snapshots.getSnapshot();
+          }),
+        );
+        return snapshot.projects.some(
+          (project) => project.id === ProjectId.makeUnsafe("existing-project"),
+        );
+      }, "Expected existing project to be projected before import.");
+
+      const imported = await system.run(
+        Effect.gen(function* () {
+          const codexImport = yield* CodexImport;
 
           return yield* codexImport.importSessions({
             homePath,
@@ -534,6 +607,603 @@ describe("CodexImportLive", () => {
     }
   });
 
+  it("imports a git worktree session into the repo project and preserves the worktree path", async () => {
+    const { repoRoot, worktreePath } = createGitWorktreeFixture("codex-import-worktree");
+    const { homePath } = createCodexHomeFixture([
+      {
+        sessionId: "worktree-session",
+        title: "Worktree import",
+        cwd: worktreePath,
+        firstUserMessage: "import from worktree",
+        transcript: buildTranscript([
+          { role: "user", text: "import from worktree", timestamp: isoOffset(3) },
+          { role: "assistant", text: "done", timestamp: isoOffset(2) },
+        ]),
+      },
+    ]);
+    const system = await createCodexImportSystem();
+
+    try {
+      await system.run(
+        Effect.gen(function* () {
+          const engine = yield* OrchestrationEngineService;
+
+          yield* engine.dispatch({
+            type: "project.create",
+            commandId: CommandId.makeUnsafe("cmd-project-root"),
+            projectId: ProjectId.makeUnsafe("root-project"),
+            title: "Canal",
+            workspaceRoot: repoRoot,
+            createdAt: isoOffset(1),
+          });
+        }),
+      );
+      await waitFor(async () => {
+        const snapshot = await system.run(
+          Effect.gen(function* () {
+            const snapshots = yield* ProjectionSnapshotQuery;
+            return yield* snapshots.getSnapshot();
+          }),
+        );
+        return snapshot.projects.some(
+          (project) => project.id === ProjectId.makeUnsafe("root-project"),
+        );
+      }, "Expected root project to be projected before worktree import.");
+
+      const imported = await system.run(
+        Effect.gen(function* () {
+          const codexImport = yield* CodexImport;
+
+          return yield* codexImport.importSessions({
+            homePath,
+            sessionIds: ["worktree-session"],
+          });
+        }),
+      );
+
+      expect(imported.results).toEqual([
+        {
+          sessionId: "worktree-session",
+          status: "imported",
+          threadId: ThreadId.makeUnsafe("codex-import-worktree-session"),
+          projectId: ProjectId.makeUnsafe("root-project"),
+          error: null,
+        },
+      ]);
+
+      const snapshot = await system.run(
+        Effect.gen(function* () {
+          const snapshots = yield* ProjectionSnapshotQuery;
+          return yield* snapshots.getSnapshot();
+        }),
+      );
+
+      expect(snapshot.projects.filter((project) => project.deletedAt === null)).toHaveLength(1);
+      const importedThread = snapshot.threads.find(
+        (thread) => thread.id === ThreadId.makeUnsafe("codex-import-worktree-session"),
+      );
+      expect(importedThread?.projectId).toBe(ProjectId.makeUnsafe("root-project"));
+      expect(importedThread?.worktreePath).toBe(canonicalPath(worktreePath));
+    } finally {
+      await system.dispose();
+    }
+  });
+
+  it("reconciles previously imported duplicate worktree projects into the repo project", async () => {
+    const { repoRoot, worktreePath } = createGitWorktreeFixture("codex-import-reconcile");
+    const { homePath } = createCodexHomeFixture([
+      {
+        sessionId: "existing-duplicate-session",
+        title: "Existing duplicate",
+        cwd: worktreePath,
+        firstUserMessage: "existing duplicate",
+        transcript: buildTranscript([
+          { role: "user", text: "existing duplicate", timestamp: isoOffset(3) },
+          { role: "assistant", text: "done", timestamp: isoOffset(2) },
+        ]),
+      },
+    ]);
+    const system = await createCodexImportSystem();
+
+    try {
+      await system.run(
+        Effect.gen(function* () {
+          const engine = yield* OrchestrationEngineService;
+          const directory = yield* ProviderSessionDirectory;
+
+          yield* engine.dispatch({
+            type: "project.create",
+            commandId: CommandId.makeUnsafe("cmd-project-root-existing"),
+            projectId: ProjectId.makeUnsafe("root-project-existing"),
+            title: "Canal",
+            workspaceRoot: repoRoot,
+            createdAt: isoOffset(5),
+          });
+          yield* engine.dispatch({
+            type: "project.create",
+            commandId: CommandId.makeUnsafe("cmd-project-duplicate"),
+            projectId: ProjectId.makeUnsafe("duplicate-project"),
+            title: "canal",
+            workspaceRoot: worktreePath,
+            createdAt: isoOffset(4),
+          });
+          yield* engine.dispatch({
+            type: "thread.create",
+            commandId: CommandId.makeUnsafe("cmd-thread-duplicate"),
+            threadId: ThreadId.makeUnsafe("codex-import-existing-duplicate-session"),
+            projectId: ProjectId.makeUnsafe("duplicate-project"),
+            title: "Existing duplicate",
+            model: "gpt-5-codex",
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: isoOffset(3),
+          });
+          yield* directory.upsert({
+            threadId: ThreadId.makeUnsafe("codex-import-existing-duplicate-session"),
+            provider: "codex",
+            status: "stopped",
+            resumeCursor: { threadId: "existing-duplicate-session" },
+            runtimePayload: {
+              cwd: worktreePath,
+              model: "gpt-5-codex",
+              providerOptions: {
+                codex: {
+                  homePath,
+                },
+              },
+            },
+          });
+        }),
+      );
+      await waitFor(async () => {
+        const snapshot = await system.run(
+          Effect.gen(function* () {
+            const snapshots = yield* ProjectionSnapshotQuery;
+            return yield* snapshots.getSnapshot();
+          }),
+        );
+        return (
+          snapshot.projects.some(
+            (project) => project.id === ProjectId.makeUnsafe("root-project-existing"),
+          ) &&
+          snapshot.projects.some(
+            (project) => project.id === ProjectId.makeUnsafe("duplicate-project"),
+          ) &&
+          snapshot.threads.some(
+            (thread) =>
+              thread.id === ThreadId.makeUnsafe("codex-import-existing-duplicate-session"),
+          )
+        );
+      }, "Expected duplicate import fixtures to be projected before reconciliation.");
+
+      await system.run(
+        Effect.gen(function* () {
+          const codexImport = yield* CodexImport;
+          return yield* codexImport.listSessions({ homePath, limit: 10, kind: "all" });
+        }),
+      );
+      await waitFor(async () => {
+        const snapshot = await system.run(
+          Effect.gen(function* () {
+            const snapshots = yield* ProjectionSnapshotQuery;
+            return yield* snapshots.getSnapshot();
+          }),
+        );
+        const thread = snapshot.threads.find(
+          (candidate) =>
+            candidate.id === ThreadId.makeUnsafe("codex-import-existing-duplicate-session"),
+        );
+        const project = snapshot.projects.find(
+          (candidate) => candidate.id === ProjectId.makeUnsafe("duplicate-project"),
+        );
+        return (
+          thread?.projectId === ProjectId.makeUnsafe("root-project-existing") &&
+          thread.worktreePath === canonicalPath(worktreePath) &&
+          project?.deletedAt !== null
+        );
+      }, "Expected duplicate worktree import to be reconciled.");
+
+      const snapshot = await system.run(
+        Effect.gen(function* () {
+          const snapshots = yield* ProjectionSnapshotQuery;
+          return yield* snapshots.getSnapshot();
+        }),
+      );
+
+      const reconciledThread = snapshot.threads.find(
+        (thread) => thread.id === ThreadId.makeUnsafe("codex-import-existing-duplicate-session"),
+      );
+      expect(reconciledThread?.projectId).toBe(ProjectId.makeUnsafe("root-project-existing"));
+      expect(reconciledThread?.worktreePath).toBe(canonicalPath(worktreePath));
+
+      const duplicateProject = snapshot.projects.find(
+        (project) => project.id === ProjectId.makeUnsafe("duplicate-project"),
+      );
+      expect(duplicateProject?.deletedAt).not.toBeNull();
+    } finally {
+      await system.dispose();
+    }
+  });
+
+  it("reconciles all live threads off a duplicate imported worktree project", async () => {
+    const repoRoot = makeTempDir("canal-root-all-threads-");
+    const missingWorktreePath = path.join(
+      os.homedir(),
+      ".codex",
+      "worktrees",
+      "feedface",
+      path.basename(repoRoot),
+    );
+    const { homePath } = createCodexHomeFixture([
+      {
+        sessionId: "duplicate-project-anchor",
+        title: "Imported duplicate anchor",
+        cwd: missingWorktreePath,
+        firstUserMessage: "anchor",
+        transcript: buildTranscript([
+          { role: "user", text: "anchor", timestamp: isoOffset(3) },
+          { role: "assistant", text: "done", timestamp: isoOffset(2) },
+        ]),
+      },
+    ]);
+    const system = await createCodexImportSystem();
+
+    try {
+      await system.run(
+        Effect.gen(function* () {
+          const engine = yield* OrchestrationEngineService;
+          const directory = yield* ProviderSessionDirectory;
+
+          yield* engine.dispatch({
+            type: "project.create",
+            commandId: CommandId.makeUnsafe("cmd-project-root-all-threads"),
+            projectId: ProjectId.makeUnsafe("root-project-all-threads"),
+            title: path.basename(repoRoot),
+            workspaceRoot: repoRoot,
+            createdAt: isoOffset(6),
+          });
+          yield* engine.dispatch({
+            type: "project.create",
+            commandId: CommandId.makeUnsafe("cmd-project-duplicate-all-threads"),
+            projectId: ProjectId.makeUnsafe("duplicate-project-all-threads"),
+            title: path.basename(repoRoot),
+            workspaceRoot: missingWorktreePath,
+            createdAt: isoOffset(5),
+          });
+          yield* engine.dispatch({
+            type: "thread.create",
+            commandId: CommandId.makeUnsafe("cmd-thread-import-anchor"),
+            threadId: ThreadId.makeUnsafe("codex-import-duplicate-project-anchor"),
+            projectId: ProjectId.makeUnsafe("duplicate-project-all-threads"),
+            title: "Imported duplicate anchor",
+            model: "gpt-5-codex",
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: isoOffset(4),
+          });
+          yield* engine.dispatch({
+            type: "thread.create",
+            commandId: CommandId.makeUnsafe("cmd-thread-manual-duplicate"),
+            threadId: ThreadId.makeUnsafe("manual-thread-in-duplicate-project"),
+            projectId: ProjectId.makeUnsafe("duplicate-project-all-threads"),
+            title: "Manual thread",
+            model: "gpt-5-codex",
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: "/tmp/t3code-worktree",
+            createdAt: isoOffset(3),
+          });
+          yield* directory.upsert({
+            threadId: ThreadId.makeUnsafe("codex-import-duplicate-project-anchor"),
+            provider: "codex",
+            status: "stopped",
+            resumeCursor: { threadId: "duplicate-project-anchor" },
+            runtimePayload: {
+              cwd: missingWorktreePath,
+              model: "gpt-5-codex",
+              providerOptions: {
+                codex: {
+                  homePath,
+                },
+              },
+            },
+          });
+        }),
+      );
+      await waitFor(async () => {
+        const snapshot = await system.run(
+          Effect.gen(function* () {
+            const snapshots = yield* ProjectionSnapshotQuery;
+            return yield* snapshots.getSnapshot();
+          }),
+        );
+        return (
+          snapshot.threads.some(
+            (thread) => thread.id === ThreadId.makeUnsafe("manual-thread-in-duplicate-project"),
+          ) &&
+          snapshot.projects.some(
+            (project) => project.id === ProjectId.makeUnsafe("duplicate-project-all-threads"),
+          )
+        );
+      }, "Expected duplicate-project fixtures to be projected before full reconciliation.");
+
+      await system.run(
+        Effect.gen(function* () {
+          const codexImport = yield* CodexImport;
+          return yield* codexImport.listSessions({ homePath, limit: 10, kind: "all" });
+        }),
+      );
+      await waitFor(async () => {
+        const snapshot = await system.run(
+          Effect.gen(function* () {
+            const snapshots = yield* ProjectionSnapshotQuery;
+            return yield* snapshots.getSnapshot();
+          }),
+        );
+        const importedThread = snapshot.threads.find(
+          (candidate) =>
+            candidate.id === ThreadId.makeUnsafe("codex-import-duplicate-project-anchor"),
+        );
+        const manualThread = snapshot.threads.find(
+          (candidate) => candidate.id === ThreadId.makeUnsafe("manual-thread-in-duplicate-project"),
+        );
+        const duplicateProject = snapshot.projects.find(
+          (candidate) => candidate.id === ProjectId.makeUnsafe("duplicate-project-all-threads"),
+        );
+        return (
+          importedThread?.projectId === ProjectId.makeUnsafe("root-project-all-threads") &&
+          manualThread?.projectId === ProjectId.makeUnsafe("root-project-all-threads") &&
+          manualThread.worktreePath === "/tmp/t3code-worktree" &&
+          duplicateProject?.deletedAt !== null
+        );
+      }, "Expected all duplicate-project threads to move to the canonical project.");
+    } finally {
+      await system.dispose();
+    }
+  });
+
+  it("reconciles duplicate imported projects even after the import anchor thread already moved", async () => {
+    const repoRoot = makeTempDir("canal-root-post-anchor-");
+    const missingWorktreePath = path.join(
+      os.homedir(),
+      ".codex",
+      "worktrees",
+      "c0ffee",
+      path.basename(repoRoot),
+    );
+    const { homePath } = createCodexHomeFixture([
+      {
+        sessionId: "already-moved-anchor",
+        title: "Already moved anchor",
+        cwd: missingWorktreePath,
+        firstUserMessage: "anchor",
+        transcript: buildTranscript([
+          { role: "user", text: "anchor", timestamp: isoOffset(3) },
+          { role: "assistant", text: "done", timestamp: isoOffset(2) },
+        ]),
+      },
+    ]);
+    const system = await createCodexImportSystem();
+
+    try {
+      await system.run(
+        Effect.gen(function* () {
+          const engine = yield* OrchestrationEngineService;
+          const directory = yield* ProviderSessionDirectory;
+
+          yield* engine.dispatch({
+            type: "project.create",
+            commandId: CommandId.makeUnsafe("cmd-project-root-post-anchor"),
+            projectId: ProjectId.makeUnsafe("root-project-post-anchor"),
+            title: path.basename(repoRoot),
+            workspaceRoot: repoRoot,
+            createdAt: isoOffset(6),
+          });
+          yield* engine.dispatch({
+            type: "project.create",
+            commandId: CommandId.makeUnsafe("cmd-project-duplicate-post-anchor"),
+            projectId: ProjectId.makeUnsafe("duplicate-project-post-anchor"),
+            title: path.basename(repoRoot),
+            workspaceRoot: missingWorktreePath,
+            createdAt: isoOffset(5),
+          });
+          yield* engine.dispatch({
+            type: "thread.create",
+            commandId: CommandId.makeUnsafe("cmd-thread-import-post-anchor"),
+            threadId: ThreadId.makeUnsafe("codex-import-already-moved-anchor"),
+            projectId: ProjectId.makeUnsafe("root-project-post-anchor"),
+            title: "Already moved anchor",
+            model: "gpt-5-codex",
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: missingWorktreePath,
+            createdAt: isoOffset(4),
+          });
+          yield* engine.dispatch({
+            type: "thread.create",
+            commandId: CommandId.makeUnsafe("cmd-thread-manual-post-anchor"),
+            threadId: ThreadId.makeUnsafe("manual-thread-post-anchor"),
+            projectId: ProjectId.makeUnsafe("duplicate-project-post-anchor"),
+            title: "Manual duplicate thread",
+            model: "gpt-5-codex",
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: "/tmp/post-anchor-worktree",
+            createdAt: isoOffset(3),
+          });
+          yield* directory.upsert({
+            threadId: ThreadId.makeUnsafe("codex-import-already-moved-anchor"),
+            provider: "codex",
+            status: "stopped",
+            resumeCursor: { threadId: "already-moved-anchor" },
+            runtimePayload: {
+              cwd: missingWorktreePath,
+              model: "gpt-5-codex",
+              providerOptions: {
+                codex: {
+                  homePath,
+                },
+              },
+            },
+          });
+        }),
+      );
+
+      await system.run(
+        Effect.gen(function* () {
+          const codexImport = yield* CodexImport;
+          return yield* codexImport.listSessions({ homePath, limit: 10, kind: "all" });
+        }),
+      );
+      await waitFor(async () => {
+        const snapshot = await system.run(
+          Effect.gen(function* () {
+            const snapshots = yield* ProjectionSnapshotQuery;
+            return yield* snapshots.getSnapshot();
+          }),
+        );
+        const manualThread = snapshot.threads.find(
+          (candidate) => candidate.id === ThreadId.makeUnsafe("manual-thread-post-anchor"),
+        );
+        const duplicateProject = snapshot.projects.find(
+          (candidate) => candidate.id === ProjectId.makeUnsafe("duplicate-project-post-anchor"),
+        );
+        return (
+          manualThread?.projectId === ProjectId.makeUnsafe("root-project-post-anchor") &&
+          manualThread.worktreePath === "/tmp/post-anchor-worktree" &&
+          duplicateProject?.deletedAt !== null
+        );
+      }, "Expected stale duplicate project to collapse after its import anchor already moved.");
+    } finally {
+      await system.dispose();
+    }
+  });
+
+  it("reconciles missing Codex-managed worktree projects into the canonical repo project", async () => {
+    const repoRoot = makeTempDir("canal-root-");
+    const missingWorktreePath = path.join(
+      os.homedir(),
+      ".codex",
+      "worktrees",
+      "deadbeef",
+      path.basename(repoRoot),
+    );
+    const { homePath } = createCodexHomeFixture([
+      {
+        sessionId: "missing-worktree-session",
+        title: "Missing worktree import",
+        cwd: missingWorktreePath,
+        firstUserMessage: "missing worktree",
+        transcript: buildTranscript([
+          { role: "user", text: "missing worktree", timestamp: isoOffset(3) },
+          { role: "assistant", text: "done", timestamp: isoOffset(2) },
+        ]),
+      },
+    ]);
+    const system = await createCodexImportSystem();
+
+    try {
+      await system.run(
+        Effect.gen(function* () {
+          const engine = yield* OrchestrationEngineService;
+          const directory = yield* ProviderSessionDirectory;
+
+          yield* engine.dispatch({
+            type: "project.create",
+            commandId: CommandId.makeUnsafe("cmd-project-root-missing"),
+            projectId: ProjectId.makeUnsafe("root-project-missing"),
+            title: path.basename(repoRoot),
+            workspaceRoot: repoRoot,
+            createdAt: isoOffset(5),
+          });
+          yield* engine.dispatch({
+            type: "project.create",
+            commandId: CommandId.makeUnsafe("cmd-project-duplicate-missing"),
+            projectId: ProjectId.makeUnsafe("duplicate-project-missing"),
+            title: path.basename(repoRoot),
+            workspaceRoot: missingWorktreePath,
+            createdAt: isoOffset(4),
+          });
+          yield* engine.dispatch({
+            type: "thread.create",
+            commandId: CommandId.makeUnsafe("cmd-thread-duplicate-missing"),
+            threadId: ThreadId.makeUnsafe("codex-import-missing-worktree-session"),
+            projectId: ProjectId.makeUnsafe("duplicate-project-missing"),
+            title: "Missing worktree import",
+            model: "gpt-5-codex",
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: isoOffset(3),
+          });
+          yield* directory.upsert({
+            threadId: ThreadId.makeUnsafe("codex-import-missing-worktree-session"),
+            provider: "codex",
+            status: "stopped",
+            resumeCursor: { threadId: "missing-worktree-session" },
+            runtimePayload: {
+              cwd: missingWorktreePath,
+              model: "gpt-5-codex",
+              providerOptions: {
+                codex: {
+                  homePath,
+                },
+              },
+            },
+          });
+        }),
+      );
+      await waitFor(async () => {
+        const snapshot = await system.run(
+          Effect.gen(function* () {
+            const snapshots = yield* ProjectionSnapshotQuery;
+            return yield* snapshots.getSnapshot();
+          }),
+        );
+        return snapshot.projects.some(
+          (project) => project.id === ProjectId.makeUnsafe("duplicate-project-missing"),
+        );
+      }, "Expected missing-worktree fixtures to be projected before reconciliation.");
+
+      await system.run(
+        Effect.gen(function* () {
+          const codexImport = yield* CodexImport;
+          return yield* codexImport.listSessions({ homePath, limit: 10, kind: "all" });
+        }),
+      );
+      await waitFor(async () => {
+        const snapshot = await system.run(
+          Effect.gen(function* () {
+            const snapshots = yield* ProjectionSnapshotQuery;
+            return yield* snapshots.getSnapshot();
+          }),
+        );
+        const thread = snapshot.threads.find(
+          (candidate) =>
+            candidate.id === ThreadId.makeUnsafe("codex-import-missing-worktree-session"),
+        );
+        const project = snapshot.projects.find(
+          (candidate) => candidate.id === ProjectId.makeUnsafe("duplicate-project-missing"),
+        );
+        return (
+          thread?.projectId === ProjectId.makeUnsafe("root-project-missing") &&
+          thread.worktreePath === null &&
+          project?.deletedAt !== null
+        );
+      }, "Expected missing Codex worktree import to be reconciled.");
+    } finally {
+      await system.dispose();
+    }
+  });
+
   it("creates projects for existing cwd imports and uses the fallback project when cwd is missing", async () => {
     const serverCwd = makeTempDir("server-fallback-root-");
     const existingCwd = makeTempDir("new-project-root-");
@@ -574,6 +1244,22 @@ describe("CodexImportLive", () => {
       );
 
       expect(imported.results.map((result) => result.status)).toEqual(["imported", "imported"]);
+      await waitFor(async () => {
+        const snapshot = await system.run(
+          Effect.gen(function* () {
+            const snapshots = yield* ProjectionSnapshotQuery;
+            return yield* snapshots.getSnapshot();
+          }),
+        );
+        return (
+          snapshot.projects.some(
+            (project) => project.workspaceRoot === canonicalPath(existingCwd),
+          ) &&
+          snapshot.projects.some(
+            (project) => project.id === ProjectId.makeUnsafe("codex-import-fallback"),
+          )
+        );
+      }, "Expected imported projects to be projected.");
 
       const snapshot = await system.run(
         Effect.gen(function* () {
@@ -583,7 +1269,7 @@ describe("CodexImportLive", () => {
       );
 
       const createdProject = snapshot.projects.find(
-        (project) => project.workspaceRoot === existingCwd,
+        (project) => project.workspaceRoot === canonicalPath(existingCwd),
       );
       expect(createdProject?.title).toBe(path.basename(existingCwd));
 
@@ -593,7 +1279,7 @@ describe("CodexImportLive", () => {
       expect(fallbackProject).toMatchObject({
         id: ProjectId.makeUnsafe("codex-import-fallback"),
         title: "Imported from Codex",
-        workspaceRoot: serverCwd,
+        workspaceRoot: canonicalPath(serverCwd),
       });
 
       const newProjectThread = snapshot.threads.find(
