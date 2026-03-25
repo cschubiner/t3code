@@ -134,7 +134,21 @@ const make = Effect.gen(function* () {
         threadId,
       });
       if (Option.isSome(pendingTurnStart)) {
-        return;
+        const pendingMessageStillQueued = thread.queuedTurns.some(
+          (queuedTurn) => queuedTurn.messageId === pendingTurnStart.value.messageId,
+        );
+        if (pendingMessageStillQueued) {
+          return;
+        }
+
+        yield* Effect.logInfo("turn queue reactor clearing stale pending turn start", {
+          threadId,
+          messageId: pendingTurnStart.value.messageId,
+          requestedAt: pendingTurnStart.value.requestedAt,
+        });
+        yield* projectionTurnRepository.deletePendingTurnStartByThreadId({
+          threadId,
+        });
       }
 
       promotionInFlightByThreadId.add(threadId);
