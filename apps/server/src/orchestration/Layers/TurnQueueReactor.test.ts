@@ -275,6 +275,253 @@ describe("TurnQueueReactor", () => {
     expect(dispatchedCommands).toEqual(["thread.turn.queue.promote"]);
   });
 
+  it("clears a stale pending turn start before promoting the next queued follow-up", async () => {
+    const domainEventPubSub = Effect.runSync(PubSub.unbounded<OrchestrationEvent>());
+    const dispatchedCommands: string[] = [];
+    let pendingTurnStartPresent = true;
+    let deletePendingTurnStartCalls = 0;
+    let readModel = createReadModel(createThread());
+
+    runtime = ManagedRuntime.make(
+      TurnQueueReactorLive.pipe(
+        Layer.provideMerge(
+          Layer.succeed(OrchestrationEngineService, {
+            getReadModel: () => Effect.succeed(readModel),
+            readEvents: () => Stream.empty,
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatchedCommands.push(command.type);
+                return { sequence: dispatchedCommands.length };
+              }),
+            streamDomainEvents: Stream.fromPubSub(domainEventPubSub),
+          }),
+        ),
+        Layer.provideMerge(
+          Layer.succeed(ProjectionTurnRepository, {
+            upsertByTurnId: () => Effect.void,
+            replacePendingTurnStart: () => Effect.void,
+            getPendingTurnStartByThreadId: () =>
+              Effect.succeed(
+                pendingTurnStartPresent
+                  ? Option.some({
+                      threadId: THREAD_ID,
+                      messageId: MessageId.makeUnsafe("message-stale-pending"),
+                      sourceProposedPlanThreadId: null,
+                      sourceProposedPlanId: null,
+                      requestedAt: CREATED_AT,
+                    })
+                  : Option.none(),
+              ),
+            deletePendingTurnStartByThreadId: () =>
+              Effect.sync(() => {
+                pendingTurnStartPresent = false;
+                deletePendingTurnStartCalls += 1;
+              }),
+            listByThreadId: () => Effect.succeed([]),
+            getByTurnId: () => Effect.succeed(Option.none()),
+            clearCheckpointTurnConflict: () => Effect.void,
+            deleteByThreadId: () => Effect.void,
+          }),
+        ),
+      ),
+    );
+
+    const reactor = await runtime.runPromise(Effect.service(TurnQueueReactor));
+    scope = await Effect.runPromise(Scope.make("sequential"));
+    await Effect.runPromise(reactor.start.pipe(Scope.provide(scope)));
+
+    readModel = createReadModel(
+      createThread({
+        latestTurn: {
+          turnId: TURN_ID,
+          state: "completed",
+          requestedAt: CREATED_AT,
+          startedAt: CREATED_AT,
+          completedAt: CREATED_AT,
+          assistantMessageId: null,
+        },
+        session: {
+          threadId: THREAD_ID,
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: CREATED_AT,
+        },
+      }),
+    );
+
+    Effect.runSync(PubSub.publish(domainEventPubSub, createSessionSetEvent("ready")));
+    await waitFor(() => dispatchedCommands.includes("thread.turn.queue.promote"));
+
+    expect(deletePendingTurnStartCalls).toBe(1);
+    expect(dispatchedCommands).toEqual(["thread.turn.queue.promote"]);
+  });
+
+  it("does not clear a pending turn start when it still matches the queued head", async () => {
+    const domainEventPubSub = Effect.runSync(PubSub.unbounded<OrchestrationEvent>());
+    const dispatchedCommands: string[] = [];
+    let deletePendingTurnStartCalls = 0;
+    let readModel = createReadModel(createThread());
+
+    runtime = ManagedRuntime.make(
+      TurnQueueReactorLive.pipe(
+        Layer.provideMerge(
+          Layer.succeed(OrchestrationEngineService, {
+            getReadModel: () => Effect.succeed(readModel),
+            readEvents: () => Stream.empty,
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatchedCommands.push(command.type);
+                return { sequence: dispatchedCommands.length };
+              }),
+            streamDomainEvents: Stream.fromPubSub(domainEventPubSub),
+          }),
+        ),
+        Layer.provideMerge(
+          Layer.succeed(ProjectionTurnRepository, {
+            upsertByTurnId: () => Effect.void,
+            replacePendingTurnStart: () => Effect.void,
+            getPendingTurnStartByThreadId: () =>
+              Effect.succeed(
+                Option.some({
+                  threadId: THREAD_ID,
+                  messageId: MessageId.makeUnsafe("message-queued-1"),
+                  sourceProposedPlanThreadId: null,
+                  sourceProposedPlanId: null,
+                  requestedAt: CREATED_AT,
+                }),
+              ),
+            deletePendingTurnStartByThreadId: () =>
+              Effect.sync(() => {
+                deletePendingTurnStartCalls += 1;
+              }),
+            listByThreadId: () => Effect.succeed([]),
+            getByTurnId: () => Effect.succeed(Option.none()),
+            clearCheckpointTurnConflict: () => Effect.void,
+            deleteByThreadId: () => Effect.void,
+          }),
+        ),
+      ),
+    );
+
+    const reactor = await runtime.runPromise(Effect.service(TurnQueueReactor));
+    scope = await Effect.runPromise(Scope.make("sequential"));
+    await Effect.runPromise(reactor.start.pipe(Scope.provide(scope)));
+
+    readModel = createReadModel(
+      createThread({
+        latestTurn: {
+          turnId: TURN_ID,
+          state: "completed",
+          requestedAt: CREATED_AT,
+          startedAt: CREATED_AT,
+          completedAt: CREATED_AT,
+          assistantMessageId: null,
+        },
+        session: {
+          threadId: THREAD_ID,
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: CREATED_AT,
+        },
+      }),
+    );
+
+    Effect.runSync(PubSub.publish(domainEventPubSub, createSessionSetEvent("ready")));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(deletePendingTurnStartCalls).toBe(0);
+    expect(dispatchedCommands).toEqual([]);
+  });
+
+  it("recovers from a stale pending turn start during bootstrap", async () => {
+    const domainEventPubSub = Effect.runSync(PubSub.unbounded<OrchestrationEvent>());
+    const dispatchedCommands: string[] = [];
+    let pendingTurnStartPresent = true;
+    let deletePendingTurnStartCalls = 0;
+
+    runtime = ManagedRuntime.make(
+      TurnQueueReactorLive.pipe(
+        Layer.provideMerge(
+          Layer.succeed(OrchestrationEngineService, {
+            getReadModel: () =>
+              Effect.succeed(
+                createReadModel(
+                  createThread({
+                    latestTurn: {
+                      turnId: TURN_ID,
+                      state: "completed",
+                      requestedAt: CREATED_AT,
+                      startedAt: CREATED_AT,
+                      completedAt: CREATED_AT,
+                      assistantMessageId: null,
+                    },
+                    session: {
+                      threadId: THREAD_ID,
+                      status: "ready",
+                      providerName: "codex",
+                      runtimeMode: "full-access",
+                      activeTurnId: null,
+                      lastError: null,
+                      updatedAt: CREATED_AT,
+                    },
+                  }),
+                ),
+              ),
+            readEvents: () => Stream.empty,
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatchedCommands.push(command.type);
+                return { sequence: dispatchedCommands.length };
+              }),
+            streamDomainEvents: Stream.fromPubSub(domainEventPubSub),
+          }),
+        ),
+        Layer.provideMerge(
+          Layer.succeed(ProjectionTurnRepository, {
+            upsertByTurnId: () => Effect.void,
+            replacePendingTurnStart: () => Effect.void,
+            getPendingTurnStartByThreadId: () =>
+              Effect.succeed(
+                pendingTurnStartPresent
+                  ? Option.some({
+                      threadId: THREAD_ID,
+                      messageId: MessageId.makeUnsafe("message-stale-pending"),
+                      sourceProposedPlanThreadId: null,
+                      sourceProposedPlanId: null,
+                      requestedAt: CREATED_AT,
+                    })
+                  : Option.none(),
+              ),
+            deletePendingTurnStartByThreadId: () =>
+              Effect.sync(() => {
+                pendingTurnStartPresent = false;
+                deletePendingTurnStartCalls += 1;
+              }),
+            listByThreadId: () => Effect.succeed([]),
+            getByTurnId: () => Effect.succeed(Option.none()),
+            clearCheckpointTurnConflict: () => Effect.void,
+            deleteByThreadId: () => Effect.void,
+          }),
+        ),
+      ),
+    );
+
+    const reactor = await runtime.runPromise(Effect.service(TurnQueueReactor));
+    scope = await Effect.runPromise(Scope.make("sequential"));
+    await Effect.runPromise(reactor.start.pipe(Scope.provide(scope)));
+
+    await waitFor(() => dispatchedCommands.includes("thread.turn.queue.promote"));
+
+    expect(deletePendingTurnStartCalls).toBe(1);
+    expect(dispatchedCommands).toEqual(["thread.turn.queue.promote"]);
+  });
+
   it("uses the projected latest turn state when the in-memory latest turn is stale", async () => {
     const domainEventPubSub = Effect.runSync(PubSub.unbounded<OrchestrationEvent>());
     const dispatchedCommands: string[] = [];
