@@ -150,6 +150,7 @@ import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
   type PersistedComposerImageAttachment,
+  type QueuedComposerTurn,
   useComposerDraftStore,
   useEffectiveComposerModelState,
   useComposerThreadDraft,
@@ -194,6 +195,7 @@ import {
   deriveComposerSendState,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
+  mapQueuedComposerTurnToThreadQueuedTurn,
   PullRequestDialogState,
   readFileAsDataUrl,
   revokeBlobPreviewUrl,
@@ -218,6 +220,7 @@ const EMPTY_SNIPPETS: Snippet[] = [];
 const EMPTY_AVAILABLE_EDITORS: EditorId[] = [];
 const EMPTY_PROVIDER_STATUSES: ServerProviderStatus[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+const EMPTY_LOCAL_QUEUED_TURNS: QueuedComposerTurn[] = [];
 
 function formatOutgoingPrompt(params: {
   provider: ProviderKind;
@@ -353,6 +356,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     (store) => store.syncPersistedAttachments,
   );
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
+  const enqueueLocalQueuedTurn = useComposerDraftStore((store) => store.enqueueQueuedTurn);
+  const consumeLocalQueuedTurn = useComposerDraftStore((store) => store.consumeQueuedTurn);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const getDraftThreadByProjectId = useComposerDraftStore(
     (store) => store.getDraftThreadByProjectId,
@@ -368,6 +373,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearThreadDraft);
   const draftThread = useComposerDraftStore(
     (store) => store.draftThreadsByThreadId[threadId] ?? null,
+  );
+  const localQueuedTurns = useComposerDraftStore(
+    (store) => store.queuedTurnsByThreadId[threadId] ?? EMPTY_LOCAL_QUEUED_TURNS,
   );
   const promptRef = useRef(prompt);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
@@ -552,9 +560,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
               model: DEFAULT_MODEL_BY_PROVIDER.codex,
             },
             localDraftError,
+            localQueuedTurns.map(mapQueuedComposerTurnToThreadQueuedTurn),
           )
         : undefined,
-    [draftThread, fallbackDraftProject?.defaultModelSelection, localDraftError, threadId],
+    [draftThread, fallbackDraftProject?.defaultModelSelection, localDraftError, localQueuedTurns, threadId],
   );
   const activeThread = serverThread ?? localDraftThread;
   const runtimeMode =
@@ -865,7 +874,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
     sendStartedAt,
   );
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
-  const queuedTurns = activeThread?.queuedTurns ?? EMPTY_QUEUED_TURNS;
+  const queuedTurns = useMemo(
+    () => [
+      ...(activeThread?.queuedTurns ?? EMPTY_QUEUED_TURNS),
+      ...(serverThread ? localQueuedTurns.map(mapQueuedComposerTurnToThreadQueuedTurn) : []),
+    ],
+    [activeThread?.queuedTurns, localQueuedTurns, serverThread],
+  );
   const workLogEntries = useMemo(
     () => deriveWorkLogEntries(threadActivities, activeLatestTurn?.turnId ?? undefined),
     [activeLatestTurn?.turnId, threadActivities],
@@ -2526,6 +2541,61 @@ export default function ChatView({ threadId }: ChatViewProps) {
     };
   }, [isConnecting, isRevertingCheckpoint, isSendBusy, setTransientWorking, threadId]);
 
+  const queueComposerTurnLocally = useCallback(
+    (input?: {
+      text: string;
+      interactionMode: ProviderInteractionMode;
+      terminalContexts?: TerminalContextDraft[];
+    }) => {
+      if (!activeThread) {
+        return false;
+      }
+      const trimmed = (input?.text ?? prompt).trim();
+      const queuedImages = [...composerImages];
+      const queuedTerminalContexts = [...(input?.terminalContexts ?? [])];
+      const queuedText = appendTerminalContextsToPrompt(trimmed, queuedTerminalContexts);
+      if (!queuedText.trim() && queuedImages.length === 0) {
+        return false;
+      }
+      const threadIdForQueue = activeThread.id;
+      enqueueLocalQueuedTurn(threadIdForQueue, {
+        id: newMessageId(),
+        queuedAt: new Date().toISOString(),
+        text: trimmed,
+        images: queuedImages,
+        terminalContexts: queuedTerminalContexts,
+        provider: selectedProvider,
+        model: selectedModel,
+        runtimeMode,
+        interactionMode: input?.interactionMode ?? interactionMode,
+        serviceTier: null,
+        modelOptions: selectedModelOptionsForDispatch ?? null,
+        promptEffort: selectedPromptEffort,
+      });
+      promptRef.current = "";
+      clearComposerDraftContent(threadIdForQueue);
+      setComposerHighlightedItemId(null);
+      setComposerCursor(0);
+      setComposerTrigger(null);
+      setThreadError(threadIdForQueue, null);
+      return true;
+    },
+    [
+      activeThread,
+      clearComposerDraftContent,
+      composerImages,
+      enqueueLocalQueuedTurn,
+      interactionMode,
+      prompt,
+      runtimeMode,
+      selectedModel,
+      selectedModelOptionsForDispatch,
+      selectedPromptEffort,
+      selectedProvider,
+      setThreadError,
+    ],
+  );
+
   const queueComposerTurn = useCallback(
     async (input?: {
       text: string;
@@ -2637,6 +2707,63 @@ export default function ChatView({ threadId }: ChatViewProps) {
       settings.enableAssistantStreaming,
       setThreadError,
     ],
+  );
+
+  const flushLocalQueuedTurnsToServer = useCallback(
+    async (targetThreadId: ThreadId) => {
+      const api = readNativeApi();
+      if (!api) {
+        return;
+      }
+
+      const queuedTurnsToFlush =
+        useComposerDraftStore.getState().queuedTurnsByThreadId[targetThreadId] ??
+        EMPTY_LOCAL_QUEUED_TURNS;
+
+      for (const queuedTurn of queuedTurnsToFlush) {
+        const queuedText = appendTerminalContextsToPrompt(
+          queuedTurn.text,
+          queuedTurn.terminalContexts,
+        );
+        const outgoingQueuedText = formatOutgoingPrompt({
+          provider: queuedTurn.provider,
+          effort: queuedTurn.promptEffort,
+          text: queuedText || IMAGE_ONLY_BOOTSTRAP_PROMPT,
+        });
+        const turnAttachments = await Promise.all(
+          queuedTurn.images.map(async (image) => ({
+            type: "image" as const,
+            name: image.name,
+            mimeType: image.mimeType,
+            sizeBytes: image.sizeBytes,
+            dataUrl: await readFileAsDataUrl(image.file),
+          })),
+        );
+
+        await api.orchestration.dispatchCommand({
+          type: "thread.turn.queue.enqueue",
+          commandId: newCommandId(),
+          threadId: targetThreadId,
+          message: {
+            messageId: queuedTurn.id as MessageId,
+            role: "user",
+            text: outgoingQueuedText,
+            attachments: turnAttachments,
+          },
+          model: queuedTurn.model ?? undefined,
+          ...(queuedTurn.modelOptions ? { modelOptions: queuedTurn.modelOptions } : {}),
+          ...(providerOptionsForDispatch ? { providerOptions: providerOptionsForDispatch } : {}),
+          provider: queuedTurn.provider,
+          assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
+          runtimeMode: queuedTurn.runtimeMode,
+          interactionMode: queuedTurn.interactionMode,
+          createdAt: queuedTurn.queuedAt,
+        });
+
+        consumeLocalQueuedTurn(targetThreadId, queuedTurn.id);
+      }
+    },
+    [consumeLocalQueuedTurn, providerOptionsForDispatch, settings.enableAssistantStreaming],
   );
 
   const removeQueuedTurnFromServer = useCallback(
@@ -3144,7 +3271,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
   ) => {
     e?.preventDefault();
     const api = readNativeApi();
-    if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
+    const canQueueWhilePreparingWorktree =
+      disposition === "queue" && sendPhase === "preparing-worktree";
+    if (
+      !api ||
+      !activeThread ||
+      isConnecting ||
+      (isSendBusy && !canQueueWhilePreparingWorktree) ||
+      (sendInFlightRef.current && !canQueueWhilePreparingWorktree)
+    ) {
+      return;
+    }
     if (activePendingProgress) {
       onAdvanceActivePendingUserInput();
       return;
@@ -3160,6 +3297,25 @@ export default function ChatView({ threadId }: ChatViewProps) {
       imageCount: composerImages.length,
       terminalContexts: composerTerminalContexts,
     });
+    if (canQueueWhilePreparingWorktree) {
+      if (expiredTerminalContextCount > 0) {
+        const toastCopy = buildExpiredTerminalContextToastCopy(
+          expiredTerminalContextCount,
+          "omitted",
+        );
+        toastManager.add({
+          type: "warning",
+          title: toastCopy.title,
+          description: toastCopy.description,
+        });
+      }
+      queueComposerTurnLocally({
+        text: trimmed,
+        interactionMode,
+        terminalContexts: sendableComposerTerminalContexts,
+      });
+      return;
+    }
     if (showPlanFollowUpPrompt && activeProposedPlan) {
       const followUp = resolvePlanFollowUpSubmission({
         draftText: trimmed,
@@ -3463,6 +3619,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         createdAt: messageCreatedAt,
       });
       turnStartSucceeded = true;
+      await flushLocalQueuedTurnsToServer(threadIdForSend);
     })().catch(async (err: unknown) => {
       if (createdServerThreadForLocalDraft && !turnStartSucceeded) {
         await api.orchestration
@@ -4356,7 +4513,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
     }
 
-    if (key === "Tab" && !event.shiftKey && phase === "running" && composerHasContent) {
+    if (
+      key === "Tab" &&
+      !event.shiftKey &&
+      (phase === "running" || isPreparingWorktree) &&
+      composerHasContent
+    ) {
       void onSend(undefined, "queue");
       return true;
     }
@@ -4578,7 +4740,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   pendingQueueAction?.kind === "send-now" ? pendingQueueAction.messageId : null
                 }
                 isQueueInteractionDisabled={
-                  pendingQueueAction !== null || pendingQueuedTurnMessageId !== null
+                  pendingQueueAction !== null ||
+                  pendingQueuedTurnMessageId !== null ||
+                  isPreparingWorktree
                 }
                 onDelete={(messageId) => void removeQueuedTurnFromServer(messageId as MessageId)}
                 onClearAll={() => void clearQueuedTurnsFromServer()}
@@ -4927,9 +5091,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
                           className="flex shrink-0 items-center gap-2"
                         >
                           {isPreparingWorktree ? (
-                            <span className="text-muted-foreground/70 text-xs">
-                              Preparing worktree...
-                            </span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-muted-foreground/70 text-xs">
+                                Preparing worktree...
+                              </span>
+                              {composerHasContent ? (
+                                <Button
+                                  type="submit"
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-9 rounded-full px-4 sm:h-8"
+                                >
+                                  Queue
+                                </Button>
+                              ) : null}
+                            </div>
                           ) : null}
                           {activePendingProgress ? (
                             <div className="flex items-center gap-2">
@@ -5007,7 +5183,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                 </svg>
                               </button>
                             </div>
-                          ) : pendingUserInputs.length === 0 ? (
+                          ) : isPreparingWorktree ? null : pendingUserInputs.length === 0 ? (
                             showPlanFollowUpPrompt ? (
                               prompt.trim().length > 0 ? (
                                 <Button

@@ -63,6 +63,10 @@ interface TestFixture {
 
 let fixture: TestFixture;
 const wsRequests: WsRequestEnvelope["body"][] = [];
+const wsRpcOverrides = new Map<
+  string,
+  (body: WsRequestEnvelope["body"]) => unknown | Promise<unknown>
+>();
 const wsLink = ws.link(/ws(s)?:\/\/.*/);
 
 interface ViewportSpec {
@@ -675,6 +679,10 @@ function createRunningSnapshot(): OrchestrationReadModel {
 
 function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
   const tag = body._tag;
+  const override = wsRpcOverrides.get(tag);
+  if (override) {
+    return override(body);
+  }
   if (tag === ORCHESTRATION_WS_METHODS.getSnapshot) {
     return fixture.snapshot;
   }
@@ -858,12 +866,25 @@ const worker = setupWorker(
           return;
         }
       }
-      client.send(
-        JSON.stringify({
-          id: request.id,
-          result: resolveWsRpc(request.body),
-        }),
-      );
+      Promise.resolve(resolveWsRpc(request.body))
+        .then((result) => {
+          client.send(
+            JSON.stringify({
+              id: request.id,
+              result,
+            }),
+          );
+        })
+        .catch((error: unknown) => {
+          client.send(
+            JSON.stringify({
+              id: request.id,
+              error: {
+                message: error instanceof Error ? error.message : "Unexpected RPC error",
+              },
+            }),
+          );
+        });
     });
   }),
   http.get("*/attachments/:attachmentId", () =>
@@ -880,6 +901,16 @@ async function nextFrame(): Promise<void> {
   await new Promise<void>((resolve) => {
     window.requestAnimationFrame(() => resolve());
   });
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((innerResolve, innerReject) => {
+    resolve = innerResolve;
+    reject = innerReject;
+  });
+  return { promise, resolve, reject };
 }
 
 async function waitForLayout(): Promise<void> {
@@ -1279,6 +1310,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     document.body.innerHTML = "";
     wsRequests.length = 0;
     dispatchCommandErrorsByType.clear();
+    wsRpcOverrides.clear();
     useComposerDraftStore.setState({
       draftsByThreadId: {},
       draftThreadsByThreadId: {},
@@ -2732,6 +2764,83 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.prompt ?? "").toBe(
             "",
           );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("queues additional messages while preparing a new worktree", async () => {
+    const deferredWorktree = createDeferred<{
+      worktree: { branch: string; path: string };
+    }>();
+    wsRpcOverrides.set(WS_METHODS.gitCreateWorktree, () => deferredWorktree.promise);
+    useComposerDraftStore.getState().setProjectDraftThreadId(PROJECT_ID, THREAD_ID, {
+      createdAt: NOW_ISO,
+      branch: "main",
+      worktreePath: null,
+      envMode: "worktree",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Initial worktree message");
+      await waitForLayout();
+
+      const sendButton = await waitForSendButton();
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain("Preparing worktree...");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Queue behind setup");
+      await waitForLayout();
+
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Tab",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(useComposerDraftStore.getState().queuedTurnsByThreadId[THREAD_ID]).toHaveLength(1);
+          expect(document.body.textContent).toContain("1 queued follow-up");
+          expect(listDispatchCommandsByType("thread.turn.queue.enqueue")).toHaveLength(0);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      deferredWorktree.resolve({
+        worktree: {
+          branch: "t3code/1234abcd",
+          path: "/tmp/t3code-1234abcd",
+        },
+      });
+
+      await vi.waitFor(
+        () => {
+          const turnStart = listDispatchCommandsByType("thread.turn.start").at(-1);
+          const queuedRequest = listDispatchCommandsByType("thread.turn.queue.enqueue").at(-1);
+          expect(turnStart?.command?.message?.text).toBe("Initial worktree message");
+          expect(queuedRequest?.command?.message?.text).toBe("Queue behind setup");
+          expect(useComposerDraftStore.getState().queuedTurnsByThreadId[THREAD_ID]).toBeUndefined();
         },
         { timeout: 8_000, interval: 16 },
       );

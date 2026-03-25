@@ -1,7 +1,11 @@
 import { ProjectId, type ModelSelection, type ThreadId } from "@t3tools/contracts";
 import { type ChatMessage, type Thread } from "../types";
 import { randomUUID } from "~/lib/utils";
-import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
+import {
+  type ComposerImageAttachment,
+  type DraftThreadState,
+  type QueuedComposerTurn,
+} from "../composerDraftStore";
 import { Schema } from "effect";
 import {
   filterTerminalContextsWithText,
@@ -19,6 +23,7 @@ export function buildLocalDraftThread(
   draftThread: DraftThreadState,
   fallbackModelSelection: ModelSelection,
   error: string | null,
+  queuedTurns: Thread["queuedTurns"] = [],
 ): Thread {
   return {
     id: threadId,
@@ -30,7 +35,7 @@ export function buildLocalDraftThread(
     interactionMode: draftThread.interactionMode,
     session: null,
     messages: [],
-    queuedTurns: [],
+    queuedTurns,
     error,
     createdAt: draftThread.createdAt,
     latestTurn: null,
@@ -40,6 +45,31 @@ export function buildLocalDraftThread(
     turnDiffSummaries: [],
     activities: [],
     proposedPlans: [],
+  };
+}
+
+export function mapQueuedComposerTurnToThreadQueuedTurn(
+  queuedTurn: QueuedComposerTurn,
+): Thread["queuedTurns"][number] {
+  return {
+    messageId: queuedTurn.id as Thread["queuedTurns"][number]["messageId"],
+    text: queuedTurn.text,
+    attachments: queuedTurn.images.map((image) => ({
+      type: "image" as const,
+      id: image.id,
+      name: image.name,
+      mimeType: image.mimeType,
+      sizeBytes: image.sizeBytes,
+      previewUrl: image.previewUrl,
+    })),
+    provider: queuedTurn.provider,
+    model: queuedTurn.model,
+    modelOptions: queuedTurn.modelOptions,
+    providerOptions: null,
+    assistantDeliveryMode: "streaming",
+    runtimeMode: queuedTurn.runtimeMode,
+    interactionMode: queuedTurn.interactionMode,
+    queuedAt: queuedTurn.queuedAt,
   };
 }
 
