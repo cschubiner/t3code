@@ -700,6 +700,18 @@ function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
       pr: null,
     };
   }
+  if (tag === WS_METHODS.gitCreateWorktree) {
+    const branch =
+      typeof body.newBranch === "string" && body.newBranch.length > 0
+        ? body.newBranch
+        : "t3code/test";
+    return {
+      worktree: {
+        branch,
+        path: `/repo/worktrees/${branch.replaceAll("/", "-")}`,
+      },
+    };
+  }
   if (tag === WS_METHODS.projectsSearchEntries) {
     return {
       entries: [],
@@ -2732,6 +2744,141 @@ describe("ChatView timeline estimator parity (full app)", () => {
         { timeout: 8_000, interval: 16 },
       );
       expect(listDispatchCommandsByType("thread.turn.queue.enqueue")).toHaveLength(0);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("re-enables queue and steer controls once the first new-worktree turn is submitted", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "main",
+          worktreePath: null,
+          envMode: "worktree",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Start a worktree-backed turn");
+      await waitForLayout();
+
+      const sendButton = await waitForSendButton();
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(wsRequests.some((request) => request._tag === WS_METHODS.gitCreateWorktree)).toBe(
+            true,
+          );
+          expect(listDispatchCommandsByType("thread.create")).toHaveLength(1);
+          expect(listDispatchCommandsByType("thread.turn.start")).toHaveLength(1);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const createRequest = listDispatchCommandsByType("thread.create").at(-1)?.command as
+        | {
+            title?: string;
+            createdAt?: string;
+            branch?: string | null;
+            worktreePath?: string | null;
+          }
+        | undefined;
+      const startRequest = listDispatchCommandsByType("thread.turn.start").at(-1)?.command as
+        | {
+            createdAt?: string;
+            message?: {
+              messageId?: MessageId;
+              text?: string;
+            };
+          }
+        | undefined;
+      useStore.getState().syncServerReadModel({
+        ...createDraftOnlySnapshot(),
+        updatedAt: startRequest?.createdAt ?? NOW_ISO,
+        threads: [
+          {
+            ...createThreadRecord({
+              id: THREAD_ID,
+              projectId: PROJECT_ID,
+              title: createRequest?.title ?? "New thread",
+              createdAt: createRequest?.createdAt ?? NOW_ISO,
+              updatedAt: startRequest?.createdAt ?? NOW_ISO,
+              messages:
+                startRequest?.message?.messageId && startRequest?.message?.text
+                  ? [
+                      createUserMessage({
+                        id: startRequest.message.messageId,
+                        text: startRequest.message.text,
+                        offsetSeconds: 1,
+                      }),
+                    ]
+                  : [],
+            }),
+            branch: createRequest?.branch ?? "t3code/test",
+            worktreePath: createRequest?.worktreePath ?? "/repo/worktrees/t3code-test",
+          },
+        ],
+      });
+      await waitForLayout();
+
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Queue before the provider starts");
+      await waitForLayout();
+
+      const queueButton = await waitForElement(
+        () => findButtonByText(document, "Queue"),
+        "Unable to find Queue button while waiting for the first turn to start.",
+      );
+      expect(queueButton.disabled).toBe(false);
+      queueButton.click();
+
+      await vi.waitFor(
+        () => {
+          const queueRequest = listDispatchCommandsByType("thread.turn.queue.enqueue").at(-1);
+          expect(queueRequest?.command?.message?.text).toBe("Queue before the provider starts");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Steer before the provider starts");
+      await waitForLayout();
+
+      const beforeTurnStarts = listDispatchCommandsByType("thread.turn.start").length;
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+          ...modShiftShortcutModifiers(),
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          const turnStarts = listDispatchCommandsByType("thread.turn.start");
+          expect(turnStarts.length).toBeGreaterThan(beforeTurnStarts);
+          expect(turnStarts.at(-1)?.command?.message?.text).toBe(
+            "Steer before the provider starts",
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
     } finally {
       await mounted.cleanup();
     }
