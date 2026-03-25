@@ -22,7 +22,7 @@ import {
 import { Effect, Layer, Option, Schema } from "effect";
 
 import { ServerConfig } from "../../config.ts";
-import { GitService } from "../../git/Services/GitService.ts";
+import { GitCore } from "../../git/Services/GitCore.ts";
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProviderSessionDirectory } from "../../provider/Services/ProviderSessionDirectory.ts";
@@ -441,7 +441,7 @@ function isCodexManagedWorktreePath(cwd: string): boolean {
 
 const makeCodexImport = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig;
-  const git = yield* GitService;
+  const git = yield* GitCore;
   const snapshotQuery = yield* ProjectionSnapshotQuery;
   const orchestration = yield* OrchestrationEngineService;
   const providerSessionDirectory = yield* ProviderSessionDirectory;
