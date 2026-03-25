@@ -2116,7 +2116,7 @@ export default function Sidebar() {
             <div className="flex items-center gap-1">
               <ToggleGroup
                 aria-label="Sidebar thread list mode"
-                className="shrink-0"
+                className="shrink-0 sm:[&_[data-slot=toggle]]:h-5.5 sm:[&_[data-slot=toggle]]:px-2 sm:[&_[data-slot=toggle]]:text-[13px]"
                 variant="outline"
                 size="xs"
                 value={[sidebarThreadListMode]}

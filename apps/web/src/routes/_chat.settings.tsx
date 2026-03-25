@@ -219,7 +219,7 @@ function remoteAccessStateLabel(status: DesktopRemoteAccessStatus | null): strin
   }
 }
 function SettingsRouteView() {
-  const { theme, setTheme, resolvedTheme } = useTheme();
+  const { theme, setTheme } = useTheme();
   const { settings, defaults, updateSettings, resetSettings } = useAppSettings();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const [isOpeningKeybindings, setIsOpeningKeybindings] = useState(false);

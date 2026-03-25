@@ -162,7 +162,6 @@ import {
   type TerminalContextDraft,
   type TerminalContextSelection,
 } from "../lib/terminalContext";
-import { deriveLatestContextWindowSnapshot } from "../lib/contextWindow";
 import { shouldUseCompactComposerFooter } from "./composerFooterLayout";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
@@ -170,7 +169,6 @@ import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { SnippetPickerDialog } from "./SnippetPickerDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
-import { ContextWindowMeter } from "./chat/ContextWindowMeter";
 import { ThreadSearchBar } from "./chat/ThreadSearchBar";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { AVAILABLE_PROVIDER_OPTIONS, ProviderModelPicker } from "./chat/ProviderModelPicker";
@@ -564,10 +562,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const diffOpen = rawSearch.diff === "1";
   const activeThreadId = activeThread?.id ?? null;
   const activeLatestTurn = activeThread?.latestTurn ?? null;
-  const activeContextWindow = useMemo(
-    () => deriveLatestContextWindowSnapshot(activeThread?.activities ?? []),
-    [activeThread?.activities],
-  );
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = projects.find((p) => p.id === activeThread?.projectId);
   const deferredThreadSearchQuery = useDeferredValue(threadSearchQuery);
