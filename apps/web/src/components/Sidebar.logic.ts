@@ -58,6 +58,12 @@ type ThreadPullRequestReferenceInput = Pick<Thread, "messages" | "queuedTurns" |
 const GITHUB_PULL_REQUEST_URL_GLOBAL_PATTERN =
   /https:\/\/github\.com\/(?<owner>[^/\s]+)\/(?<repo>[^/\s]+)\/pull\/(?<number>\d+)(?:[/?#][^\s)\]}>]*)?/gi;
 
+function sidebarPullRequestReferenceKey(
+  input: Pick<SidebarPullRequestReference, "owner" | "repo" | "number">,
+): string {
+  return `${input.owner.toLowerCase()}/${input.repo.toLowerCase()}#${input.number}`;
+}
+
 export type SidebarNavigationDirection = "previous" | "next";
 export interface SidebarProjectNavigationTarget {
   projectId: Project["id"];
@@ -293,18 +299,23 @@ export function resolveThreadRowClassName(input: {
 export function extractSidebarPullRequestReferences(text: string): SidebarPullRequestReference[] {
   const matches = text.matchAll(GITHUB_PULL_REQUEST_URL_GLOBAL_PATTERN);
   const references: SidebarPullRequestReference[] = [];
-  const seenUrls = new Set<string>();
+  const seenReferences = new Set<string>();
 
   for (const match of matches) {
     const url = match[0];
     const owner = match.groups?.owner;
     const repo = match.groups?.repo;
     const number = match.groups?.number;
-    if (!url || !owner || !repo || !number || seenUrls.has(url)) {
+    if (!url || !owner || !repo || !number) {
       continue;
     }
-    seenUrls.add(url);
-    references.push({ url, owner, repo, number });
+    const reference = { url, owner, repo, number };
+    const referenceKey = sidebarPullRequestReferenceKey(reference);
+    if (seenReferences.has(referenceKey)) {
+      continue;
+    }
+    seenReferences.add(referenceKey);
+    references.push(reference);
   }
 
   return references;
@@ -318,7 +329,7 @@ export function deriveThreadSidebarPullRequestReferences(
   }
 
   const references: SidebarPullRequestReference[] = [];
-  const seenUrls = new Set<string>();
+  const seenReferences = new Set<string>();
   const texts = [
     ...thread.messages.map((message) => message.text),
     ...thread.queuedTurns.map((queuedTurn) => queuedTurn.text),
@@ -326,10 +337,11 @@ export function deriveThreadSidebarPullRequestReferences(
 
   for (const text of texts) {
     for (const reference of extractSidebarPullRequestReferences(text)) {
-      if (seenUrls.has(reference.url)) {
+      const referenceKey = sidebarPullRequestReferenceKey(reference);
+      if (seenReferences.has(referenceKey)) {
         continue;
       }
-      seenUrls.add(reference.url);
+      seenReferences.add(referenceKey);
       references.push(reference);
     }
   }
