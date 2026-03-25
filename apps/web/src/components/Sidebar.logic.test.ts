@@ -442,19 +442,19 @@ describe("sidebar thread ordering", () => {
 
   it("sorts recent threads globally by updatedAt with createdAt and id tie-breakers", () => {
     const threadA = {
-      ...makeThread(THREAD_A1, PROJECT_A, "2026-03-09T10:00:00.000Z"),
+      ...makeNavigationThread(THREAD_A1, PROJECT_A, "2026-03-09T10:00:00.000Z"),
       updatedAt: "2026-03-09T11:00:00.000Z",
     };
     const threadB = {
-      ...makeThread(THREAD_A2, PROJECT_A, "2026-03-09T10:01:00.000Z"),
+      ...makeNavigationThread(THREAD_A2, PROJECT_A, "2026-03-09T10:01:00.000Z"),
       updatedAt: undefined,
     };
     const threadC = {
-      ...makeThread(THREAD_B1, PROJECT_B, "2026-03-09T10:02:00.000Z"),
+      ...makeNavigationThread(THREAD_B1, PROJECT_B, "2026-03-09T10:02:00.000Z"),
       updatedAt: "2026-03-09T11:00:00.000Z",
     };
     const threadD = {
-      ...makeThread(THREAD_B2, PROJECT_B, "2026-03-09T10:02:00.000Z"),
+      ...makeNavigationThread(THREAD_B2, PROJECT_B, "2026-03-09T10:02:00.000Z"),
       updatedAt: "2026-03-09T11:00:00.000Z",
     };
 
@@ -494,7 +494,7 @@ describe("sidebar thread ordering", () => {
   it("derives project labels for recent rows", () => {
     expect(
       deriveSidebarThreadProjectName({
-        thread: makeThread(THREAD_A1, PROJECT_A, "2026-03-09T10:00:00.000Z"),
+        thread: makeNavigationThread(THREAD_A1, PROJECT_A, "2026-03-09T10:00:00.000Z"),
         projects,
       }),
     ).toBe("alpha");
@@ -961,6 +961,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     interactionMode: DEFAULT_INTERACTION_MODE,
     session: null,
     messages: [],
+    queuedTurns: [],
     proposedPlans: [],
     error: null,
     createdAt: "2026-03-09T10:00:00.000Z",

@@ -138,10 +138,14 @@ describe("MessagesTimeline", () => {
         resolvedTheme="light"
         timestampFormat="locale"
         workspaceRoot={undefined}
+        threadSearchQuery=""
+        threadSearchOccurrencesBySourceId={new Map()}
+        activeThreadSearchSourceId={null}
+        activeThreadSearchOccurrenceIndex={null}
       />,
     );
 
     expect(markup).toContain("Context compacted");
-    expect(markup).toContain("Work log");
+    expect(markup).toContain("Work event");
   });
 });

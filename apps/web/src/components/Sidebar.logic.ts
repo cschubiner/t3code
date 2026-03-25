@@ -528,6 +528,7 @@ export function sortThreadsForSidebar<
   });
 }
 
+<<<<<<< HEAD
 export function getFallbackThreadIdAfterDelete<
   T extends Pick<Thread, "id" | "projectId" | "createdAt" | "updatedAt" | "messages">,
 >(input: {
@@ -555,9 +556,9 @@ export function getFallbackThreadIdAfterDelete<
   );
 }
 
-export function sortThreadsForRecentSidebar<T extends Pick<Thread, "id" | "createdAt" | "updatedAt">>(
-  threads: readonly T[],
-): T[] {
+export function sortThreadsForRecentSidebar<
+  T extends Pick<Thread, "id" | "createdAt" | "updatedAt">,
+>(threads: readonly T[]): T[] {
   return threads.toSorted((left, right) => {
     const byUpdatedAt = threadRecentSortTimestamp(right) - threadRecentSortTimestamp(left);
     if (byUpdatedAt !== 0) return byUpdatedAt;
