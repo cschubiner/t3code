@@ -1305,6 +1305,14 @@ it.live("reverts claudeAgent turns and rolls back provider conversation state", 
             entry.latestTurn?.turnId === "turn-2" &&
             entry.checkpoints.length === 2 &&
             entry.session?.providerName === "claudeAgent",
+          8_000,
+        );
+        yield* harness.waitForReceipt(
+          (receipt): receipt is TurnProcessingQuiescedReceipt =>
+            receipt.type === "turn.processing.quiesced" &&
+            receipt.threadId === THREAD_ID &&
+            receipt.turnId === "turn-2" &&
+            receipt.checkpointTurnCount === 2,
         );
 
         yield* harness.engine.dispatch({
@@ -1315,6 +1323,7 @@ it.live("reverts claudeAgent turns and rolls back provider conversation state", 
           createdAt: nowIso(),
         });
 
+        yield* harness.waitForDomainEvent((event) => event.type === "thread.reverted");
         const revertedThread = yield* harness.waitForThread(
           THREAD_ID,
           (entry) =>
