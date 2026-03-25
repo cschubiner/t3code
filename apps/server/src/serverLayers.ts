@@ -116,7 +116,10 @@ export function makeServerRuntimeServicesLayer() {
   );
   const runtimeServicesLayer = Layer.merge(
     coreRuntimeServicesLayer,
-    CodexImportLive.pipe(Layer.provideMerge(coreRuntimeServicesLayer)),
+    CodexImportLive.pipe(
+      Layer.provideMerge(coreRuntimeServicesLayer),
+      Layer.provideMerge(GitCoreLive),
+    ),
   );
   const runtimeIngestionLayer = ProviderRuntimeIngestionLive.pipe(
     Layer.provideMerge(runtimeServicesLayer),

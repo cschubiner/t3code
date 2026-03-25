@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CommandId, ProjectId, ThreadId } from "@t3tools/contracts";
-import { Effect, Layer, ManagedRuntime, Option } from "effect";
+import { Effect, Exit, Layer, Option, Scope } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ServerConfig } from "../../config.ts";
@@ -187,12 +187,20 @@ async function createCodexImportSystem(serverCwd = makeTempDir("t3code-server-cw
     Layer.provideMerge(AnalyticsService.layerTest),
     Layer.provideMerge(NodeServices.layer),
   );
-  const runtime = ManagedRuntime.make(fullLayer);
+  const scope = await Effect.runPromise(Scope.make("sequential"));
+  const runtimeServices = await Effect.runPromise(
+    Layer.build(fullLayer).pipe(Scope.provide(scope)),
+  );
 
   return {
     run: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-      runtime.runPromise(effect as Effect.Effect<A, E, never>),
-    dispose: () => runtime.dispose(),
+      Effect.runPromise(
+        effect.pipe(
+          Effect.provide(runtimeServices as never),
+          Scope.provide(scope),
+        ) as Effect.Effect<A, E, never>,
+      ),
+    dispose: () => Effect.runPromise(Scope.close(scope, Exit.void)),
     serverCwd,
   };
 }
