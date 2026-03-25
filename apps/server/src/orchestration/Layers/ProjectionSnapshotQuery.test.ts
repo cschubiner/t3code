@@ -28,6 +28,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       yield* sql`DELETE FROM projection_state`;
       yield* sql`DELETE FROM projection_thread_proposed_plans`;
       yield* sql`DELETE FROM projection_turns`;
+      yield* sql`DELETE FROM projection_thread_queued_turns`;
 
       yield* sql`
         INSERT INTO projection_projects (
@@ -122,6 +123,41 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           'thread-2',
           '2026-02-24T00:00:05.000Z',
           '2026-02-24T00:00:05.500Z'
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_thread_queued_turns (
+          message_id,
+          thread_id,
+          sort_order,
+          text,
+          attachments_json,
+          provider,
+          model,
+          service_tier,
+          model_options_json,
+          provider_options_json,
+          assistant_delivery_mode,
+          runtime_mode,
+          interaction_mode,
+          queued_at
+        )
+        VALUES (
+          'message-queued-1',
+          'thread-1',
+          0,
+          'queued follow-up',
+          '[]',
+          'codex',
+          'gpt-5-codex',
+          'fast',
+          NULL,
+          NULL,
+          'buffered',
+          'approval-required',
+          'plan',
+          '2026-02-24T00:00:04.500Z'
         )
       `;
 
@@ -274,6 +310,22 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           createdAt: "2026-02-24T00:00:02.000Z",
           updatedAt: "2026-02-24T00:00:03.000Z",
           deletedAt: null,
+          queuedTurns: [
+            {
+              messageId: asMessageId("message-queued-1"),
+              text: "queued follow-up",
+              attachments: [],
+              provider: "codex",
+              model: "gpt-5-codex",
+              serviceTier: "fast",
+              modelOptions: null,
+              providerOptions: null,
+              assistantDeliveryMode: "buffered",
+              runtimeMode: "approval-required",
+              interactionMode: "plan",
+              queuedAt: "2026-02-24T00:00:04.500Z",
+            },
+          ],
           messages: [
             {
               id: asMessageId("message-1"),

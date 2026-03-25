@@ -303,10 +303,41 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           payload: rawInput,
         });
 
+        const binding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+        const persistedProviderOptions = binding
+          ? readPersistedProviderOptions(binding.runtimePayload)
+          : undefined;
+        const persistedCwd = binding ? readPersistedCwd(binding.runtimePayload) : undefined;
+
+        const mergedInput = yield* decodeInputOrValidationError({
+          operation: "ProviderService.startSession",
+          schema: ProviderSessionStartInput,
+          payload: {
+            ...parsed,
+            threadId,
+            provider: parsed.provider ?? binding?.provider ?? "codex",
+            ...(parsed.resumeCursor !== undefined
+              ? { resumeCursor: parsed.resumeCursor }
+              : binding?.resumeCursor !== undefined
+                ? { resumeCursor: binding.resumeCursor }
+                : {}),
+            ...(parsed.cwd !== undefined
+              ? { cwd: parsed.cwd }
+              : persistedCwd
+                ? { cwd: persistedCwd }
+                : {}),
+            ...(parsed.providerOptions !== undefined
+              ? { providerOptions: parsed.providerOptions }
+              : persistedProviderOptions
+                ? { providerOptions: persistedProviderOptions }
+                : {}),
+          },
+        });
+
         const input = {
-          ...parsed,
+          ...mergedInput,
           threadId,
-          provider: parsed.provider ?? "codex",
+          provider: mergedInput.provider ?? "codex",
         };
         const persistedBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
         const effectiveResumeCursor =

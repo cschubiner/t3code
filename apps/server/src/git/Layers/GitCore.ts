@@ -1767,9 +1767,10 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
           fallbackErrorMessage: "git checkout failed",
         });
 
-        // Refresh upstream refs in the background so checkout remains responsive.
-        yield* Effect.forkScoped(
-          refreshCheckedOutBranchUpstream(input.cwd).pipe(Effect.ignoreCause({ log: true })),
+        // Refresh upstream refs in the background so checkout stays responsive while
+        // the next status read sees a fresh upstream ref.
+        yield* Effect.forkDetach(
+          refreshCheckedOutBranchUpstream(input.cwd).pipe(Effect.catch(() => Effect.void)),
         );
       });
 
