@@ -2543,6 +2543,53 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("opens and focuses the branch/worktree selector with Mod+Shift+E", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            createResolvedKeybinding("e", "chat.branchSelector.focus", {
+              shiftKey: true,
+              whenAst: whenNot(whenIdentifier("terminalFocus")),
+            }),
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "e",
+          bubbles: true,
+          cancelable: true,
+          ...modShiftShortcutModifiers(),
+        }),
+      );
+
+      const branchSearchInput = await waitForElement(
+        () =>
+          document.querySelector(
+            'input[placeholder="Search branches..."]',
+          ) as HTMLInputElement | null,
+        "Unable to find branch search input.",
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(document.activeElement).toBe(branchSearchInput);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("opens global thread search with mod+shift+f and excludes project metadata and work logs", async () => {
     const dateNowSpy = vi.spyOn(Date, "now").mockReturnValue(BASE_TIME_MS + 10 * 60_000);
     const mounted = await mountChatView({

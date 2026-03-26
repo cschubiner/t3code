@@ -124,6 +124,11 @@ const DEFAULT_BINDINGS = compile([
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
   {
+    shortcut: modShortcut("e", { shiftKey: true }),
+    command: "chat.branchSelector.focus",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
     shortcut: { ...modShortcut("arrowup"), modKey: false, altKey: true },
     command: "sidebar.thread.previous",
   },
@@ -300,6 +305,10 @@ describe("shortcutLabelForCommand", () => {
     assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "projects.search", "Linux"),
       "Ctrl+Shift+K",
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "chat.branchSelector.focus", "MacIntel"),
+      "⇧⌘E",
     );
     assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "sidebar.history.next", "Linux"),
@@ -592,6 +601,13 @@ describe("resolveShortcutCommand", () => {
         context: { terminalFocus: false },
       }),
       "projects.search",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "e", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+      "chat.branchSelector.focus",
     );
     assert.strictEqual(
       resolveShortcutCommand(event({ key: "s", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
