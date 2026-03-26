@@ -4,6 +4,7 @@ import type {
   OrchestrationThread,
 } from "@t3tools/contracts";
 import {
+  CheckpointRef,
   CommandId,
   EventId,
   MessageId,
@@ -120,6 +121,62 @@ function createSessionSetEvent(status: OrchestrationSessionStatus): Orchestratio
   };
 }
 
+function createMessageSentEvent({
+  role,
+  streaming,
+}: {
+  role: "assistant" | "user";
+  streaming: boolean;
+}): OrchestrationEvent {
+  return {
+    sequence: 1,
+    eventId: EventId.makeUnsafe(`evt-turn-queue-reactor-message-${role}-${streaming}`),
+    type: "thread.message-sent",
+    aggregateKind: "thread",
+    aggregateId: THREAD_ID,
+    occurredAt: CREATED_AT,
+    commandId: CommandId.makeUnsafe(`cmd-turn-queue-reactor-message-${role}-${streaming}`),
+    causationEventId: null,
+    correlationId: CommandId.makeUnsafe(`cmd-turn-queue-reactor-message-${role}-${streaming}`),
+    metadata: {},
+    payload: {
+      threadId: THREAD_ID,
+      messageId: MessageId.makeUnsafe(`message-${role}-${streaming ? "streaming" : "final"}`),
+      role,
+      text: role === "assistant" ? "Done" : "Follow-up",
+      turnId: TURN_ID,
+      streaming,
+      createdAt: CREATED_AT,
+      updatedAt: CREATED_AT,
+    },
+  };
+}
+
+function createTurnDiffCompletedEvent(): OrchestrationEvent {
+  return {
+    sequence: 1,
+    eventId: EventId.makeUnsafe("evt-turn-queue-reactor-turn-diff-completed"),
+    type: "thread.turn-diff-completed",
+    aggregateKind: "thread",
+    aggregateId: THREAD_ID,
+    occurredAt: CREATED_AT,
+    commandId: CommandId.makeUnsafe("cmd-turn-queue-reactor-turn-diff-completed"),
+    causationEventId: null,
+    correlationId: CommandId.makeUnsafe("cmd-turn-queue-reactor-turn-diff-completed"),
+    metadata: {},
+    payload: {
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      checkpointTurnCount: 1,
+      checkpointRef: CheckpointRef.makeUnsafe("checkpoint:turn-queue-reactor"),
+      status: "ready",
+      files: [],
+      assistantMessageId: MessageId.makeUnsafe("message-assistant"),
+      completedAt: CREATED_AT,
+    },
+  };
+}
+
 async function waitFor(predicate: () => boolean, timeoutMs = 500): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -129,6 +186,29 @@ async function waitFor(predicate: () => boolean, timeoutMs = 500): Promise<void>
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error("Timed out waiting for expected reactor state");
+}
+
+function createProjectedTurn(state: "running" | "completed", completedAt: string | null) {
+  return {
+    turnId: TURN_ID,
+    threadId: THREAD_ID,
+    pendingMessageId: MessageId.makeUnsafe("message-original"),
+    assistantMessageId: MessageId.makeUnsafe("message-assistant"),
+    state,
+    requestedAt: CREATED_AT,
+    startedAt: CREATED_AT,
+    completedAt,
+    sourceProposedPlanThreadId: null,
+    sourceProposedPlanId: null,
+    checkpointTurnCount: null,
+    checkpointRef: null,
+    checkpointStatus: null,
+    checkpointFiles: [],
+  };
+}
+
+function createCompletedProjectedTurn() {
+  return Option.some(createProjectedTurn("completed", CREATED_AT));
 }
 
 describe("TurnQueueReactor", () => {
@@ -551,25 +631,7 @@ describe("TurnQueueReactor", () => {
             getPendingTurnStartByThreadId: () => Effect.succeed(Option.none()),
             deletePendingTurnStartByThreadId: () => Effect.void,
             listByThreadId: () => Effect.succeed([]),
-            getByTurnId: () =>
-              Effect.succeed(
-                Option.some({
-                  turnId: TURN_ID,
-                  threadId: THREAD_ID,
-                  pendingMessageId: MessageId.makeUnsafe("message-original"),
-                  assistantMessageId: MessageId.makeUnsafe("message-assistant"),
-                  state: "completed" as const,
-                  requestedAt: CREATED_AT,
-                  startedAt: CREATED_AT,
-                  completedAt: CREATED_AT,
-                  sourceProposedPlanThreadId: null,
-                  sourceProposedPlanId: null,
-                  checkpointTurnCount: null,
-                  checkpointRef: null,
-                  checkpointStatus: null,
-                  checkpointFiles: [],
-                }),
-              ),
+            getByTurnId: () => Effect.succeed(createCompletedProjectedTurn()),
             clearCheckpointTurnConflict: () => Effect.void,
             deleteByThreadId: () => Effect.void,
           }),
@@ -605,6 +667,447 @@ describe("TurnQueueReactor", () => {
 
     Effect.runSync(PubSub.publish(domainEventPubSub, createSessionSetEvent("ready")));
     await waitFor(() => dispatchedCommands.includes("thread.turn.queue.promote"));
+
+    expect(dispatchedCommands).toEqual(["thread.turn.queue.promote"]);
+  });
+
+  it("retries promotion on assistant completion when ready arrives before turn finalization", async () => {
+    const domainEventPubSub = Effect.runSync(PubSub.unbounded<OrchestrationEvent>());
+    const dispatchedCommands: string[] = [];
+    let readModel = createReadModel(
+      createThread({
+        session: {
+          threadId: THREAD_ID,
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: CREATED_AT,
+        },
+      }),
+    );
+    let projectedLatestTurn = Option.some(createProjectedTurn("running", null));
+
+    runtime = ManagedRuntime.make(
+      TurnQueueReactorLive.pipe(
+        Layer.provideMerge(
+          Layer.succeed(OrchestrationEngineService, {
+            getReadModel: () => Effect.succeed(readModel),
+            readEvents: () => Stream.empty,
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatchedCommands.push(command.type);
+                return { sequence: dispatchedCommands.length };
+              }),
+            streamDomainEvents: Stream.fromPubSub(domainEventPubSub),
+          }),
+        ),
+        Layer.provideMerge(
+          Layer.succeed(ProjectionTurnRepository, {
+            upsertByTurnId: () => Effect.void,
+            replacePendingTurnStart: () => Effect.void,
+            getPendingTurnStartByThreadId: () => Effect.succeed(Option.none()),
+            deletePendingTurnStartByThreadId: () => Effect.void,
+            listByThreadId: () => Effect.succeed([]),
+            getByTurnId: () => Effect.succeed(projectedLatestTurn),
+            clearCheckpointTurnConflict: () => Effect.void,
+            deleteByThreadId: () => Effect.void,
+          }),
+        ),
+      ),
+    );
+
+    const reactor = await runtime.runPromise(Effect.service(TurnQueueReactor));
+    scope = await Effect.runPromise(Scope.make("sequential"));
+    await Effect.runPromise(reactor.start.pipe(Scope.provide(scope)));
+
+    Effect.runSync(PubSub.publish(domainEventPubSub, createSessionSetEvent("ready")));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(dispatchedCommands).toEqual([]);
+
+    readModel = createReadModel(
+      createThread({
+        latestTurn: {
+          turnId: TURN_ID,
+          state: "completed",
+          requestedAt: CREATED_AT,
+          startedAt: CREATED_AT,
+          completedAt: CREATED_AT,
+          assistantMessageId: MessageId.makeUnsafe("message-assistant"),
+        },
+        session: {
+          threadId: THREAD_ID,
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: CREATED_AT,
+        },
+      }),
+    );
+    projectedLatestTurn = createCompletedProjectedTurn();
+
+    Effect.runSync(
+      PubSub.publish(
+        domainEventPubSub,
+        createMessageSentEvent({ role: "assistant", streaming: false }),
+      ),
+    );
+    await waitFor(() => dispatchedCommands.includes("thread.turn.queue.promote"));
+
+    expect(dispatchedCommands).toEqual(["thread.turn.queue.promote"]);
+  });
+
+  it("retries promotion on diff completion when ready arrives before turn finalization", async () => {
+    const domainEventPubSub = Effect.runSync(PubSub.unbounded<OrchestrationEvent>());
+    const dispatchedCommands: string[] = [];
+    let readModel = createReadModel(
+      createThread({
+        session: {
+          threadId: THREAD_ID,
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: CREATED_AT,
+        },
+      }),
+    );
+    let projectedLatestTurn = Option.some(createProjectedTurn("running", null));
+
+    runtime = ManagedRuntime.make(
+      TurnQueueReactorLive.pipe(
+        Layer.provideMerge(
+          Layer.succeed(OrchestrationEngineService, {
+            getReadModel: () => Effect.succeed(readModel),
+            readEvents: () => Stream.empty,
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatchedCommands.push(command.type);
+                return { sequence: dispatchedCommands.length };
+              }),
+            streamDomainEvents: Stream.fromPubSub(domainEventPubSub),
+          }),
+        ),
+        Layer.provideMerge(
+          Layer.succeed(ProjectionTurnRepository, {
+            upsertByTurnId: () => Effect.void,
+            replacePendingTurnStart: () => Effect.void,
+            getPendingTurnStartByThreadId: () => Effect.succeed(Option.none()),
+            deletePendingTurnStartByThreadId: () => Effect.void,
+            listByThreadId: () => Effect.succeed([]),
+            getByTurnId: () => Effect.succeed(projectedLatestTurn),
+            clearCheckpointTurnConflict: () => Effect.void,
+            deleteByThreadId: () => Effect.void,
+          }),
+        ),
+      ),
+    );
+
+    const reactor = await runtime.runPromise(Effect.service(TurnQueueReactor));
+    scope = await Effect.runPromise(Scope.make("sequential"));
+    await Effect.runPromise(reactor.start.pipe(Scope.provide(scope)));
+
+    Effect.runSync(PubSub.publish(domainEventPubSub, createSessionSetEvent("ready")));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(dispatchedCommands).toEqual([]);
+
+    readModel = createReadModel(
+      createThread({
+        latestTurn: {
+          turnId: TURN_ID,
+          state: "completed",
+          requestedAt: CREATED_AT,
+          startedAt: CREATED_AT,
+          completedAt: CREATED_AT,
+          assistantMessageId: MessageId.makeUnsafe("message-assistant"),
+        },
+        session: {
+          threadId: THREAD_ID,
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: CREATED_AT,
+        },
+      }),
+    );
+    projectedLatestTurn = createCompletedProjectedTurn();
+
+    Effect.runSync(PubSub.publish(domainEventPubSub, createTurnDiffCompletedEvent()));
+    await waitFor(() => dispatchedCommands.includes("thread.turn.queue.promote"));
+
+    expect(dispatchedCommands).toEqual(["thread.turn.queue.promote"]);
+  });
+
+  it("ignores streaming assistant completion signals for auto-promotion retries", async () => {
+    const domainEventPubSub = Effect.runSync(PubSub.unbounded<OrchestrationEvent>());
+    const dispatchedCommands: string[] = [];
+
+    runtime = ManagedRuntime.make(
+      TurnQueueReactorLive.pipe(
+        Layer.provideMerge(
+          Layer.succeed(OrchestrationEngineService, {
+            getReadModel: () =>
+              Effect.succeed(
+                createReadModel(
+                  createThread({
+                    session: {
+                      threadId: THREAD_ID,
+                      status: "ready",
+                      providerName: "codex",
+                      runtimeMode: "full-access",
+                      activeTurnId: null,
+                      lastError: null,
+                      updatedAt: CREATED_AT,
+                    },
+                  }),
+                ),
+              ),
+            readEvents: () => Stream.empty,
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatchedCommands.push(command.type);
+                return { sequence: dispatchedCommands.length };
+              }),
+            streamDomainEvents: Stream.fromPubSub(domainEventPubSub),
+          }),
+        ),
+        Layer.provideMerge(
+          Layer.succeed(ProjectionTurnRepository, {
+            upsertByTurnId: () => Effect.void,
+            replacePendingTurnStart: () => Effect.void,
+            getPendingTurnStartByThreadId: () => Effect.succeed(Option.none()),
+            deletePendingTurnStartByThreadId: () => Effect.void,
+            listByThreadId: () => Effect.succeed([]),
+            getByTurnId: () => Effect.succeed(Option.some(createProjectedTurn("running", null))),
+            clearCheckpointTurnConflict: () => Effect.void,
+            deleteByThreadId: () => Effect.void,
+          }),
+        ),
+      ),
+    );
+
+    const reactor = await runtime.runPromise(Effect.service(TurnQueueReactor));
+    scope = await Effect.runPromise(Scope.make("sequential"));
+    await Effect.runPromise(reactor.start.pipe(Scope.provide(scope)));
+
+    Effect.runSync(
+      PubSub.publish(
+        domainEventPubSub,
+        createMessageSentEvent({ role: "assistant", streaming: true }),
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(dispatchedCommands).toEqual([]);
+  });
+
+  it("ignores user messages for auto-promotion retries", async () => {
+    const domainEventPubSub = Effect.runSync(PubSub.unbounded<OrchestrationEvent>());
+    const dispatchedCommands: string[] = [];
+
+    runtime = ManagedRuntime.make(
+      TurnQueueReactorLive.pipe(
+        Layer.provideMerge(
+          Layer.succeed(OrchestrationEngineService, {
+            getReadModel: () =>
+              Effect.succeed(
+                createReadModel(
+                  createThread({
+                    session: {
+                      threadId: THREAD_ID,
+                      status: "ready",
+                      providerName: "codex",
+                      runtimeMode: "full-access",
+                      activeTurnId: null,
+                      lastError: null,
+                      updatedAt: CREATED_AT,
+                    },
+                  }),
+                ),
+              ),
+            readEvents: () => Stream.empty,
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatchedCommands.push(command.type);
+                return { sequence: dispatchedCommands.length };
+              }),
+            streamDomainEvents: Stream.fromPubSub(domainEventPubSub),
+          }),
+        ),
+        Layer.provideMerge(
+          Layer.succeed(ProjectionTurnRepository, {
+            upsertByTurnId: () => Effect.void,
+            replacePendingTurnStart: () => Effect.void,
+            getPendingTurnStartByThreadId: () => Effect.succeed(Option.none()),
+            deletePendingTurnStartByThreadId: () => Effect.void,
+            listByThreadId: () => Effect.succeed([]),
+            getByTurnId: () => Effect.succeed(createCompletedProjectedTurn()),
+            clearCheckpointTurnConflict: () => Effect.void,
+            deleteByThreadId: () => Effect.void,
+          }),
+        ),
+      ),
+    );
+
+    const reactor = await runtime.runPromise(Effect.service(TurnQueueReactor));
+    scope = await Effect.runPromise(Scope.make("sequential"));
+    await Effect.runPromise(reactor.start.pipe(Scope.provide(scope)));
+
+    Effect.runSync(
+      PubSub.publish(domainEventPubSub, createMessageSentEvent({ role: "user", streaming: false })),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(dispatchedCommands).toEqual([]);
+  });
+
+  it("does not auto-promote queued turns after a session error from retry signals", async () => {
+    const domainEventPubSub = Effect.runSync(PubSub.unbounded<OrchestrationEvent>());
+    const dispatchedCommands: string[] = [];
+
+    runtime = ManagedRuntime.make(
+      TurnQueueReactorLive.pipe(
+        Layer.provideMerge(
+          Layer.succeed(OrchestrationEngineService, {
+            getReadModel: () =>
+              Effect.succeed(
+                createReadModel(
+                  createThread({
+                    latestTurn: {
+                      turnId: TURN_ID,
+                      state: "error",
+                      requestedAt: CREATED_AT,
+                      startedAt: CREATED_AT,
+                      completedAt: CREATED_AT,
+                      assistantMessageId: null,
+                    },
+                    session: {
+                      threadId: THREAD_ID,
+                      status: "error",
+                      providerName: "codex",
+                      runtimeMode: "full-access",
+                      activeTurnId: null,
+                      lastError: "Tunnel lost",
+                      updatedAt: CREATED_AT,
+                    },
+                  }),
+                ),
+              ),
+            readEvents: () => Stream.empty,
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatchedCommands.push(command.type);
+                return { sequence: dispatchedCommands.length };
+              }),
+            streamDomainEvents: Stream.fromPubSub(domainEventPubSub),
+          }),
+        ),
+        Layer.provideMerge(
+          Layer.succeed(ProjectionTurnRepository, {
+            upsertByTurnId: () => Effect.void,
+            replacePendingTurnStart: () => Effect.void,
+            getPendingTurnStartByThreadId: () => Effect.succeed(Option.none()),
+            deletePendingTurnStartByThreadId: () => Effect.void,
+            listByThreadId: () => Effect.succeed([]),
+            getByTurnId: () => Effect.succeed(createCompletedProjectedTurn()),
+            clearCheckpointTurnConflict: () => Effect.void,
+            deleteByThreadId: () => Effect.void,
+          }),
+        ),
+      ),
+    );
+
+    const reactor = await runtime.runPromise(Effect.service(TurnQueueReactor));
+    scope = await Effect.runPromise(Scope.make("sequential"));
+    await Effect.runPromise(reactor.start.pipe(Scope.provide(scope)));
+
+    Effect.runSync(
+      PubSub.publish(
+        domainEventPubSub,
+        createMessageSentEvent({ role: "assistant", streaming: false }),
+      ),
+    );
+    Effect.runSync(PubSub.publish(domainEventPubSub, createTurnDiffCompletedEvent()));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(dispatchedCommands).toEqual([]);
+  });
+
+  it("promotes only once when multiple retry signals arrive after the turn settles", async () => {
+    const domainEventPubSub = Effect.runSync(PubSub.unbounded<OrchestrationEvent>());
+    const dispatchedCommands: string[] = [];
+    let readModel = createReadModel(
+      createThread({
+        session: {
+          threadId: THREAD_ID,
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: CREATED_AT,
+        },
+      }),
+    );
+    let projectedLatestTurn = createCompletedProjectedTurn();
+
+    runtime = ManagedRuntime.make(
+      TurnQueueReactorLive.pipe(
+        Layer.provideMerge(
+          Layer.succeed(OrchestrationEngineService, {
+            getReadModel: () => Effect.succeed(readModel),
+            readEvents: () => Stream.empty,
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatchedCommands.push(command.type);
+                if (command.type === "thread.turn.queue.promote") {
+                  readModel = createReadModel({
+                    ...readModel.threads[0]!,
+                    queuedTurns: [],
+                  });
+                }
+                return { sequence: dispatchedCommands.length };
+              }),
+            streamDomainEvents: Stream.fromPubSub(domainEventPubSub),
+          }),
+        ),
+        Layer.provideMerge(
+          Layer.succeed(ProjectionTurnRepository, {
+            upsertByTurnId: () => Effect.void,
+            replacePendingTurnStart: () => Effect.void,
+            getPendingTurnStartByThreadId: () => Effect.succeed(Option.none()),
+            deletePendingTurnStartByThreadId: () => Effect.void,
+            listByThreadId: () => Effect.succeed([]),
+            getByTurnId: () => Effect.succeed(projectedLatestTurn),
+            clearCheckpointTurnConflict: () => Effect.void,
+            deleteByThreadId: () => Effect.void,
+          }),
+        ),
+      ),
+    );
+
+    const reactor = await runtime.runPromise(Effect.service(TurnQueueReactor));
+    scope = await Effect.runPromise(Scope.make("sequential"));
+    await Effect.runPromise(reactor.start.pipe(Scope.provide(scope)));
+
+    Effect.runSync(PubSub.publish(domainEventPubSub, createSessionSetEvent("ready")));
+    await waitFor(() => dispatchedCommands.includes("thread.turn.queue.promote"));
+
+    projectedLatestTurn = createCompletedProjectedTurn();
+    Effect.runSync(
+      PubSub.publish(
+        domainEventPubSub,
+        createMessageSentEvent({ role: "assistant", streaming: false }),
+      ),
+    );
+    Effect.runSync(PubSub.publish(domainEventPubSub, createTurnDiffCompletedEvent()));
+    await new Promise((resolve) => setTimeout(resolve, 50));
 
     expect(dispatchedCommands).toEqual(["thread.turn.queue.promote"]);
   });
