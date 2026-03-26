@@ -14,10 +14,12 @@ type TurnQueueRelevantEvent = Extract<
   OrchestrationEvent,
   {
     type:
+      | "thread.message-sent"
       | "thread.turn-queued"
       | "thread.turn-queue-removed"
       | "thread.turn-queue-updated"
       | "thread.turn-queue-moved"
+      | "thread.turn-diff-completed"
       | "thread.session-set";
   }
 >;
@@ -217,10 +219,18 @@ const make = Effect.gen(function* () {
 
       const event = input.event;
       switch (event.type) {
+        case "thread.message-sent": {
+          if (event.payload.role === "assistant" && !event.payload.streaming) {
+            yield* attemptDispatchNextQueuedTurn(event.payload.threadId);
+          }
+          return;
+        }
+
         case "thread.turn-queued":
         case "thread.turn-queue-removed":
         case "thread.turn-queue-updated":
-        case "thread.turn-queue-moved": {
+        case "thread.turn-queue-moved":
+        case "thread.turn-diff-completed": {
           yield* attemptDispatchNextQueuedTurn(event.payload.threadId);
           return;
         }
@@ -274,10 +284,12 @@ const make = Effect.gen(function* () {
     yield* Effect.forkScoped(
       Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
         if (
+          event.type !== "thread.message-sent" &&
           event.type !== "thread.turn-queued" &&
           event.type !== "thread.turn-queue-removed" &&
           event.type !== "thread.turn-queue-updated" &&
           event.type !== "thread.turn-queue-moved" &&
+          event.type !== "thread.turn-diff-completed" &&
           event.type !== "thread.session-set"
         ) {
           return Effect.void;
