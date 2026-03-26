@@ -56,7 +56,8 @@ import {
   type SidebarThreadSortOrder,
 } from "@t3tools/contracts/settings";
 import { isElectron } from "../env";
-import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
+<<<<<<< HEAD
+import { APP_BASE_NAME, APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isLinuxPlatform, isMacPlatform, newCommandId, newProjectId } from "../lib/utils";
 import { useStore } from "../store";
@@ -540,17 +541,36 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
   );
 }
 
-function T3Wordmark() {
+function ClayCodeMark() {
   return (
     <svg
-      aria-label="T3"
-      className="h-2.5 w-auto shrink-0 text-foreground"
-      viewBox="15.5309 37 94.3941 56.96"
+      aria-label="ClayCode"
+      className="size-5 shrink-0"
+      viewBox="0 0 24 24"
       xmlns="http://www.w3.org/2000/svg"
     >
+      <defs>
+        <linearGradient
+          id="claycode-mark-gradient"
+          x1="4"
+          x2="20"
+          y1="4"
+          y2="20"
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop stopColor="#FDBA74" />
+          <stop offset="0.55" stopColor="#F97316" />
+          <stop offset="1" stopColor="#C2410C" />
+        </linearGradient>
+      </defs>
+      <rect x="2" y="2" width="20" height="20" rx="6" fill="#111827" />
       <path
-        d="M33.4509 93V47.56H15.5309V37H64.3309V47.56H46.4109V93H33.4509ZM86.7253 93.96C82.832 93.96 78.9653 93.4533 75.1253 92.44C71.2853 91.3733 68.032 89.88 65.3653 87.96L70.4053 78.04C72.5386 79.5867 75.0186 80.8133 77.8453 81.72C80.672 82.6267 83.5253 83.08 86.4053 83.08C89.6586 83.08 92.2186 82.44 94.0853 81.16C95.952 79.88 96.8853 78.12 96.8853 75.88C96.8853 73.7467 96.0586 72.0667 94.4053 70.84C92.752 69.6133 90.0853 69 86.4053 69H80.4853V60.44L96.0853 42.76L97.5253 47.4H68.1653V37H107.365V45.4L91.8453 63.08L85.2853 59.32H89.0453C95.9253 59.32 101.125 60.8667 104.645 63.96C108.165 67.0533 109.925 71.0267 109.925 75.88C109.925 79.0267 109.099 81.9867 107.445 84.76C105.792 87.48 103.259 89.6933 99.8453 91.4C96.432 93.1067 92.0586 93.96 86.7253 93.96Z"
-        fill="currentColor"
+        d="M16.85 7.1c-1.03-.73-2.28-1.1-3.75-1.1-1.65 0-3.08.58-4.3 1.73C7.6 8.89 7 10.3 7 11.98c0 1.69.6 3.1 1.8 4.25 1.2 1.18 2.65 1.77 4.34 1.77 1.43 0 2.65-.32 3.66-.96v-2.14c-.99.82-2.13 1.23-3.4 1.23-1.05 0-1.93-.35-2.64-1.04a3.94 3.94 0 0 1-1.06-2.83c0-1.1.35-2.01 1.06-2.74a3.56 3.56 0 0 1 2.64-1.08c1.23 0 2.38.42 3.45 1.27V7.1Z"
+        fill="url(#claycode-mark-gradient)"
+      />
+      <path
+        d="M14.5 9.45c-.58-.42-1.28-.63-2.11-.63-.9 0-1.67.31-2.33.93a3.05 3.05 0 0 0-.96 2.27c0 .9.32 1.67.96 2.31.66.64 1.45.96 2.38.96.8 0 1.48-.18 2.06-.55v-1.6c-.54.47-1.16.7-1.84.7-.5 0-.93-.16-1.27-.47-.34-.34-.5-.78-.5-1.31 0-.51.16-.94.5-1.28.34-.34.76-.51 1.27-.51.67 0 1.29.24 1.84.72v-1.54Z"
+        fill="#FED7AA"
       />
     </svg>
   );
@@ -1971,9 +1991,9 @@ export default function Sidebar() {
         <TooltipTrigger
           render={
             <div className="flex min-w-0 flex-1 items-center gap-1 ml-1 cursor-pointer">
-              <T3Wordmark />
-              <span className="truncate text-sm font-medium tracking-tight text-muted-foreground">
-                Code
+              <ClayCodeMark />
+              <span className="truncate text-sm font-semibold tracking-tight text-foreground">
+                {APP_BASE_NAME}
               </span>
               <span className="rounded-full bg-muted/50 px-1.5 py-0.5 text-[8px] font-medium uppercase tracking-[0.18em] text-muted-foreground/60">
                 {APP_STAGE_LABEL}
