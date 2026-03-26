@@ -42,10 +42,16 @@ const initialState: AppState = {
 const persistedExpandedProjectCwds = new Set<string>();
 const persistedProjectOrderCwds: string[] = [];
 
+export function resetPersistedRendererStateMemory(): void {
+  persistedExpandedProjectCwds.clear();
+  persistedProjectOrderCwds.length = 0;
+}
+
 // ── Persist helpers ──────────────────────────────────────────────────
 
 function readPersistedState(): AppState {
   if (typeof window === "undefined") return initialState;
+  resetPersistedRendererStateMemory();
   try {
     const raw = window.localStorage.getItem(PERSISTED_STATE_KEY);
     if (!raw) return initialState;
@@ -54,8 +60,6 @@ function readPersistedState(): AppState {
       projectOrderCwds?: string[];
       sidebarThreadListMode?: SidebarThreadListMode;
     };
-    persistedExpandedProjectCwds.clear();
-    persistedProjectOrderCwds.length = 0;
     for (const cwd of parsed.expandedProjectCwds ?? []) {
       if (typeof cwd === "string" && cwd.length > 0) {
         persistedExpandedProjectCwds.add(cwd);
@@ -72,6 +76,7 @@ function readPersistedState(): AppState {
         parsed.sidebarThreadListMode === "recent" ? parsed.sidebarThreadListMode : "grouped",
     };
   } catch {
+    resetPersistedRendererStateMemory();
     return initialState;
   }
 }
