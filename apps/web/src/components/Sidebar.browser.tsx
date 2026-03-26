@@ -13,6 +13,7 @@ import {
   WS_METHODS,
   WS_CHANNELS,
 } from "@t3tools/contracts";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { HttpResponse, http, ws } from "msw";
 import { setupWorker } from "msw/browser";
@@ -24,7 +25,7 @@ import { useChatToolbarFocusStore } from "../chatToolbarFocusStore";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { isMacPlatform } from "../lib/utils";
 import { getRouter } from "../router";
-import { useStore } from "../store";
+import { resetPersistedRendererStateMemory, useStore } from "../store";
 import { useThreadNavigationHistoryStore } from "../threadNavigationHistoryStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 
@@ -47,7 +48,7 @@ const THREAD_B2 = "thread-b2" as ThreadId;
 const THREAD_B1 = "thread-b1" as ThreadId;
 const DESKTOP_VIEWPORT = { width: 1280, height: 960 } as const;
 const MOBILE_VIEWPORT = { width: 430, height: 932 } as const;
-const APP_SETTINGS_STORAGE_KEY = "t3code:client-settings:v1";
+const CLIENT_SETTINGS_STORAGE_KEY = "t3code:client-settings:v1";
 let mockedViewportWidth: number = DESKTOP_VIEWPORT.width;
 let originalMatchMedia: typeof window.matchMedia | null = null;
 
@@ -595,9 +596,13 @@ describe("Sidebar navigation keybindings", () => {
     fixture = buildFixture();
     await setViewport();
     localStorage.clear();
+    resetPersistedRendererStateMemory();
     localStorage.setItem(
-      APP_SETTINGS_STORAGE_KEY,
-      JSON.stringify({ sidebarProjectSortOrder: "manual" }),
+      CLIENT_SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        ...DEFAULT_CLIENT_SETTINGS,
+        sidebarProjectSortOrder: "manual",
+      }),
     );
     document.body.innerHTML = "";
     Reflect.deleteProperty(window, "desktopBridge");

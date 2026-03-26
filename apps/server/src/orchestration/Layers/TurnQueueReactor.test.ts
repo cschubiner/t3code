@@ -947,7 +947,7 @@ describe("TurnQueueReactor", () => {
             getPendingTurnStartByThreadId: () => Effect.succeed(Option.none()),
             deletePendingTurnStartByThreadId: () => Effect.void,
             listByThreadId: () => Effect.succeed([]),
-            getByTurnId: () => Effect.succeed(createCompletedProjectedTurn()),
+            getByTurnId: () => Effect.succeed(Option.some(createProjectedTurn("running", null))),
             clearCheckpointTurnConflict: () => Effect.void,
             deleteByThreadId: () => Effect.void,
           }),
