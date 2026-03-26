@@ -27,7 +27,7 @@ import { page } from "vitest/browser";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
-import { useComposerDraftStore } from "../composerDraftStore";
+import { clearPromotedDraftThreads, useComposerDraftStore } from "../composerDraftStore";
 import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   type TerminalContextDraft,
@@ -2084,8 +2084,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
       const { syncServerReadModel } = useStore.getState();
       syncServerReadModel(addThreadToSnapshot(fixture.snapshot, newThreadId));
 
-      // Clear the draft now that the server thread exists (mirrors EventRouter behavior).
-      useComposerDraftStore.getState().clearDraftThread(newThreadId);
+      // Clear the draft-thread metadata now that the server thread exists
+      // (mirrors EventRouter behavior).
+      clearPromotedDraftThreads(new Set([newThreadId]));
 
       // The route should still be on the new thread — not redirected away.
       await waitForURL(
@@ -2415,7 +2416,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       const { syncServerReadModel } = useStore.getState();
       syncServerReadModel(addThreadToSnapshot(fixture.snapshot, promotedThreadId));
-      useComposerDraftStore.getState().clearDraftThread(promotedThreadId);
+      clearPromotedDraftThreads(new Set([promotedThreadId]));
 
       const freshThreadPath = await triggerChatNewShortcutUntilPath(
         mounted.router,

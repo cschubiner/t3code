@@ -233,6 +233,7 @@ interface ComposerDraftStoreState {
   clearProjectDraftThreadId: (projectId: ProjectId) => void;
   clearProjectDraftThreadById: (projectId: ProjectId, threadId: ThreadId) => void;
   clearDraftThread: (threadId: ThreadId) => void;
+  clearPromotedDraftThread: (threadId: ThreadId) => void;
   clearThreadDraft: (threadId: ThreadId) => void;
   setStickyModelSelection: (modelSelection: ModelSelection | null | undefined) => void;
   setPrompt: (threadId: ThreadId, prompt: string) => void;
@@ -1534,6 +1535,31 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           };
         });
       },
+      clearPromotedDraftThread: (threadId) => {
+        if (threadId.length === 0) {
+          return;
+        }
+        set((state) => {
+          const hasDraftThread = state.draftThreadsByThreadId[threadId] !== undefined;
+          const hasProjectMapping = Object.values(state.projectDraftThreadIdByProjectId).includes(
+            threadId,
+          );
+          if (!hasDraftThread && !hasProjectMapping) {
+            return state;
+          }
+          const nextProjectDraftThreadIdByProjectId = Object.fromEntries(
+            Object.entries(state.projectDraftThreadIdByProjectId).filter(
+              ([, draftThreadId]) => draftThreadId !== threadId,
+            ),
+          ) as Record<ProjectId, ThreadId>;
+          const { [threadId]: _removedDraftThread, ...restDraftThreadsByThreadId } =
+            state.draftThreadsByThreadId;
+          return {
+            draftThreadsByThreadId: restDraftThreadsByThreadId,
+            projectDraftThreadIdByProjectId: nextProjectDraftThreadIdByProjectId,
+          };
+        });
+      },
       setStickyModelSelection: (modelSelection) => {
         const normalized = normalizeModelSelection(modelSelection);
         set((state) => {
@@ -2344,7 +2370,7 @@ export function clearPromotedDraftThreads(serverThreadIds: ReadonlySet<ThreadId>
   const draftThreadIds = Object.keys(store.draftThreadsByThreadId) as ThreadId[];
   for (const draftId of draftThreadIds) {
     if (serverThreadIds.has(draftId)) {
-      store.clearDraftThread(draftId);
+      store.clearPromotedDraftThread(draftId);
     }
   }
 }
