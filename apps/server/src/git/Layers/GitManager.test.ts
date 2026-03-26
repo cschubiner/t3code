@@ -155,6 +155,20 @@ function createBareRemote(): Effect.Effect<
   });
 }
 
+function configureMirroredGitHubRemote(
+  cwd: string,
+  input: { remoteName: string; localMirrorPath: string; githubUrl: string },
+): Effect.Effect<{ readonly githubUrl: string }, GitCommandError, GitCore> {
+  const mirrorPrefix = `url.${input.localMirrorPath}.insteadOf`;
+  return Effect.gen(function* () {
+    // Keep the remote looking like GitHub for selector logic while rewriting
+    // actual fetches back to the local bare remote used by the test.
+    yield* runGit(cwd, ["config", mirrorPrefix, input.githubUrl]);
+    yield* runGit(cwd, ["config", `remote.${input.remoteName}.url`, input.githubUrl]);
+    return { githubUrl: input.githubUrl } as const;
+  });
+}
+
 function createTextGeneration(overrides: Partial<FakeGitTextGeneration> = {}): TextGenerationShape {
   const implementation: FakeGitTextGeneration = {
     generateCommitMessage: (input) =>
@@ -1088,11 +1102,11 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         const forkDir = yield* createBareRemote();
         yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
         yield* runGit(repoDir, ["push", "-u", "fork-seed", "statemachine"]);
-        yield* runGit(repoDir, [
-          "config",
-          "remote.fork-seed.url",
-          "git@github.com:octocat/codething-mvp.git",
-        ]);
+        yield* configureMirroredGitHubRemote(repoDir, {
+          remoteName: "fork-seed",
+          localMirrorPath: forkDir,
+          githubUrl: "git@github.com:octocat/codething-mvp.git",
+        });
 
         const { manager, ghCalls } = yield* makeManager({
           ghScenario: {
@@ -1140,11 +1154,11 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         yield* runGit(repoDir, ["push", "-u", "fork-seed", "statemachine"]);
         yield* runGit(repoDir, ["checkout", "-b", "t3code/pr-142/statemachine"]);
         yield* runGit(repoDir, ["branch", "--set-upstream-to", "fork-seed/statemachine"]);
-        yield* runGit(repoDir, [
-          "config",
-          "remote.fork-seed.url",
-          "git@github.com:octocat/codething-mvp.git",
-        ]);
+        yield* configureMirroredGitHubRemote(repoDir, {
+          remoteName: "fork-seed",
+          localMirrorPath: forkDir,
+          githubUrl: "git@github.com:octocat/codething-mvp.git",
+        });
 
         const { manager, ghCalls } = yield* makeManager({
           ghScenario: {
@@ -1202,11 +1216,11 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         yield* runGit(repoDir, ["push", "-u", "fork-seed", "statemachine"]);
         yield* runGit(repoDir, ["checkout", "-b", "t3code/pr-142/statemachine"]);
         yield* runGit(repoDir, ["branch", "--set-upstream-to", "fork-seed/statemachine"]);
-        yield* runGit(repoDir, [
-          "config",
-          "remote.fork-seed.url",
-          "git@github.com:octocat/codething-mvp.git",
-        ]);
+        yield* configureMirroredGitHubRemote(repoDir, {
+          remoteName: "fork-seed",
+          localMirrorPath: forkDir,
+          githubUrl: "git@github.com:octocat/codething-mvp.git",
+        });
 
         const { manager, ghCalls } = yield* makeManager({
           ghScenario: {
@@ -1301,11 +1315,11 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       yield* runGit(repoDir, ["push", "-u", "fork-seed", "statemachine"]);
       yield* runGit(repoDir, ["checkout", "-b", "t3code/pr-91/statemachine"]);
       yield* runGit(repoDir, ["branch", "--set-upstream-to", "fork-seed/statemachine"]);
-      yield* runGit(repoDir, [
-        "config",
-        "remote.fork-seed.url",
-        "git@github.com:octocat/codething-mvp.git",
-      ]);
+      yield* configureMirroredGitHubRemote(repoDir, {
+        remoteName: "fork-seed",
+        localMirrorPath: forkDir,
+        githubUrl: "git@github.com:octocat/codething-mvp.git",
+      });
 
       const { manager, ghCalls } = yield* makeManager({
         ghScenario: {

@@ -21,6 +21,13 @@ layer("GitHubCliLive", (it) => {
   it.effect("parses pull request view output", () =>
     Effect.gen(function* () {
       mockedRunProcess.mockResolvedValueOnce({
+        stdout: "https://github.com/octocat/codething-mvp.git\n",
+        stderr: "",
+        code: 0,
+        signal: null,
+        timedOut: false,
+      });
+      mockedRunProcess.mockResolvedValueOnce({
         stdout: JSON.stringify({
           number: 42,
           title: "Add PR thread creation",
@@ -76,8 +83,98 @@ layer("GitHubCliLive", (it) => {
     }),
   );
 
+  it.effect("uses gh-rokt for repos under /rokt/", () =>
+    Effect.gen(function* () {
+      mockedRunProcess.mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          number: 17,
+          title: "ROKT PR",
+          url: "https://github.com/ROKT/example/pull/17",
+          baseRefName: "main",
+          headRefName: "feature/rokt",
+          state: "OPEN",
+          mergedAt: null,
+        }),
+        stderr: "",
+        code: 0,
+        signal: null,
+        timedOut: false,
+      });
+
+      yield* Effect.gen(function* () {
+        const gh = yield* GitHubCli;
+        return yield* gh.getPullRequest({
+          cwd: "/Users/canal/rokt/example",
+          reference: "#17",
+        });
+      });
+
+      expect(mockedRunProcess).toHaveBeenCalledWith(
+        "gh-rokt",
+        [
+          "pr",
+          "view",
+          "#17",
+          "--json",
+          "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
+        ],
+        expect.objectContaining({ cwd: "/Users/canal/rokt/example" }),
+      );
+    }),
+  );
+
+  it.effect("uses gh-rokt when a pull request URL targets a ROKT repo from another worktree", () =>
+    Effect.gen(function* () {
+      mockedRunProcess.mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          number: 15763,
+          title: "[codex] Fix image rule variant color context",
+          url: "https://github.com/ROKT/canal/pull/15763",
+          baseRefName: "develop",
+          headRefName: "fix-image-rule-variant-color-context",
+          state: "OPEN",
+          mergedAt: null,
+        }),
+        stderr: "",
+        code: 0,
+        signal: null,
+        timedOut: false,
+      });
+
+      yield* Effect.gen(function* () {
+        const gh = yield* GitHubCli;
+        return yield* gh.getPullRequest({
+          cwd: "/Users/canal/.t3/worktrees/discord_online_status_notifier_bot/t3code-757edd55",
+          reference: "https://github.com/ROKT/canal/pull/15763",
+        });
+      });
+
+      expect(mockedRunProcess).toHaveBeenNthCalledWith(
+        1,
+        "gh-rokt",
+        [
+          "pr",
+          "view",
+          "https://github.com/ROKT/canal/pull/15763",
+          "--json",
+          "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
+        ],
+        expect.objectContaining({
+          cwd: "/Users/canal/.t3/worktrees/discord_online_status_notifier_bot/t3code-757edd55",
+        }),
+      );
+    }),
+  );
+
   it.effect("reads repository clone URLs", () =>
     Effect.gen(function* () {
+      mockedRunProcess.mockResolvedValueOnce({
+        stdout: "https://github.com/octocat/codething-mvp.git\n",
+        stderr: "",
+        code: 0,
+        signal: null,
+        timedOut: false,
+      });
       mockedRunProcess.mockResolvedValueOnce({
         stdout: JSON.stringify({
           nameWithOwner: "octocat/codething-mvp",
@@ -108,6 +205,13 @@ layer("GitHubCliLive", (it) => {
 
   it.effect("surfaces a friendly error when the pull request is not found", () =>
     Effect.gen(function* () {
+      mockedRunProcess.mockResolvedValueOnce({
+        stdout: "https://github.com/octocat/codething-mvp.git\n",
+        stderr: "",
+        code: 0,
+        signal: null,
+        timedOut: false,
+      });
       mockedRunProcess.mockRejectedValueOnce(
         new Error(
           "GraphQL: Could not resolve to a PullRequest with the number of 4888. (repository.pullRequest)",

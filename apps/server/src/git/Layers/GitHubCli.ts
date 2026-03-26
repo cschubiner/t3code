@@ -11,13 +11,53 @@ import {
 } from "../Services/GitHubCli.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const ROKT_PATH_SEGMENT = "/rokt/";
+const REMOTE_DETECTION_TIMEOUT_MS = 5_000;
+
+function isRoktRemoteUrl(remoteUrl: string): boolean {
+  return /(?:^|[/:])ROKT\//.test(remoteUrl);
+}
+
+function argsTargetRoktRepo(args: readonly string[]): boolean {
+  for (const arg of args) {
+    if (/(?:^|https:\/\/github\.com\/)ROKT\//.test(arg)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function resolveGitHubCliCommand(cwd: string, args: readonly string[]): Promise<string> {
+  if (argsTargetRoktRepo(args)) {
+    return "gh-rokt";
+  }
+
+  if (cwd.includes(ROKT_PATH_SEGMENT)) {
+    return "gh-rokt";
+  }
+
+  try {
+    const originRemote = await runProcess("git", ["config", "--get", "remote.origin.url"], {
+      cwd,
+      timeoutMs: REMOTE_DETECTION_TIMEOUT_MS,
+    });
+    if (isRoktRemoteUrl(originRemote.stdout.trim())) {
+      return "gh-rokt";
+    }
+  } catch {
+    // Fall back to plain gh when remote detection is unavailable.
+  }
+
+  return "gh";
+}
 
 function normalizeGitHubCliError(operation: "execute" | "stdout", error: unknown): GitHubCliError {
   if (error instanceof Error) {
     if (error.message.includes("Command not found: gh")) {
       return new GitHubCliError({
         operation,
-        detail: "GitHub CLI (`gh`) is required but not available on PATH.",
+        detail:
+          "GitHub CLI (`gh` or `gh-rokt` for ROKT repos) is required but not available on PATH.",
         cause: error,
       });
     }
@@ -164,11 +204,13 @@ function decodeGitHubJson<S extends Schema.Top>(
 const makeGitHubCli = Effect.sync(() => {
   const execute: GitHubCliShape["execute"] = (input) =>
     Effect.tryPromise({
-      try: () =>
-        runProcess("gh", input.args, {
+      try: async () => {
+        const command = await resolveGitHubCliCommand(input.cwd, input.args);
+        return runProcess(command, input.args, {
           cwd: input.cwd,
           timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        }),
+        });
+      },
       catch: (error) => normalizeGitHubCliError("execute", error),
     });
 

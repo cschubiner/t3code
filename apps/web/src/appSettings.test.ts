@@ -7,6 +7,7 @@ import {
   DEFAULT_SIDEBAR_THREAD_SORT_ORDER,
   DEFAULT_TIMESTAMP_FORMAT,
   getProviderStartOptions,
+  normalizeSkillRootPaths,
 } from "./appSettings";
 import {
   getAppModelOptions,
@@ -73,6 +74,20 @@ describe("getAppModelOptions", () => {
     expect(options.some((option) => option.slug === "claude/custom-opus" && option.isCustom)).toBe(
       true,
     );
+  });
+});
+
+describe("normalizeSkillRootPaths", () => {
+  it("trims, deduplicates, and drops blank skill root values", () => {
+    expect(
+      normalizeSkillRootPaths([
+        " /Users/me/.codex/skills ",
+        "",
+        " /Users/me/.codex/skills ",
+        null,
+        "/tmp/custom-skills",
+      ]),
+    ).toEqual(["/Users/me/.codex/skills", "/tmp/custom-skills"]);
   });
 });
 

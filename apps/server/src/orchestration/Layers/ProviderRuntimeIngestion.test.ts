@@ -1662,7 +1662,7 @@ describe("ProviderRuntimeIngestion", () => {
     expect(resolvedPayload?.requestType).toBe("command_execution_approval");
   });
 
-  it("maps runtime.error into errored session state", async () => {
+  it("maps runtime.error into errored session state when no turn is active", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
 
@@ -1671,6 +1671,43 @@ describe("ProviderRuntimeIngestion", () => {
       eventId: asEventId("evt-runtime-error"),
       provider: "codex",
       createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        message: "runtime exploded",
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.session?.status === "error" &&
+        entry.session?.activeTurnId === null &&
+        entry.session?.lastError === "runtime exploded",
+    );
+    expect(thread.session?.status).toBe("error");
+    expect(thread.session?.activeTurnId).toBeNull();
+    expect(thread.session?.lastError).toBe("runtime exploded");
+  });
+
+  it("keeps the session running when runtime.error arrives for the active turn", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-runtime-error-turn-started"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-3"),
+      payload: {},
+    });
+
+    harness.emit({
+      type: "runtime.error",
+      eventId: asEventId("evt-runtime-error-active-turn"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-3"),
       payload: {
@@ -1681,11 +1718,12 @@ describe("ProviderRuntimeIngestion", () => {
     const thread = await waitForThread(
       harness.engine,
       (entry) =>
-        entry.session?.status === "error" &&
+        entry.session?.status === "running" &&
         entry.session?.activeTurnId === "turn-3" &&
         entry.session?.lastError === "runtime exploded",
     );
-    expect(thread.session?.status).toBe("error");
+    expect(thread.session?.status).toBe("running");
+    expect(thread.session?.activeTurnId).toBe("turn-3");
     expect(thread.session?.lastError).toBe("runtime exploded");
   });
 

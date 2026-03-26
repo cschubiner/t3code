@@ -188,7 +188,7 @@ layer("016_CanonicalizeModelSelections", (it) => {
         }
 
         // Execute migration under test
-        yield* runMigrations({ toMigrationInclusive: 16 });
+        yield* runMigrations({ toMigrationInclusive: 20 });
 
         // Assert expected state
         {

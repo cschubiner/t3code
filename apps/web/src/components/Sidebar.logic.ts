@@ -1,5 +1,6 @@
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "../appSettings";
-import type { Thread } from "../types";
+import type { Project, Thread } from "../types";
+import type { ThreadId } from "@t3tools/contracts";
 import { cn } from "../lib/utils";
 import {
   findLatestProposedPlan,
@@ -9,6 +10,8 @@ import {
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export type SidebarNewThreadEnvMode = "local" | "worktree";
+export type SidebarThreadListMode = "grouped" | "recent";
+
 type SidebarProject = {
   id: string;
   name: string;
@@ -30,6 +33,13 @@ export interface ThreadStatusPill {
   pulse: boolean;
 }
 
+export interface SidebarPullRequestReference {
+  url: string;
+  owner: string;
+  repo: string;
+  number: string;
+}
+
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
   "Pending Approval": 5,
   "Awaiting Input": 4,
@@ -43,6 +53,191 @@ type ThreadStatusInput = Pick<
   Thread,
   "interactionMode" | "latestTurn" | "lastVisitedAt" | "proposedPlans" | "session"
 >;
+type ThreadPullRequestReferenceInput = Pick<Thread, "messages" | "queuedTurns" | "worktreePath">;
+
+const GITHUB_PULL_REQUEST_URL_GLOBAL_PATTERN =
+  /https:\/\/github\.com\/(?<owner>[^/\s]+)\/(?<repo>[^/\s]+)\/pull\/(?<number>\d+)(?:[/?#][^\s)\]}>]*)?/gi;
+
+function sidebarPullRequestReferenceKey(
+  input: Pick<SidebarPullRequestReference, "owner" | "repo" | "number">,
+): string {
+  return `${input.owner.toLowerCase()}/${input.repo.toLowerCase()}#${input.number}`;
+}
+
+export type SidebarNavigationDirection = "previous" | "next";
+export interface SidebarProjectNavigationTarget {
+  projectId: Project["id"];
+  threadId: ThreadId;
+}
+export function visibleThreadsForSidebar(input: {
+  projectThreads: readonly Thread[];
+  activeThreadId?: Thread["id"] | undefined;
+  isThreadListExpanded: boolean;
+  threadPreviewLimit: number;
+}): Thread[] {
+  return getVisibleThreadsForProject({
+    threads: input.projectThreads,
+    activeThreadId: input.activeThreadId,
+    isThreadListExpanded: input.isThreadListExpanded,
+    previewLimit: input.threadPreviewLimit,
+  }).visibleThreads;
+}
+
+export function visibleRecentThreadsForSidebar(input: {
+  threads: readonly Thread[];
+  isExpanded: boolean;
+  threadPreviewLimit: number;
+}): Thread[] {
+  const orderedThreads = sortThreadsForRecentSidebar(input.threads);
+  if (orderedThreads.length <= input.threadPreviewLimit || input.isExpanded) {
+    return orderedThreads;
+  }
+  return orderedThreads.slice(0, input.threadPreviewLimit);
+}
+
+export function visibleThreadIdsForSidebar(input: {
+  projects: readonly Project[];
+  threads: readonly Thread[];
+  expandedThreadListsByProject: ReadonlySet<Project["id"]>;
+  threadPreviewLimit: number;
+  threadSortOrder: SidebarThreadSortOrder;
+  activeThreadId?: Thread["id"] | undefined;
+}): ThreadId[] {
+  const visibleThreadIds: ThreadId[] = [];
+
+  for (const project of input.projects) {
+    if (!project.expanded) continue;
+    const projectThreads = sortThreadsForSidebar(
+      input.threads.filter((thread) => thread.projectId === project.id),
+      input.threadSortOrder,
+    );
+    const visibleThreads = visibleThreadsForSidebar({
+      projectThreads,
+      activeThreadId: input.activeThreadId,
+      isThreadListExpanded: input.expandedThreadListsByProject.has(project.id),
+      threadPreviewLimit: input.threadPreviewLimit,
+    });
+    for (const thread of visibleThreads) {
+      visibleThreadIds.push(thread.id);
+    }
+  }
+
+  return visibleThreadIds;
+}
+
+export function visibleThreadIdsForRecentSidebar(input: {
+  threads: readonly Thread[];
+  isExpanded: boolean;
+  threadPreviewLimit: number;
+}): ThreadId[] {
+  return visibleRecentThreadsForSidebar(input).map((thread) => thread.id);
+}
+
+export function resolveSidebarThreadNavigationTarget(input: {
+  orderedVisibleThreadIds: readonly ThreadId[];
+  currentThreadId: ThreadId | null;
+  direction: SidebarNavigationDirection;
+}): ThreadId | null {
+  const { orderedVisibleThreadIds, currentThreadId, direction } = input;
+  if (orderedVisibleThreadIds.length === 0) return null;
+
+  if (currentThreadId === null) {
+    return direction === "next"
+      ? (orderedVisibleThreadIds[0] ?? null)
+      : (orderedVisibleThreadIds.at(-1) ?? null);
+  }
+
+  const currentIndex = orderedVisibleThreadIds.indexOf(currentThreadId);
+  if (currentIndex === -1) {
+    return direction === "next"
+      ? (orderedVisibleThreadIds[0] ?? null)
+      : (orderedVisibleThreadIds.at(-1) ?? null);
+  }
+
+  if (direction === "previous") {
+    return orderedVisibleThreadIds[currentIndex - 1] ?? null;
+  }
+
+  return orderedVisibleThreadIds[currentIndex + 1] ?? null;
+}
+
+export function projectNavigationTargetsForSidebar(input: {
+  projects: readonly Project[];
+  threads: readonly Thread[];
+  threadSortOrder: SidebarThreadSortOrder;
+}): SidebarProjectNavigationTarget[] {
+  const targets: SidebarProjectNavigationTarget[] = [];
+
+  for (const project of input.projects) {
+    const newestThread = sortThreadsForSidebar(
+      input.threads.filter((thread) => thread.projectId === project.id),
+      input.threadSortOrder,
+    )[0];
+    if (!newestThread) continue;
+    targets.push({
+      projectId: project.id,
+      threadId: newestThread.id,
+    });
+  }
+
+  return targets;
+}
+
+export function resolveSidebarProjectNavigationTarget(input: {
+  orderedProjectTargets: readonly SidebarProjectNavigationTarget[];
+  currentProjectId: Project["id"] | null;
+  direction: SidebarNavigationDirection;
+}): SidebarProjectNavigationTarget | null {
+  const { orderedProjectTargets, currentProjectId, direction } = input;
+  if (orderedProjectTargets.length === 0) return null;
+
+  if (currentProjectId === null) {
+    return direction === "next"
+      ? (orderedProjectTargets[0] ?? null)
+      : (orderedProjectTargets.at(-1) ?? null);
+  }
+
+  const currentIndex = orderedProjectTargets.findIndex(
+    (target) => target.projectId === currentProjectId,
+  );
+  if (currentIndex === -1) {
+    return direction === "next"
+      ? (orderedProjectTargets[0] ?? null)
+      : (orderedProjectTargets.at(-1) ?? null);
+  }
+
+  if (direction === "previous") {
+    return orderedProjectTargets[currentIndex - 1] ?? null;
+  }
+
+  return orderedProjectTargets[currentIndex + 1] ?? null;
+}
+
+export function deriveSidebarThreadProjectName(input: {
+  thread: Pick<Thread, "projectId">;
+  projects: readonly Pick<Project, "id" | "name">[];
+}): string {
+  return input.projects.find((project) => project.id === input.thread.projectId)?.name ?? "Unknown";
+}
+
+export function isTypingInSidebarTextEntry(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+
+  const editableTarget =
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    target.isContentEditable
+      ? target
+      : target.closest<HTMLElement>("input, textarea, select, [contenteditable]");
+
+  if (!editableTarget) return false;
+
+  return (
+    editableTarget.closest("[data-sidebar='sidebar']") !== null ||
+    editableTarget.closest("[data-slot='sidebar']") !== null
+  );
+}
 
 export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   if (!thread.latestTurn?.completedAt) return false;
@@ -70,9 +265,12 @@ export function resolveSidebarNewThreadEnvMode(input: {
 export function resolveThreadRowClassName(input: {
   isActive: boolean;
   isSelected: boolean;
+  hasSecondaryContent?: boolean;
 }): string {
-  const baseClassName =
-    "h-7 w-full translate-x-0 cursor-pointer justify-start px-2 text-left select-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
+  const baseClassName = cn(
+    "w-full translate-x-0 cursor-pointer justify-start px-2 text-left select-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
+    input.hasSecondaryContent ? "min-h-9 py-1" : "h-7",
+  );
 
   if (input.isSelected && input.isActive) {
     return cn(
@@ -98,12 +296,66 @@ export function resolveThreadRowClassName(input: {
   return cn(baseClassName, "text-muted-foreground hover:bg-accent hover:text-foreground");
 }
 
+export function extractSidebarPullRequestReferences(text: string): SidebarPullRequestReference[] {
+  const matches = text.matchAll(GITHUB_PULL_REQUEST_URL_GLOBAL_PATTERN);
+  const references: SidebarPullRequestReference[] = [];
+  const seenReferences = new Set<string>();
+
+  for (const match of matches) {
+    const url = match[0];
+    const owner = match.groups?.owner;
+    const repo = match.groups?.repo;
+    const number = match.groups?.number;
+    if (!url || !owner || !repo || !number) {
+      continue;
+    }
+    const reference = { url, owner, repo, number };
+    const referenceKey = sidebarPullRequestReferenceKey(reference);
+    if (seenReferences.has(referenceKey)) {
+      continue;
+    }
+    seenReferences.add(referenceKey);
+    references.push(reference);
+  }
+
+  return references;
+}
+
+export function deriveThreadSidebarPullRequestReferences(
+  thread: ThreadPullRequestReferenceInput,
+): SidebarPullRequestReference[] {
+  if (thread.worktreePath === null) {
+    return [];
+  }
+
+  const references: SidebarPullRequestReference[] = [];
+  const seenReferences = new Set<string>();
+  const texts = [
+    ...thread.messages.map((message) => message.text),
+    ...thread.queuedTurns.map((queuedTurn) => queuedTurn.text),
+  ];
+
+  for (const text of texts) {
+    for (const reference of extractSidebarPullRequestReferences(text)) {
+      const referenceKey = sidebarPullRequestReferenceKey(reference);
+      if (seenReferences.has(referenceKey)) {
+        continue;
+      }
+      seenReferences.add(referenceKey);
+      references.push(reference);
+    }
+  }
+
+  return references;
+}
+
 export function resolveThreadStatusPill(input: {
   thread: ThreadStatusInput;
   hasPendingApprovals: boolean;
   hasPendingUserInput: boolean;
+  hasTransientWork?: boolean;
 }): ThreadStatusPill | null {
-  const { hasPendingApprovals, hasPendingUserInput, thread } = input;
+  const { hasPendingApprovals, hasPendingUserInput, hasTransientWork = false, thread } = input;
 
   if (hasPendingApprovals) {
     return {
@@ -123,7 +375,12 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (thread.session?.status === "running") {
+  const hasActiveRunningTurn =
+    thread.session?.status === "running" ||
+    thread.session?.orchestrationStatus === "running" ||
+    thread.latestTurn?.state === "running";
+
+  if (hasTransientWork || hasActiveRunningTurn) {
     return {
       label: "Working",
       colorClass: "text-sky-600 dark:text-sky-300/80",
@@ -266,6 +523,10 @@ function getThreadSortTimestamp(
   return getLatestUserMessageTimestamp(thread);
 }
 
+function threadRecentSortTimestamp(thread: Pick<Thread, "createdAt" | "updatedAt">): number {
+  return Date.parse(thread.updatedAt ?? thread.createdAt);
+}
+
 export function sortThreadsForSidebar<
   T extends Pick<Thread, "id" | "createdAt" | "updatedAt" | "messages">,
 >(threads: readonly T[], sortOrder: SidebarThreadSortOrder): T[] {
@@ -304,6 +565,20 @@ export function getFallbackThreadIdAfterDelete<
       sortOrder,
     )[0]?.id ?? null
   );
+}
+
+export function sortThreadsForRecentSidebar<
+  T extends Pick<Thread, "id" | "createdAt" | "updatedAt">,
+>(threads: readonly T[]): T[] {
+  return threads.toSorted((left, right) => {
+    const byUpdatedAt = threadRecentSortTimestamp(right) - threadRecentSortTimestamp(left);
+    if (byUpdatedAt !== 0) return byUpdatedAt;
+
+    const byCreatedAt = Date.parse(right.createdAt) - Date.parse(left.createdAt);
+    if (byCreatedAt !== 0) return byCreatedAt;
+
+    return right.id.localeCompare(left.id);
+  });
 }
 
 export function getProjectSortTimestamp(

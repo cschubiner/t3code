@@ -239,6 +239,160 @@ describe("OrchestrationEngine", () => {
     await system.dispose();
   });
 
+  it("emits project reassignment in thread.meta-updated events", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-project-a-create"),
+        projectId: asProjectId("project-a"),
+        title: "Project A",
+        workspaceRoot: "/tmp/project-a",
+        defaultModelSelection: { provider: "codex", model: "gpt-5-codex" },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-project-b-create"),
+        projectId: asProjectId("project-b"),
+        title: "Project B",
+        workspaceRoot: "/tmp/project-b",
+        defaultModelSelection: { provider: "codex", model: "gpt-5-codex" },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.makeUnsafe("cmd-thread-project-move-create"),
+        threadId: ThreadId.makeUnsafe("thread-project-move"),
+        projectId: asProjectId("project-a"),
+        title: "Project move",
+        modelSelection: { provider: "codex", model: "gpt-5-codex" },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "full-access",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+
+    const event = await system.run(
+      Effect.gen(function* () {
+        const eventQueue = yield* Queue.unbounded<OrchestrationEvent>();
+        yield* Effect.forkScoped(
+          Stream.take(engine.streamDomainEvents, 1).pipe(
+            Stream.runForEach((domainEvent) =>
+              Queue.offer(eventQueue, domainEvent).pipe(Effect.asVoid),
+            ),
+          ),
+        );
+        yield* Effect.sleep("10 millis");
+        yield* engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.makeUnsafe("cmd-thread-project-move-update"),
+          threadId: ThreadId.makeUnsafe("thread-project-move"),
+          projectId: asProjectId("project-b"),
+        });
+        return yield* Queue.take(eventQueue);
+      }).pipe(Effect.scoped),
+    );
+
+    expect(event.type).toBe("thread.meta-updated");
+    expect(event.payload).toMatchObject({
+      threadId: ThreadId.makeUnsafe("thread-project-move"),
+      projectId: asProjectId("project-b"),
+    });
+
+    await system.dispose();
+  });
+
+  it("dispatches thread.import atomically into created, message, and activity events", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-project-import-create"),
+        projectId: asProjectId("project-import"),
+        title: "Imported Project",
+        workspaceRoot: "/tmp/project-import",
+        defaultModelSelection: { provider: "codex", model: "gpt-5-codex" },
+        createdAt,
+      }),
+    );
+
+    await system.run(
+      engine.dispatch({
+        type: "thread.import",
+        commandId: CommandId.makeUnsafe("cmd-thread-import"),
+        threadId: ThreadId.makeUnsafe("thread-import"),
+        projectId: asProjectId("project-import"),
+        title: "Imported thread",
+        model: "gpt-5-codex",
+        runtimeMode: "full-access",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        branch: null,
+        worktreePath: null,
+        createdAt,
+        messages: [
+          {
+            messageId: asMessageId("import-message-1"),
+            role: "user",
+            text: "hello from Codex",
+            createdAt: "2025-12-31T23:59:00.000Z",
+            updatedAt: "2025-12-31T23:59:00.000Z",
+          },
+          {
+            messageId: asMessageId("import-message-2"),
+            role: "assistant",
+            text: "hi from T3",
+            createdAt: "2025-12-31T23:59:30.000Z",
+            updatedAt: "2025-12-31T23:59:30.000Z",
+          },
+        ],
+        source: {
+          provider: "codex",
+          sessionId: "codex-session-1",
+          kind: "direct",
+          originalCwd: "/tmp/project-import",
+          sourceCreatedAt: "2025-12-31T23:58:00.000Z",
+          sourceUpdatedAt: "2025-12-31T23:59:30.000Z",
+        },
+      }),
+    );
+
+    const events = await system.run(
+      Stream.runCollect(engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(events.map((event) => event.type)).toEqual([
+      "project.created",
+      "thread.created",
+      "thread.message-sent",
+      "thread.message-sent",
+      "thread.activity-appended",
+    ]);
+
+    const readModel = await system.run(engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === "thread-import");
+    expect(thread?.messages.map((message) => message.text)).toEqual([
+      "hello from Codex",
+      "hi from T3",
+    ]);
+    expect(thread?.activities.at(-1)?.kind).toBe("codex.imported");
+
+    await system.dispose();
+  });
+
   it("stores completed checkpoint summaries even when no files changed", async () => {
     const system = await createOrchestrationSystem();
     const { engine } = system;

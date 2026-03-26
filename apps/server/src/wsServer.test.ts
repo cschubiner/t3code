@@ -2,9 +2,10 @@ import * as Http from "node:http";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { Effect, Exit, Layer, PlatformError, PubSub, Scope, Stream } from "effect";
+import { Effect, Exit, Layer, Option, PlatformError, PubSub, Scope, Stream } from "effect";
 import { describe, expect, it, afterEach, vi } from "vitest";
 import { createServer } from "./wsServer";
 import WebSocket from "ws";
@@ -45,6 +46,7 @@ import { TerminalManager, type TerminalManagerShape } from "./terminal/Services/
 import { makeSqlitePersistenceLive, SqlitePersistenceMemory } from "./persistence/Layers/Sqlite";
 import { SqlClient, SqlError } from "effect/unstable/sql";
 import { ProviderService, type ProviderServiceShape } from "./provider/Services/ProviderService";
+import { ProviderSessionDirectory } from "./provider/Services/ProviderSessionDirectory.ts";
 import { ProviderHealth, type ProviderHealthShape } from "./provider/Services/ProviderHealth";
 import { Open, type OpenShape } from "./open";
 import { GitManager, type GitManagerShape } from "./git/Services/GitManager.ts";
@@ -473,6 +475,102 @@ describe("WebSocket Server", () => {
     return dir;
   }
 
+  function createCodexFixture(input?: { sessionId?: string; cwd?: string; source?: string }): {
+    homePath: string;
+    sessionId: string;
+    workspaceRoot: string;
+  } {
+    const homePath = makeTempDir("t3code-codex-home-");
+    const workspaceRoot = input?.cwd ?? makeTempDir("t3code-codex-workspace-");
+    const sessionId = input?.sessionId ?? "codex-session-1";
+    const rolloutPath = path.join(homePath, `${sessionId}.jsonl`);
+    const updatedAt = new Date().toISOString();
+    const createdAt = new Date(Date.now() - 90_000).toISOString();
+
+    fs.writeFileSync(
+      rolloutPath,
+      [
+        JSON.stringify({
+          type: "turn_context",
+          payload: {
+            model: "gpt-5-codex",
+            sandbox_policy: { type: "danger-full-access" },
+            collaboration_mode: { mode: "default" },
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2025-12-31T23:59:00.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "Import this conversation" }],
+          },
+        }),
+        JSON.stringify({
+          timestamp: "2025-12-31T23:59:30.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "Conversation imported." }],
+          },
+        }),
+      ].join("\n"),
+      "utf8",
+    );
+
+    const database = new DatabaseSync(path.join(homePath, "state_5.sqlite"));
+    try {
+      database.exec(`
+        CREATE TABLE threads (
+          id TEXT PRIMARY KEY,
+          title TEXT,
+          cwd TEXT,
+          updated_at TEXT,
+          created_at TEXT,
+          source TEXT,
+          rollout_path TEXT,
+          first_user_message TEXT,
+          archived INTEGER
+        )
+      `);
+      database
+        .prepare(`
+          INSERT INTO threads (
+            id,
+            title,
+            cwd,
+            updated_at,
+            created_at,
+            source,
+            rollout_path,
+            first_user_message,
+            archived
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `)
+        .run(
+          sessionId,
+          "Imported Codex Session",
+          workspaceRoot,
+          updatedAt,
+          createdAt,
+          input?.source ?? "interactive",
+          rolloutPath,
+          "Import this conversation",
+          0,
+        );
+    } finally {
+      database.close();
+    }
+
+    return {
+      homePath,
+      sessionId,
+      workspaceRoot,
+    };
+  }
+
   async function createTestServer(
     options: {
       persistenceLayer?: Layer.Layer<
@@ -486,7 +584,7 @@ describe("WebSocket Server", () => {
       authToken?: string;
       baseDir?: string;
       staticDir?: string;
-      providerLayer?: Layer.Layer<ProviderService, never>;
+      providerLayer?: Layer.Layer<ProviderService | ProviderSessionDirectory, never>;
       providerHealth?: ProviderHealthShape;
       open?: OpenShape;
       gitManager?: GitManagerShape;
@@ -1268,7 +1366,16 @@ describe("WebSocket Server", () => {
       rollbackConversation: () => unsupported(),
       streamEvents: Stream.fromPubSub(runtimeEventPubSub),
     };
-    const providerLayer = Layer.succeed(ProviderService, providerService);
+    const providerLayer = Layer.merge(
+      Layer.succeed(ProviderService, providerService),
+      Layer.succeed(ProviderSessionDirectory, {
+        upsert: () => Effect.void,
+        getProvider: () => Effect.succeed("codex"),
+        getBinding: () => Effect.succeed(Option.none()),
+        remove: () => Effect.void,
+        listThreadIds: () => Effect.succeed([]),
+      }),
+    );
 
     server = await createTestServer({
       cwd: "/test",
@@ -1617,6 +1724,110 @@ describe("WebSocket Server", () => {
     });
   });
 
+  it("supports skills.search", async () => {
+    const workspace = makeTempDir("t3code-ws-skills-");
+    const codexHome = makeTempDir("t3code-ws-skills-home-");
+    const skillRoot = path.join(workspace, ".codex", "skills", "slackcli");
+    fs.mkdirSync(skillRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(skillRoot, "SKILL.md"),
+      "---\nname: SlackCLI\ndescription: Slack CLI workflow\n---\n",
+      "utf8",
+    );
+
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const [ws] = await connectAndAwaitWelcome(port);
+    connections.push(ws);
+
+    const response = await sendRequest(ws, WS_METHODS.skillsSearch, {
+      cwd: workspace,
+      query: "slack",
+      limit: 10,
+      codexHomePath: codexHome,
+    });
+    expect(response.error).toBeUndefined();
+    expect(response.result).toEqual({
+      skills: [
+        expect.objectContaining({
+          name: "slackcli",
+          description: "Slack CLI workflow",
+          source: "workspace",
+        }),
+      ],
+      truncated: false,
+    });
+  });
+
+  it("supports snippet create, list, delete, and push updates", async () => {
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const [ws] = await connectAndAwaitWelcome(port);
+    connections.push(ws);
+
+    const createResponse = await sendRequest(ws, WS_METHODS.snippetsCreate, {
+      text: "  Save this for later  ",
+    });
+    expect(createResponse.error).toBeUndefined();
+    expect(createResponse.result).toEqual({
+      snippet: expect.objectContaining({
+        id: expect.any(String),
+        text: "Save this for later",
+      }),
+      deduped: false,
+    });
+
+    const upsertPush = await waitForPush(ws, WS_CHANNELS.snippetsUpdated);
+    expect(upsertPush.data).toEqual({
+      kind: "upsert",
+      snippetId: (createResponse.result as { snippet: { id: string } }).snippet.id,
+      updatedAt: expect.any(String),
+    });
+
+    const dedupeResponse = await sendRequest(ws, WS_METHODS.snippetsCreate, {
+      text: "Save this for later",
+    });
+    expect(dedupeResponse.error).toBeUndefined();
+    expect(dedupeResponse.result).toEqual({
+      snippet: expect.objectContaining({
+        id: (createResponse.result as { snippet: { id: string } }).snippet.id,
+        text: "Save this for later",
+      }),
+      deduped: true,
+    });
+
+    const listResponse = await sendRequest(ws, WS_METHODS.snippetsList);
+    expect(listResponse.error).toBeUndefined();
+    expect(listResponse.result).toEqual({
+      snippets: [
+        expect.objectContaining({
+          id: (createResponse.result as { snippet: { id: string } }).snippet.id,
+          text: "Save this for later",
+        }),
+      ],
+    });
+
+    const deleteResponse = await sendRequest(ws, WS_METHODS.snippetsDelete, {
+      snippetId: (createResponse.result as { snippet: { id: string } }).snippet.id,
+    });
+    expect(deleteResponse.error).toBeUndefined();
+
+    const deletePush = await waitForPush(
+      ws,
+      WS_CHANNELS.snippetsUpdated,
+      (push) => push.data.kind === "delete",
+    );
+    expect(deletePush.data).toEqual({
+      kind: "delete",
+      snippetId: (createResponse.result as { snippet: { id: string } }).snippet.id,
+      updatedAt: expect.any(String),
+    });
+  });
+
   it("supports projects.writeFile within the workspace root", async () => {
     const workspace = makeTempDir("t3code-ws-write-file-");
 
@@ -1933,6 +2144,84 @@ describe("WebSocket Server", () => {
         result: expect.objectContaining({
           action: "commit",
         }),
+      }),
+    );
+  });
+
+  it("routes Codex import requests through websocket", async () => {
+    const fixture = createCodexFixture();
+    server = await createTestServer({
+      cwd: makeTempDir("t3code-server-cwd-"),
+    });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const [ws] = await connectAndAwaitWelcome(port);
+    connections.push(ws);
+
+    const listResponse = await sendRequest(ws, WS_METHODS.codexImportListSessions, {
+      homePath: fixture.homePath,
+      kind: "direct",
+      days: 30,
+      limit: 50,
+    });
+    expect(listResponse.error).toBeUndefined();
+    expect(listResponse.result).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sessionId: fixture.sessionId,
+          transcriptAvailable: true,
+          kind: "direct",
+        }),
+      ]),
+    );
+
+    const peekResponse = await sendRequest(ws, WS_METHODS.codexImportPeekSession, {
+      homePath: fixture.homePath,
+      sessionId: fixture.sessionId,
+      messageCount: 10,
+    });
+    expect(peekResponse.error).toBeUndefined();
+    expect(peekResponse.result).toEqual(
+      expect.objectContaining({
+        sessionId: fixture.sessionId,
+        transcriptAvailable: true,
+        messages: [
+          expect.objectContaining({ role: "user", text: "Import this conversation" }),
+          expect.objectContaining({ role: "assistant", text: "Conversation imported." }),
+        ],
+      }),
+    );
+
+    const importResponse = await sendRequest(ws, WS_METHODS.codexImportImportSessions, {
+      homePath: fixture.homePath,
+      sessionIds: [fixture.sessionId],
+    });
+    expect(importResponse.error).toBeUndefined();
+    expect(importResponse.result).toEqual({
+      results: [
+        expect.objectContaining({
+          sessionId: fixture.sessionId,
+          status: "imported",
+          threadId: `codex-import-${fixture.sessionId}`,
+        }),
+      ],
+    });
+
+    const snapshotResponse = await sendRequest(ws, ORCHESTRATION_WS_METHODS.getSnapshot);
+    expect(snapshotResponse.error).toBeUndefined();
+    expect(snapshotResponse.result).toEqual(
+      expect.objectContaining({
+        threads: expect.arrayContaining([
+          expect.objectContaining({
+            id: `codex-import-${fixture.sessionId}`,
+            title: "Imported Codex Session",
+            messages: expect.arrayContaining([
+              expect.objectContaining({ text: "Import this conversation" }),
+              expect.objectContaining({ text: "Conversation imported." }),
+            ]),
+          }),
+        ]),
       }),
     );
   });

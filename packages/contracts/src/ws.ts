@@ -36,8 +36,15 @@ import {
 } from "./terminal";
 import { KeybindingRule } from "./keybindings";
 import { ProjectSearchEntriesInput, ProjectWriteFileInput } from "./project";
+import { SkillSearchInput } from "./skills";
 import { OpenInEditorInput } from "./editor";
-import { ServerConfigUpdatedPayload } from "./server";
+import { ServerConfigUpdatedPayload, ServerGenerateSecretUrlInput } from "./server";
+import { SnippetCreateInput, SnippetDeleteInput, SnippetLibraryUpdatedPayload } from "./snippets";
+import {
+  CodexImportImportSessionsInput,
+  CodexImportListSessionsInput,
+  CodexImportPeekSessionInput,
+} from "./codexImport";
 
 // ── WebSocket RPC Method Names ───────────────────────────────────────
 
@@ -48,6 +55,10 @@ export const WS_METHODS = {
   projectsRemove: "projects.remove",
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
+  skillsSearch: "skills.search",
+  snippetsList: "snippets.list",
+  snippetsCreate: "snippets.create",
+  snippetsDelete: "snippets.delete",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -75,7 +86,13 @@ export const WS_METHODS = {
 
   // Server meta
   serverGetConfig: "server.getConfig",
+  serverGenerateSecretUrl: "server.generateSecretUrl",
   serverUpsertKeybinding: "server.upsertKeybinding",
+
+  // Codex import
+  codexImportListSessions: "codexImport.listSessions",
+  codexImportPeekSession: "codexImport.peekSession",
+  codexImportImportSessions: "codexImport.importSessions",
 } as const;
 
 // ── Push Event Channels ──────────────────────────────────────────────
@@ -85,6 +102,7 @@ export const WS_CHANNELS = {
   terminalEvent: "terminal.event",
   serverWelcome: "server.welcome",
   serverConfigUpdated: "server.configUpdated",
+  snippetsUpdated: "snippets.updated",
 } as const;
 
 // -- Tagged Union of all request body schemas ─────────────────────────
@@ -113,6 +131,10 @@ const WebSocketRequestBody = Schema.Union([
   // Project Search
   tagRequestBody(WS_METHODS.projectsSearchEntries, ProjectSearchEntriesInput),
   tagRequestBody(WS_METHODS.projectsWriteFile, ProjectWriteFileInput),
+  tagRequestBody(WS_METHODS.skillsSearch, SkillSearchInput),
+  tagRequestBody(WS_METHODS.snippetsList, Schema.Struct({})),
+  tagRequestBody(WS_METHODS.snippetsCreate, SnippetCreateInput),
+  tagRequestBody(WS_METHODS.snippetsDelete, SnippetDeleteInput),
 
   // Shell methods
   tagRequestBody(WS_METHODS.shellOpenInEditor, OpenInEditorInput),
@@ -140,7 +162,13 @@ const WebSocketRequestBody = Schema.Union([
 
   // Server meta
   tagRequestBody(WS_METHODS.serverGetConfig, Schema.Struct({})),
+  tagRequestBody(WS_METHODS.serverGenerateSecretUrl, ServerGenerateSecretUrlInput),
   tagRequestBody(WS_METHODS.serverUpsertKeybinding, KeybindingRule),
+
+  // Codex import
+  tagRequestBody(WS_METHODS.codexImportListSessions, CodexImportListSessionsInput),
+  tagRequestBody(WS_METHODS.codexImportPeekSession, CodexImportPeekSessionInput),
+  tagRequestBody(WS_METHODS.codexImportImportSessions, CodexImportImportSessionsInput),
 ]);
 
 export const WebSocketRequest = Schema.Struct({
@@ -176,6 +204,7 @@ export interface WsPushPayloadByChannel {
   readonly [WS_CHANNELS.serverConfigUpdated]: typeof ServerConfigUpdatedPayload.Type;
   readonly [WS_CHANNELS.gitActionProgress]: typeof GitActionProgressEvent.Type;
   readonly [WS_CHANNELS.terminalEvent]: typeof TerminalEvent.Type;
+  readonly [WS_CHANNELS.snippetsUpdated]: SnippetLibraryUpdatedPayload;
   readonly [ORCHESTRATION_WS_CHANNELS.domainEvent]: OrchestrationEvent;
 }
 
@@ -203,6 +232,10 @@ export const WsPushGitActionProgress = makeWsPushSchema(
   GitActionProgressEvent,
 );
 export const WsPushTerminalEvent = makeWsPushSchema(WS_CHANNELS.terminalEvent, TerminalEvent);
+export const WsPushSnippetsUpdated = makeWsPushSchema(
+  WS_CHANNELS.snippetsUpdated,
+  SnippetLibraryUpdatedPayload,
+);
 export const WsPushOrchestrationDomainEvent = makeWsPushSchema(
   ORCHESTRATION_WS_CHANNELS.domainEvent,
   OrchestrationEvent,
@@ -213,6 +246,7 @@ export const WsPushChannelSchema = Schema.Literals([
   WS_CHANNELS.serverWelcome,
   WS_CHANNELS.serverConfigUpdated,
   WS_CHANNELS.terminalEvent,
+  WS_CHANNELS.snippetsUpdated,
   ORCHESTRATION_WS_CHANNELS.domainEvent,
 ]);
 export type WsPushChannelSchema = typeof WsPushChannelSchema.Type;
@@ -222,6 +256,7 @@ export const WsPush = Schema.Union([
   WsPushServerConfigUpdated,
   WsPushGitActionProgress,
   WsPushTerminalEvent,
+  WsPushSnippetsUpdated,
   WsPushOrchestrationDomainEvent,
 ]);
 export type WsPush = typeof WsPush.Type;

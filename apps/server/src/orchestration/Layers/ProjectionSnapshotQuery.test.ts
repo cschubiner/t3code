@@ -28,6 +28,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       yield* sql`DELETE FROM projection_state`;
       yield* sql`DELETE FROM projection_thread_proposed_plans`;
       yield* sql`DELETE FROM projection_turns`;
+      yield* sql`DELETE FROM projection_thread_queued_turns`;
+      yield* sql`DELETE FROM provider_session_runtime`;
 
       yield* sql`
         INSERT INTO projection_projects (
@@ -122,6 +124,41 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           'thread-2',
           '2026-02-24T00:00:05.000Z',
           '2026-02-24T00:00:05.500Z'
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_thread_queued_turns (
+          message_id,
+          thread_id,
+          sort_order,
+          text,
+          attachments_json,
+          provider,
+          model,
+          service_tier,
+          model_options_json,
+          provider_options_json,
+          assistant_delivery_mode,
+          runtime_mode,
+          interaction_mode,
+          queued_at
+        )
+        VALUES (
+          'message-queued-1',
+          'thread-1',
+          0,
+          'queued follow-up',
+          '[]',
+          'codex',
+          'gpt-5-codex',
+          'fast',
+          NULL,
+          NULL,
+          'buffered',
+          'approval-required',
+          'plan',
+          '2026-02-24T00:00:04.500Z'
         )
       `;
 
@@ -280,6 +317,22 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           createdAt: "2026-02-24T00:00:02.000Z",
           updatedAt: "2026-02-24T00:00:03.000Z",
           deletedAt: null,
+          queuedTurns: [
+            {
+              messageId: asMessageId("message-queued-1"),
+              text: "queued follow-up",
+              attachments: [],
+              provider: "codex",
+              model: "gpt-5-codex",
+              serviceTier: "fast",
+              modelOptions: null,
+              providerOptions: null,
+              assistantDeliveryMode: "buffered",
+              runtimeMode: "approval-required",
+              interactionMode: "plan",
+              queuedAt: "2026-02-24T00:00:04.500Z",
+            },
+          ],
           messages: [
             {
               id: asMessageId("message-1"),
@@ -335,6 +388,130 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           },
         },
       ]);
+    }),
+  );
+
+  it.effect("prefers newer provider runtime status over stale projected thread session state", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_thread_sessions`;
+      yield* sql`DELETE FROM provider_session_runtime`;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'project-1',
+          'Project 1',
+          '/tmp/project-1',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          '[]',
+          '2026-02-24T00:00:00.000Z',
+          '2026-02-24T00:00:01.000Z',
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          branch,
+          worktree_path,
+          latest_turn_id,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'thread-1',
+          'project-1',
+          'Thread 1',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          NULL,
+          NULL,
+          'turn-stale',
+          '2026-02-24T00:00:02.000Z',
+          '2026-02-24T00:00:03.000Z',
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_thread_sessions (
+          thread_id,
+          status,
+          provider_name,
+          provider_session_id,
+          provider_thread_id,
+          runtime_mode,
+          active_turn_id,
+          last_error,
+          updated_at
+        )
+        VALUES (
+          'thread-1',
+          'running',
+          'codex',
+          'provider-session-1',
+          'provider-thread-1',
+          'full-access',
+          'turn-stale',
+          'stale projected session',
+          '2026-02-24T00:00:04.000Z'
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO provider_session_runtime (
+          thread_id,
+          provider_name,
+          adapter_key,
+          runtime_mode,
+          status,
+          last_seen_at,
+          resume_cursor_json,
+          runtime_payload_json
+        )
+        VALUES (
+          'thread-1',
+          'codex',
+          'codex',
+          'full-access',
+          'stopped',
+          '2026-02-24T00:00:05.000Z',
+          '{"threadId":"provider-thread-1"}',
+          '{"activeTurnId":null,"lastError":null}'
+        )
+      `;
+
+      const snapshot = yield* snapshotQuery.getSnapshot();
+      const thread = snapshot.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
+
+      assert.isDefined(thread);
+      assert.deepEqual(thread?.session, {
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        status: "stopped",
+        providerName: "codex",
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: "2026-02-24T00:00:05.000Z",
+      });
     }),
   );
 });

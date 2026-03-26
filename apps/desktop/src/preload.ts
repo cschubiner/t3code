@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { DesktopBridge } from "@t3tools/contracts";
+import type { DesktopBridge, DesktopRemoteAccessStatus } from "@t3tools/contracts";
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const CONFIRM_CHANNEL = "desktop:confirm";
@@ -12,6 +12,9 @@ const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
 const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 const GET_WS_URL_CHANNEL = "desktop:get-ws-url";
+const REMOTE_ACCESS_STATUS_CHANNEL = "desktop:remote-access-status";
+const REMOTE_ACCESS_GET_STATUS_CHANNEL = "desktop:remote-access-get-status";
+const REMOTE_ACCESS_SET_ENABLED_CHANNEL = "desktop:remote-access-set-enabled";
 
 contextBridge.exposeInMainWorld("desktopBridge", {
   getWsUrl: () => {
@@ -46,6 +49,20 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.on(UPDATE_STATE_CHANNEL, wrappedListener);
     return () => {
       ipcRenderer.removeListener(UPDATE_STATE_CHANNEL, wrappedListener);
+    };
+  },
+  getRemoteAccessStatus: () => ipcRenderer.invoke(REMOTE_ACCESS_GET_STATUS_CHANNEL),
+  setRemoteAccessEnabled: (enabled: boolean) =>
+    ipcRenderer.invoke(REMOTE_ACCESS_SET_ENABLED_CHANNEL, enabled),
+  onRemoteAccessStatus: (listener: (status: DesktopRemoteAccessStatus) => void) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, status: unknown) => {
+      if (typeof status !== "object" || status === null) return;
+      listener(status as Parameters<typeof listener>[0]);
+    };
+
+    ipcRenderer.on(REMOTE_ACCESS_STATUS_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(REMOTE_ACCESS_STATUS_CHANNEL, wrappedListener);
     };
   },
 } satisfies DesktopBridge);

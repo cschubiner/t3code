@@ -89,6 +89,7 @@ describe("orchestration projector", () => {
         updatedAt: now,
         deletedAt: null,
         messages: [],
+        queuedTurns: [],
         proposedPlans: [],
         activities: [],
         checkpoints: [],
@@ -369,6 +370,62 @@ describe("orchestration projector", () => {
     expect(message?.text).toBe("hello");
     expect(message?.streaming).toBe(false);
     expect(message?.updatedAt).toBe(completeAt);
+  });
+
+  it("reassigns a thread to a different project on thread.meta-updated", async () => {
+    const createdAt = "2026-02-23T09:00:00.000Z";
+    const updatedAt = "2026-02-23T09:00:01.000Z";
+    const model = createEmptyReadModel(createdAt);
+
+    const afterCreate = await Effect.runPromise(
+      projectEvent(
+        model,
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: createdAt,
+          commandId: "cmd-create",
+          payload: {
+            threadId: "thread-1",
+            projectId: "project-1",
+            title: "demo",
+            modelSelection: {
+              provider: "codex",
+              model: "gpt-5.3-codex",
+            },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        }),
+      ),
+    );
+
+    const afterUpdate = await Effect.runPromise(
+      projectEvent(
+        afterCreate,
+        makeEvent({
+          sequence: 2,
+          type: "thread.meta-updated",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: updatedAt,
+          commandId: "cmd-update",
+          payload: {
+            threadId: "thread-1",
+            projectId: "project-2",
+            updatedAt,
+          },
+        }),
+      ),
+    );
+
+    expect(afterUpdate.threads[0]?.projectId).toBe("project-2");
+    expect(afterUpdate.threads[0]?.updatedAt).toBe(updatedAt);
   });
 
   it("prunes reverted turn messages from in-memory thread snapshot", async () => {
@@ -838,5 +895,161 @@ describe("orchestration projector", () => {
     expect(thread?.checkpoints).toHaveLength(500);
     expect(thread?.checkpoints[0]?.turnId).toBe("turn-100");
     expect(thread?.checkpoints.at(-1)?.turnId).toBe("turn-599");
+  });
+
+  it("updates and reorders queued turns without losing their place in the read model", async () => {
+    const createdAt = "2026-03-08T12:00:00.000Z";
+    const model = createEmptyReadModel(createdAt);
+
+    const afterCreate = await Effect.runPromise(
+      projectEvent(
+        await Effect.runPromise(
+          projectEvent(
+            model,
+            makeEvent({
+              sequence: 1,
+              type: "thread.created",
+              aggregateKind: "thread",
+              aggregateId: "thread-1",
+              occurredAt: createdAt,
+              commandId: "cmd-thread-create",
+              payload: {
+                threadId: "thread-1",
+                projectId: "project-1",
+                title: "queue demo",
+                modelSelection: {
+                  provider: "codex",
+                  model: "gpt-5",
+                },
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: null,
+                createdAt,
+                updatedAt: createdAt,
+              },
+            }),
+          ),
+        ),
+        makeEvent({
+          sequence: 2,
+          type: "thread.turn-queued",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: "2026-03-08T12:00:01.000Z",
+          commandId: "cmd-queue-a",
+          payload: {
+            threadId: "thread-1",
+            queuedTurn: {
+              messageId: "message-a",
+              text: "Queued A",
+              attachments: [],
+              provider: "codex",
+              model: "gpt-5",
+              serviceTier: null,
+              modelOptions: null,
+              providerOptions: null,
+              assistantDeliveryMode: "buffered",
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              queuedAt: "2026-03-08T12:00:01.000Z",
+            },
+          },
+        }),
+      ),
+    );
+
+    const afterSecondQueuedTurn = await Effect.runPromise(
+      projectEvent(
+        afterCreate,
+        makeEvent({
+          sequence: 3,
+          type: "thread.turn-queued",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: "2026-03-08T12:00:02.000Z",
+          commandId: "cmd-queue-b",
+          payload: {
+            threadId: "thread-1",
+            queuedTurn: {
+              messageId: "message-b",
+              text: "Queued B",
+              attachments: [],
+              provider: "codex",
+              model: "gpt-5",
+              serviceTier: null,
+              modelOptions: null,
+              providerOptions: null,
+              assistantDeliveryMode: "buffered",
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              queuedAt: "2026-03-08T12:00:02.000Z",
+            },
+          },
+        }),
+      ),
+    );
+
+    const afterUpdate = await Effect.runPromise(
+      projectEvent(
+        afterSecondQueuedTurn,
+        makeEvent({
+          sequence: 4,
+          type: "thread.turn-queue-updated",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: "2026-03-08T12:01:00.000Z",
+          commandId: "cmd-queue-update",
+          payload: {
+            threadId: "thread-1",
+            queuedTurn: {
+              messageId: "message-b",
+              text: "Queued B updated",
+              attachments: [],
+              provider: "codex",
+              model: "gpt-5",
+              serviceTier: null,
+              modelOptions: null,
+              providerOptions: null,
+              assistantDeliveryMode: "buffered",
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              queuedAt: "2026-03-08T12:00:02.000Z",
+            },
+          },
+        }),
+      ),
+    );
+
+    const afterMove = await Effect.runPromise(
+      projectEvent(
+        afterUpdate,
+        makeEvent({
+          sequence: 5,
+          type: "thread.turn-queue-moved",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: "2026-03-08T12:02:00.000Z",
+          commandId: "cmd-queue-move",
+          payload: {
+            threadId: "thread-1",
+            messageId: "message-b",
+            targetMessageId: "message-a",
+            movedAt: "2026-03-08T12:02:00.000Z",
+          },
+        }),
+      ),
+    );
+
+    expect(afterMove.threads[0]?.queuedTurns).toEqual([
+      expect.objectContaining({
+        messageId: "message-b",
+        text: "Queued B updated",
+      }),
+      expect.objectContaining({
+        messageId: "message-a",
+        text: "Queued A",
+      }),
+    ]);
   });
 });
