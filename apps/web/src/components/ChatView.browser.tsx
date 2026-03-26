@@ -27,6 +27,7 @@ import { page } from "vitest/browser";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
+import { useChatToolbarFocusStore } from "../chatToolbarFocusStore";
 import { useComposerDraftStore } from "../composerDraftStore";
 import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
@@ -1337,6 +1338,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
       threads: [],
       threadsHydrated: false,
     });
+    useChatToolbarFocusStore.setState({
+      branchSelectorFocusRequestId: 0,
+    });
   });
 
   afterEach(() => {
@@ -2544,6 +2548,24 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("opens and focuses the branch/worktree selector with Mod+Shift+E", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+        },
+      },
+      queuedTurnsByThreadId: {},
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createDraftOnlySnapshot(),
