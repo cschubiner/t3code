@@ -47,6 +47,12 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedLocal.command, "chat.newLocal");
 
+    const parsedBranchSelectorFocus = yield* decode(KeybindingRule, {
+      key: "mod+shift+e",
+      command: "chat.branchSelector.focus",
+    });
+    assert.strictEqual(parsedBranchSelectorFocus.command, "chat.branchSelector.focus");
+
     const parsedThreadPrevious = yield* decode(KeybindingRule, {
       key: "mod+shift+[",
       command: "thread.previous",

@@ -162,6 +162,14 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
 
       const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
       assert.deepEqual(persisted, DEFAULT_KEYBINDINGS);
+      assert.isTrue(
+        persisted.some(
+          (entry) =>
+            entry.command === "chat.branchSelector.focus" &&
+            entry.key === "mod+shift+e" &&
+            entry.when === "!terminalFocus",
+        ),
+      );
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 

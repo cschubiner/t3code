@@ -35,6 +35,7 @@ const STATIC_KEYBINDING_COMMANDS = [
   "diff.toggle",
   "chat.new",
   "chat.newLocal",
+  "chat.branchSelector.focus",
   "editor.openFavorite",
   ...THREAD_KEYBINDING_COMMANDS,
 ] as const;

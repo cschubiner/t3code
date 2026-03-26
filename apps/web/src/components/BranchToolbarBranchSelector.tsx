@@ -47,6 +47,7 @@ interface BranchToolbarBranchSelectorProps {
   activeThreadBranch: string | null;
   activeWorktreePath: string | null;
   branchCwd: string | null;
+  focusRequestId: number;
   effectiveEnvMode: EnvMode;
   envLocked: boolean;
   onSetThreadBranch: (branch: string | null, worktreePath: string | null) => void;
@@ -78,6 +79,7 @@ export function BranchToolbarBranchSelector({
   activeThreadBranch,
   activeWorktreePath,
   branchCwd,
+  focusRequestId,
   effectiveEnvMode,
   envLocked,
   onSetThreadBranch,
@@ -156,6 +158,7 @@ export function BranchToolbarBranchSelector({
   );
   const [isBranchActionPending, startBranchActionTransition] = useTransition();
   const shouldVirtualizeBranchList = filteredBranchPickerItems.length > 40;
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
 
   const runBranchAction = (action: () => Promise<void>) => {
     startBranchActionTransition(async () => {
@@ -331,6 +334,19 @@ export function BranchToolbarBranchSelector({
     shouldVirtualizeBranchList,
   ]);
 
+  useEffect(() => {
+    if (focusRequestId === 0 || isBranchActionPending) {
+      return;
+    }
+    setIsBranchMenuOpen(true);
+    window.requestAnimationFrame(() => {
+      triggerRef.current?.focus();
+      void queryClient.invalidateQueries({
+        queryKey: gitQueryKeys.branches(branchCwd),
+      });
+    });
+  }, [branchCwd, focusRequestId, isBranchActionPending, queryClient]);
+
   const triggerLabel = getBranchTriggerLabel({
     activeWorktreePath,
     effectiveEnvMode,
@@ -426,6 +442,7 @@ export function BranchToolbarBranchSelector({
         render={<Button variant="ghost" size="xs" />}
         className="text-muted-foreground/70 hover:text-foreground/80"
         disabled={(branchesQuery.isLoading && branches.length === 0) || isBranchActionPending}
+        ref={triggerRef}
       >
         <span className="max-w-[240px] truncate">{triggerLabel}</span>
         <ChevronDownIcon />

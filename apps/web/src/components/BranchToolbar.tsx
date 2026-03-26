@@ -23,6 +23,7 @@ interface BranchToolbarProps {
   threadId: ThreadId;
   onEnvModeChange: (mode: EnvMode) => void;
   envLocked: boolean;
+  branchSelectorFocusRequestId?: number;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
 }
@@ -31,6 +32,7 @@ export default function BranchToolbar({
   threadId,
   onEnvModeChange,
   envLocked,
+  branchSelectorFocusRequestId = 0,
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
 }: BranchToolbarProps) {
@@ -160,6 +162,7 @@ export default function BranchToolbar({
         activeThreadBranch={activeThreadBranch}
         activeWorktreePath={activeWorktreePath}
         branchCwd={branchCwd}
+        focusRequestId={branchSelectorFocusRequestId}
         effectiveEnvMode={effectiveEnvMode}
         envLocked={envLocked}
         onSetThreadBranch={setThreadBranch}
