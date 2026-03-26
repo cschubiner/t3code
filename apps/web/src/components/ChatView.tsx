@@ -284,7 +284,7 @@ const terminalContextIdListsEqual = (
 ): boolean =>
   contexts.length === ids.length && contexts.every((context, index) => context.id === ids[index]);
 
-type ComposerSubmissionDisposition = "queue" | "steer";
+type ComposerSubmissionDisposition = "queue" | "queue-front" | "steer";
 interface ChatViewProps {
   threadId: ThreadId;
 }
@@ -367,6 +367,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
   const enqueueLocalQueuedTurn = useComposerDraftStore((store) => store.enqueueQueuedTurn);
+  const prependLocalQueuedTurn = useComposerDraftStore((store) => store.prependQueuedTurn);
   const consumeLocalQueuedTurn = useComposerDraftStore((store) => store.consumeQueuedTurn);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const getDraftThreadByProjectId = useComposerDraftStore(
@@ -2598,6 +2599,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       text: string;
       interactionMode: ProviderInteractionMode;
       terminalContexts?: TerminalContextDraft[];
+      prepend?: boolean;
     }) => {
       if (!activeThread) {
         return false;
@@ -2610,7 +2612,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return false;
       }
       const threadIdForQueue = activeThread.id;
-      enqueueLocalQueuedTurn(threadIdForQueue, {
+      const queueLocalTurn = input?.prepend ? prependLocalQueuedTurn : enqueueLocalQueuedTurn;
+      queueLocalTurn(threadIdForQueue, {
         id: newMessageId(),
         queuedAt: new Date().toISOString(),
         text: trimmed,
@@ -2637,6 +2640,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       clearComposerDraftContent,
       composerImages,
       enqueueLocalQueuedTurn,
+      prependLocalQueuedTurn,
       interactionMode,
       prompt,
       runtimeMode,
@@ -2653,6 +2657,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
       text: string;
       interactionMode: ProviderInteractionMode;
       terminalContexts?: TerminalContextDraft[];
+      sendNow?: boolean;
+      promoteToFront?: boolean;
     }) => {
       const api = readNativeApi();
       if (
@@ -2679,6 +2685,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return false;
       }
       const threadIdForQueue = activeThread.id;
+      const currentQueuedHeadMessageId = activeThread.queuedTurns[0]?.messageId ?? null;
       const createdAt = new Date().toISOString();
       const messageIdForQueue = newMessageId();
       setThreadError(threadIdForQueue, null);
@@ -2728,6 +2735,25 @@ export default function ChatView({ threadId }: ChatViewProps) {
           createdAt,
         });
 
+        if (input?.sendNow) {
+          await api.orchestration.dispatchCommand({
+            type: "thread.turn.queue.send-now",
+            commandId: newCommandId(),
+            threadId: threadIdForQueue,
+            messageId: messageIdForQueue,
+            createdAt: new Date().toISOString(),
+          });
+        } else if (input?.promoteToFront && currentQueuedHeadMessageId !== null) {
+          await api.orchestration.dispatchCommand({
+            type: "thread.turn.queue.move",
+            commandId: newCommandId(),
+            threadId: threadIdForQueue,
+            messageId: messageIdForQueue,
+            targetMessageId: currentQueuedHeadMessageId,
+            createdAt: new Date().toISOString(),
+          });
+        }
+
         for (const image of queuedImages) {
           revokeBlobPreviewUrl(image.previewUrl);
         }
@@ -2762,6 +2788,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       selectedModelOptionsForDispatch,
       selectedPromptEffort,
       selectedProvider,
+      selectedProviderModels,
       settings.enableAssistantStreaming,
       setThreadError,
     ],
@@ -2823,7 +2850,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
         consumeLocalQueuedTurn(targetThreadId, queuedTurn.id);
       }
     },
-    [consumeLocalQueuedTurn, providerOptionsForDispatch, settings.enableAssistantStreaming],
+    [
+      consumeLocalQueuedTurn,
+      providerOptionsForDispatch,
+      providerStatuses,
+      settings.enableAssistantStreaming,
+    ],
   );
 
   const removeQueuedTurnFromServer = useCallback(
@@ -3332,7 +3364,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     e?.preventDefault();
     const api = readNativeApi();
     const canQueueWhilePreparingWorktree =
-      disposition === "queue" && sendPhase === "preparing-worktree";
+      (disposition === "queue" || disposition === "queue-front") &&
+      sendPhase === "preparing-worktree";
     if (
       !api ||
       !activeThread ||
@@ -3373,6 +3406,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         text: trimmed,
         interactionMode,
         terminalContexts: sendableComposerTerminalContexts,
+        prepend: disposition === "queue-front",
       });
       return;
     }
@@ -3381,8 +3415,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
         draftText: trimmed,
         planMarkdown: activeProposedPlan.planMarkdown,
       });
-      if (phase === "running" && disposition === "queue") {
-        await queueComposerTurn(followUp);
+      if (phase === "running" && disposition !== "steer") {
+        await queueComposerTurn({
+          ...followUp,
+          ...(disposition === "queue-front" ? { promoteToFront: true } : {}),
+        });
+        return;
+      }
+      if (phase === "running" && disposition === "steer") {
+        await queueComposerTurn({
+          ...followUp,
+          sendNow: true,
+        });
         return;
       }
       promptRef.current = "";
@@ -3450,6 +3494,46 @@ export default function ChatView({ threadId }: ChatViewProps) {
         text: trimmed,
         interactionMode,
         terminalContexts: sendableComposerTerminalContexts,
+      });
+      return;
+    }
+    if (phase === "running" && disposition === "queue-front") {
+      if (expiredTerminalContextCount > 0) {
+        const toastCopy = buildExpiredTerminalContextToastCopy(
+          expiredTerminalContextCount,
+          "omitted",
+        );
+        toastManager.add({
+          type: "warning",
+          title: toastCopy.title,
+          description: toastCopy.description,
+        });
+      }
+      await queueComposerTurn({
+        text: trimmed,
+        interactionMode,
+        terminalContexts: sendableComposerTerminalContexts,
+        promoteToFront: true,
+      });
+      return;
+    }
+    if (phase === "running" && disposition === "steer") {
+      if (expiredTerminalContextCount > 0) {
+        const toastCopy = buildExpiredTerminalContextToastCopy(
+          expiredTerminalContextCount,
+          "omitted",
+        );
+        toastManager.add({
+          type: "warning",
+          title: toastCopy.title,
+          description: toastCopy.description,
+        });
+      }
+      await queueComposerTurn({
+        text: trimmed,
+        interactionMode,
+        terminalContexts: sendableComposerTerminalContexts,
+        sendNow: true,
       });
       return;
     }
@@ -4538,11 +4622,23 @@ export default function ChatView({ threadId }: ChatViewProps) {
       key === "Enter" &&
       phase === "running" &&
       composerHasContent &&
-      event.shiftKey &&
+      !event.shiftKey &&
       !event.altKey &&
       steerModifierPressed
     ) {
       void onSend(undefined, "steer");
+      return true;
+    }
+
+    if (
+      key === "Enter" &&
+      (phase === "running" || isPreparingWorktree) &&
+      composerHasContent &&
+      event.shiftKey &&
+      !event.altKey &&
+      steerModifierPressed
+    ) {
+      void onSend(undefined, "queue-front");
       return true;
     }
 
@@ -5207,10 +5303,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
                               {composerHasContent ? (
                                 <>
                                   <Button
-                                    type="submit"
+                                    type="button"
                                     size="sm"
                                     className="h-9 rounded-full px-4 sm:h-8"
                                     disabled={isSendBusy || isConnecting}
+                                    onClick={() => void onSend(undefined, "steer")}
                                   >
                                     Steer
                                   </Button>

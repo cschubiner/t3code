@@ -144,13 +144,13 @@ function whenNot(node: KeybindingWhenNode): KeybindingWhenNode {
 }
 
 function steerShortcutModifiers(): Pick<KeyboardEventInit, "ctrlKey" | "metaKey" | "shiftKey"> {
-  return isMacPlatform(navigator.platform)
-    ? { metaKey: true, shiftKey: true }
-    : { ctrlKey: true, shiftKey: true };
+  return isMacPlatform(navigator.platform) ? { metaKey: true } : { ctrlKey: true };
 }
 
 function modShiftShortcutModifiers(): Pick<KeyboardEventInit, "ctrlKey" | "metaKey" | "shiftKey"> {
-  return steerShortcutModifiers();
+  return isMacPlatform(navigator.platform)
+    ? { metaKey: true, shiftKey: true }
+    : { ctrlKey: true, shiftKey: true };
 }
 
 function modShortcutModifiers(options?: {
@@ -2862,7 +2862,96 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("steers immediately with the dedicated shortcut during a running turn", async () => {
+  it("queues next up at the front while preparing a new worktree", async () => {
+    const deferredWorktree = createDeferred<{
+      worktree: { branch: string; path: string };
+    }>();
+    wsRpcOverrides.set(WS_METHODS.gitCreateWorktree, () => deferredWorktree.promise);
+    useComposerDraftStore.getState().setProjectDraftThreadId(PROJECT_ID, THREAD_ID, {
+      createdAt: NOW_ISO,
+      branch: "main",
+      worktreePath: null,
+      envMode: "worktree",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Initial worktree message");
+      await waitForLayout();
+
+      const sendButton = await waitForSendButton();
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain("Preparing worktree...");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Queue behind setup");
+      await waitForLayout();
+
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Tab",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Put this first");
+      await waitForLayout();
+
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+          ...modShiftShortcutModifiers(),
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          const queuedTurns = useComposerDraftStore.getState().queuedTurnsByThreadId[THREAD_ID];
+          expect(queuedTurns).toHaveLength(2);
+          expect(queuedTurns?.[0]?.text).toBe("Put this first");
+          expect(queuedTurns?.[1]?.text).toBe("Queue behind setup");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      deferredWorktree.resolve({
+        worktree: {
+          branch: "t3code/1234abcd",
+          path: "/tmp/t3code-1234abcd",
+        },
+      });
+
+      await vi.waitFor(
+        () => {
+          const queueRequests = listDispatchCommandsByType("thread.turn.queue.enqueue");
+          const queuedTexts = queueRequests.map((request) => request.command?.message?.text);
+          expect(queuedTexts).toEqual(["Put this first", "Queue behind setup"]);
+          expect(useComposerDraftStore.getState().queuedTurnsByThreadId[THREAD_ID]).toBeUndefined();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("steers immediately with mod+enter during a running turn", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createRunningSnapshot(),
@@ -2872,7 +2961,62 @@ describe("ChatView timeline estimator parity (full app)", () => {
       useComposerDraftStore.getState().setPrompt(THREAD_ID, "Steer this right now");
       await waitForLayout();
 
-      const beforeCount = listDispatchCommandsByType("thread.turn.start").length;
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+          ...steerShortcutModifiers(),
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          const enqueueRequest = listDispatchCommandsByType("thread.turn.queue.enqueue").at(-1);
+          const sendNowRequest = listDispatchCommandsByType("thread.turn.queue.send-now").at(-1);
+          const enqueueCommand = enqueueRequest?.command as
+            | { message?: { text?: string; messageId?: string } }
+            | undefined;
+          const sendNowCommand = sendNowRequest?.command as { messageId?: string } | undefined;
+          expect(enqueueCommand?.message?.text).toBe("Steer this right now");
+          expect(sendNowCommand?.messageId).toBe(enqueueCommand?.message?.messageId);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("queues next up with mod+shift+enter during a running turn", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshot(),
+    });
+
+    try {
+      const queuedSnapshot = createRunningSnapshot();
+      useStore.getState().syncServerReadModel({
+        ...queuedSnapshot,
+        threads: [
+          {
+            ...queuedSnapshot.threads[0]!,
+            queuedTurns: [
+              createQueuedTurn({
+                messageId: "msg-user-queued-head" as MessageId,
+                text: "Current next up",
+                queuedAt: isoAt(60),
+              }),
+            ],
+          },
+        ],
+      });
+
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Put this next");
+      await waitForLayout();
+
       const composerEditor = await waitForComposerEditor();
       composerEditor.focus();
       composerEditor.dispatchEvent(
@@ -2886,13 +3030,47 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(
         () => {
-          const turnStarts = listDispatchCommandsByType("thread.turn.start");
-          expect(turnStarts.length).toBeGreaterThan(beforeCount);
-          expect(turnStarts.at(-1)?.command?.message?.text).toBe("Steer this right now");
+          const enqueueRequest = listDispatchCommandsByType("thread.turn.queue.enqueue").at(-1);
+          const moveRequest = listDispatchCommandsByType("thread.turn.queue.move").at(-1);
+          const enqueueCommand = enqueueRequest?.command as
+            | { message?: { text?: string; messageId?: string } }
+            | undefined;
+          const moveCommand = moveRequest?.command as { messageId?: string } | undefined;
+          expect(enqueueCommand?.message?.text).toBe("Put this next");
+          expect(moveCommand?.messageId).toBe(enqueueCommand?.message?.messageId);
         },
         { timeout: 8_000, interval: 16 },
       );
-      expect(listDispatchCommandsByType("thread.turn.queue.enqueue")).toHaveLength(0);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("steers immediately from the composer button during a running turn", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshot(),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Button steer");
+      await waitForLayout();
+
+      findButtonByText(document, "Steer")?.click();
+
+      await vi.waitFor(
+        () => {
+          const enqueueRequest = listDispatchCommandsByType("thread.turn.queue.enqueue").at(-1);
+          const sendNowRequest = listDispatchCommandsByType("thread.turn.queue.send-now").at(-1);
+          const enqueueCommand = enqueueRequest?.command as
+            | { message?: { text?: string; messageId?: string } }
+            | undefined;
+          const sendNowCommand = sendNowRequest?.command as { messageId?: string } | undefined;
+          expect(enqueueCommand?.message?.text).toBe("Button steer");
+          expect(sendNowCommand?.messageId).toBe(enqueueCommand?.message?.messageId);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
     } finally {
       await mounted.cleanup();
     }
