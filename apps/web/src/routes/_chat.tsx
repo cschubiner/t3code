@@ -8,6 +8,7 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { resolveShortcutCommand } from "../keybindings";
+import { useChatToolbarFocusStore } from "../chatToolbarFocusStore";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useThreadNavigationHistoryStore } from "../threadNavigationHistoryStore";
@@ -23,6 +24,9 @@ const THREAD_MAIN_CONTENT_MIN_WIDTH = 40 * 16;
 function ChatRouteGlobalShortcuts() {
   const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
   const selectedThreadIdsSize = useThreadSelectionStore((state) => state.selectedThreadIds.size);
+  const requestBranchSelectorFocus = useChatToolbarFocusStore(
+    (state) => state.requestBranchSelectorFocus,
+  );
   const { activeDraftThread, activeThread, handleNewThread, projects, routeThreadId } =
     useHandleNewThread();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
@@ -65,6 +69,13 @@ function ChatRouteGlobalShortcuts() {
         return;
       }
 
+      if (command === "chat.branchSelector.focus") {
+        event.preventDefault();
+        event.stopPropagation();
+        requestBranchSelectorFocus();
+        return;
+      }
+
       if (command !== "chat.new") return;
       event.preventDefault();
       event.stopPropagation();
@@ -86,6 +97,7 @@ function ChatRouteGlobalShortcuts() {
     handleNewThread,
     keybindings,
     projects,
+    requestBranchSelectorFocus,
     selectedThreadIdsSize,
     terminalOpen,
     appSettings.defaultThreadEnvMode,

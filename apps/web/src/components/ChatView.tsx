@@ -82,6 +82,7 @@ import {
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
 import { useStore } from "../store";
+import { useChatToolbarFocusStore } from "../chatToolbarFocusStore";
 import { useThreadActivityStore } from "../threadActivityStore";
 import {
   buildPlanImplementationThreadTitle,
@@ -324,6 +325,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const queryClient = useQueryClient();
   const createWorktreeMutation = useMutation(gitCreateWorktreeMutationOptions({ queryClient }));
   const removeWorktreeMutation = useMutation(gitRemoveWorktreeMutationOptions({ queryClient }));
+  const branchSelectorFocusRequestId = useChatToolbarFocusStore(
+    (state) => state.branchSelectorFocusRequestId,
+  );
   const composerDraft = useComposerThreadDraft(threadId);
   const prompt = composerDraft.prompt;
   const composerImages = composerDraft.images;
@@ -5365,6 +5369,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
               threadId={activeThread.id}
               onEnvModeChange={onEnvModeChange}
               envLocked={envLocked}
+              branchSelectorFocusRequestId={branchSelectorFocusRequestId}
               onComposerFocusRequest={scheduleComposerFocus}
               {...(canCheckoutPullRequestIntoThread
                 ? { onCheckoutPullRequestRequest: openPullRequestDialog }

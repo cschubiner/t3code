@@ -27,7 +27,8 @@ import { page } from "vitest/browser";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
-import { useComposerDraftStore } from "../composerDraftStore";
+import { useChatToolbarFocusStore } from "../chatToolbarFocusStore";
+import { clearPromotedDraftThreads, useComposerDraftStore } from "../composerDraftStore";
 import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   type TerminalContextDraft,
@@ -1337,6 +1338,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
       threads: [],
       threadsHydrated: false,
     });
+    useChatToolbarFocusStore.setState({
+      branchSelectorFocusRequestId: 0,
+    });
   });
 
   afterEach(() => {
@@ -2084,8 +2088,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
       const { syncServerReadModel } = useStore.getState();
       syncServerReadModel(addThreadToSnapshot(fixture.snapshot, newThreadId));
 
-      // Clear the draft now that the server thread exists (mirrors EventRouter behavior).
-      useComposerDraftStore.getState().clearDraftThread(newThreadId);
+      // Clear the draft-thread metadata now that the server thread exists
+      // (mirrors EventRouter behavior).
+      clearPromotedDraftThreads(new Set([newThreadId]));
 
       // The route should still be on the new thread — not redirected away.
       await waitForURL(
@@ -2415,7 +2420,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       const { syncServerReadModel } = useStore.getState();
       syncServerReadModel(addThreadToSnapshot(fixture.snapshot, promotedThreadId));
-      useComposerDraftStore.getState().clearDraftThread(promotedThreadId);
+      clearPromotedDraftThreads(new Set([promotedThreadId]));
 
       const freshThreadPath = await triggerChatNewShortcutUntilPath(
         mounted.router,
@@ -2537,6 +2542,71 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await waitForElement(
         () => findButtonByText(document, "Local"),
         "Unable to find Local env mode button after toggling back.",
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens and focuses the branch/worktree selector with Mod+Shift+E", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+        },
+      },
+      queuedTurnsByThreadId: {},
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            createResolvedKeybinding("e", "chat.branchSelector.focus", {
+              shiftKey: true,
+              whenAst: whenNot(whenIdentifier("terminalFocus")),
+            }),
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "e",
+          bubbles: true,
+          cancelable: true,
+          ...modShiftShortcutModifiers(),
+        }),
+      );
+
+      const branchSearchInput = await waitForElement(
+        () =>
+          document.querySelector(
+            'input[placeholder="Search branches..."]',
+          ) as HTMLInputElement | null,
+        "Unable to find branch search input.",
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(document.activeElement).toBe(branchSearchInput);
+        },
+        { timeout: 8_000, interval: 16 },
       );
     } finally {
       await mounted.cleanup();

@@ -199,6 +199,14 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       assert.isTrue(
         persisted.some(
           (entry) =>
+            entry.command === "chat.branchSelector.focus" &&
+            entry.key === "mod+shift+e" &&
+            entry.when === "!terminalFocus",
+        ),
+      );
+      assert.isTrue(
+        persisted.some(
+          (entry) =>
             entry.command === "snippets.open" &&
             entry.key === "mod+shift+s" &&
             entry.when === "!terminalFocus",

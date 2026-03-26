@@ -25,6 +25,7 @@ const STATIC_KEYBINDING_COMMANDS = [
   "sidebar.rename",
   "chat.new",
   "chat.newLocal",
+  "chat.branchSelector.focus",
   "editor.openFavorite",
   "snippets.open",
 ] as const;

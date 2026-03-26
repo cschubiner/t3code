@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   COMPOSER_DRAFT_STORAGE_KEY,
   type ComposerImageAttachment,
+  clearPromotedDraftThreads,
   useComposerDraftStore,
 } from "./composerDraftStore";
 import { removeLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorage";
@@ -343,6 +344,51 @@ describe("composerDraftStore queued turns", () => {
 
     expect(useComposerDraftStore.getState().queuedTurnsByThreadId[threadId]).toBeUndefined();
     expect(revokeSpy).toHaveBeenCalledWith("blob:queued-remove");
+  });
+});
+
+describe("clearPromotedDraftThreads", () => {
+  const projectId = ProjectId.makeUnsafe("project-promoted");
+  const threadId = ThreadId.makeUnsafe("thread-promoted");
+
+  beforeEach(() => {
+    resetComposerDraftStore();
+  });
+
+  it("removes draft-thread metadata while preserving composer content and local queued turns", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectId, threadId, {
+      createdAt: "2026-03-26T10:00:00.000Z",
+      branch: "main",
+      worktreePath: null,
+      envMode: "worktree",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+    });
+    store.setPrompt(threadId, "Keep this follow-up");
+    store.enqueueQueuedTurn(threadId, {
+      id: "queued-promoted",
+      queuedAt: "2026-03-26T10:01:00.000Z",
+      text: "Still queue this",
+      images: [],
+      terminalContexts: [],
+      provider: "codex",
+      model: "gpt-5.4",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      serviceTier: null,
+      modelOptions: null,
+      promptEffort: null,
+    });
+
+    clearPromotedDraftThreads(new Set([threadId]));
+
+    const nextState = useComposerDraftStore.getState();
+    expect(nextState.draftThreadsByThreadId[threadId]).toBeUndefined();
+    expect(nextState.projectDraftThreadIdByProjectId[projectId]).toBeUndefined();
+    expect(nextState.draftsByThreadId[threadId]?.prompt).toBe("Keep this follow-up");
+    expect(nextState.queuedTurnsByThreadId[threadId]).toHaveLength(1);
+    expect(nextState.queuedTurnsByThreadId[threadId]?.[0]?.text).toBe("Still queue this");
   });
 });
 

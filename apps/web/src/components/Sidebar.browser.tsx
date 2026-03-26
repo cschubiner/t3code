@@ -21,6 +21,7 @@ import { page } from "vitest/browser";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
+import { useChatToolbarFocusStore } from "../chatToolbarFocusStore";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { isMacPlatform } from "../lib/utils";
 import { getRouter } from "../router";
@@ -617,6 +618,9 @@ describe("Sidebar navigation keybindings", () => {
       threadsHydrated: false,
       sidebarThreadListMode: "grouped",
     });
+    useChatToolbarFocusStore.setState({
+      branchSelectorFocusRequestId: 0,
+    });
     useThreadNavigationHistoryStore.getState().clearHistory();
     useThreadSelectionStore.getState().clearSelection();
   });
@@ -1097,6 +1101,9 @@ describe("Import From Codex dialog", () => {
       projects: [],
       threads: [],
       threadsHydrated: false,
+    });
+    useChatToolbarFocusStore.setState({
+      branchSelectorFocusRequestId: 0,
     });
     useThreadNavigationHistoryStore.getState().clearHistory();
     useThreadSelectionStore.getState().clearSelection();
