@@ -175,6 +175,15 @@ describe("split/new/close terminal shortcuts", () => {
     );
   });
 
+  it("does not resolve branch selector focus while terminalFocus is true", () => {
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "e", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: true },
+      }),
+    );
+  });
+
   it("supports when expressions", () => {
     const keybindings = compile([
       {
