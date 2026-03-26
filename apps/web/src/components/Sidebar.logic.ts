@@ -1,4 +1,4 @@
-import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "../appSettings";
+import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { Project, Thread } from "../types";
 import type { ThreadId } from "@t3tools/contracts";
 import { cn } from "../lib/utils";

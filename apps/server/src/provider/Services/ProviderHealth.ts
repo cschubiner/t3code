@@ -1,19 +1,15 @@
 /**
- * ProviderHealth - Provider readiness snapshot service.
+ * ProviderHealth - compatibility snapshot service.
  *
- * Owns provider health checks (install/auth reachability) and exposes the
- * latest results to transport layers.
- *
- * @module ProviderHealth
+ * Kept as a thin alias over the provider registry so existing transport/tests
+ * that still depend on the older service name continue to typecheck while the
+ * runtime uses ProviderRegistry.
  */
 import type { ServerProviderStatus } from "@t3tools/contracts";
 import { ServiceMap } from "effect";
 import type { Effect } from "effect";
 
 export interface ProviderHealthShape {
-  /**
-   * Read the latest provider health statuses.
-   */
   readonly getStatuses: Effect.Effect<ReadonlyArray<ServerProviderStatus>>;
 }
 

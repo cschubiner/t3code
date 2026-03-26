@@ -14,7 +14,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ResolvedKeybindingsConfig,
-  type ServerProviderStatus,
+  type ServerProvider,
   type SkillSummary,
   type Snippet,
   type ThreadId,
@@ -25,11 +25,7 @@ import {
   ProviderInteractionMode,
   RuntimeMode,
 } from "@t3tools/contracts";
-import {
-  applyClaudePromptEffortPrefix,
-  getModelCapabilities,
-  normalizeModelSlug,
-} from "@t3tools/shared/model";
+import { applyClaudePromptEffortPrefix, normalizeModelSlug } from "@t3tools/shared/model";
 import {
   useCallback,
   useDeferredValue,
@@ -140,12 +136,13 @@ import {
 import { SidebarTrigger } from "./ui/sidebar";
 import { isMacPlatform, newCommandId, newMessageId, newThreadId } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
-import { getProviderStartOptions, useAppSettings } from "../appSettings";
 import {
-  getCustomModelOptionsByProvider,
-  getCustomModelsByProvider,
-  resolveAppModelSelection,
-} from "../modelSelection";
+  getProviderModelCapabilities,
+  getProviderModels,
+  resolveSelectableProvider,
+} from "../providerModels";
+import { useSettings } from "../hooks/useSettings";
+import { resolveAppModelSelection } from "../modelSelection";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import {
   type ComposerImageAttachment,
@@ -185,7 +182,7 @@ import {
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
 } from "./chat/composerProviderRegistry";
-import { ProviderHealthBanner } from "./chat/ProviderHealthBanner";
+import { ProviderStatusBanner } from "./chat/ProviderStatusBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import {
   buildExpiredTerminalContextToastCopy,
@@ -219,17 +216,18 @@ const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_SKILLS: SkillSummary[] = [];
 const EMPTY_SNIPPETS: Snippet[] = [];
 const EMPTY_AVAILABLE_EDITORS: EditorId[] = [];
-const EMPTY_PROVIDER_STATUSES: ServerProviderStatus[] = [];
+const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 const EMPTY_LOCAL_QUEUED_TURNS: QueuedComposerTurn[] = [];
 
 function formatOutgoingPrompt(params: {
   provider: ProviderKind;
   model: string | null;
+  models: ReadonlyArray<ServerProvider["models"][number]>;
   effort: string | null;
   text: string;
 }): string {
-  const caps = getModelCapabilities(params.provider, params.model);
+  const caps = getProviderModelCapabilities(params.models, params.model, params.provider);
   if (params.effort && caps.promptInjectedEffortLevels.includes(params.effort)) {
     return applyClaudePromptEffortPrefix(params.text, params.effort as ClaudeCodeEffort | null);
   }
@@ -312,7 +310,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const pendingThreadSearchNavigation = useThreadSearchNavigationStore(
     (store) => store.pendingNavigation,
   );
-  const { settings } = useAppSettings();
+  const settings = useSettings();
   const setStickyComposerModelSelection = useComposerDraftStore(
     (store) => store.setStickyModelSelection,
   );
@@ -822,25 +820,32 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const lockedProvider: ProviderKind | null = hasThreadStarted
     ? (sessionProvider ?? threadProvider ?? selectedProviderByThreadId ?? null)
     : null;
-  const selectedProvider: ProviderKind =
-    lockedProvider ?? selectedProviderByThreadId ?? threadProvider ?? "codex";
-  const customModelsByProvider = useMemo(() => getCustomModelsByProvider(settings), [settings]);
+  const serverConfigQuery = useQuery(serverConfigQueryOptions());
+  const providerStatuses = serverConfigQuery.data?.providers ?? EMPTY_PROVIDERS;
+  const unlockedSelectedProvider = resolveSelectableProvider(
+    providerStatuses,
+    selectedProviderByThreadId ?? threadProvider ?? "codex",
+  );
+  const selectedProvider: ProviderKind = lockedProvider ?? unlockedSelectedProvider;
   const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
     threadId,
+    providers: providerStatuses,
     selectedProvider,
     threadModelSelection: activeThread?.modelSelection,
     projectModelSelection: activeProject?.defaultModelSelection,
-    customModelsByProvider,
+    settings,
   });
+  const selectedProviderModels = getProviderModels(providerStatuses, selectedProvider);
   const composerProviderState = useMemo(
     () =>
       getComposerProviderState({
         provider: selectedProvider,
         model: selectedModel,
+        models: selectedProviderModels,
         prompt,
         modelOptions: composerModelOptions,
       }),
-    [composerModelOptions, prompt, selectedModel, selectedProvider],
+    [composerModelOptions, prompt, selectedModel, selectedProvider, selectedProviderModels],
   );
   const selectedPromptEffort = composerProviderState.promptEffort;
   const selectedModelOptionsForDispatch = composerProviderState.modelOptionsForDispatch;
@@ -852,35 +857,35 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }),
     [selectedModel, selectedModelOptionsForDispatch, selectedProvider],
   );
-  const providerOptionsForDispatch = useMemo(() => getProviderStartOptions(settings), [settings]);
+  const providerOptionsForDispatch = useMemo(() => {
+    const codexBinaryPath = settings.providers.codex.binaryPath.trim();
+    const codexHomePath = settings.providers.codex.homePath.trim();
+    const claudeBinaryPath = settings.providers.claudeAgent.binaryPath.trim();
+    const nextOptions = {
+      ...(codexBinaryPath || codexHomePath
+        ? {
+            codex: {
+              ...(codexBinaryPath ? { binaryPath: codexBinaryPath } : {}),
+              ...(codexHomePath ? { homePath: codexHomePath } : {}),
+            },
+          }
+        : {}),
+      ...(claudeBinaryPath
+        ? {
+            claudeAgent: {
+              binaryPath: claudeBinaryPath,
+            },
+          }
+        : {}),
+    };
+
+    return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
+  }, [
+    settings.providers.claudeAgent.binaryPath,
+    settings.providers.codex.binaryPath,
+    settings.providers.codex.homePath,
+  ]);
   const selectedModelForPicker = selectedModel;
-  const modelOptionsByProvider = useMemo(
-    () => getCustomModelOptionsByProvider(settings, selectedProvider, selectedModel),
-    [settings, selectedProvider, selectedModel],
-  );
-  const selectedModelForPickerWithCustomFallback = useMemo(() => {
-    const currentOptions = modelOptionsByProvider[selectedProvider];
-    return currentOptions.some((option) => option.slug === selectedModelForPicker)
-      ? selectedModelForPicker
-      : (normalizeModelSlug(selectedModelForPicker, selectedProvider) ?? selectedModelForPicker);
-  }, [modelOptionsByProvider, selectedModelForPicker, selectedProvider]);
-  const searchableModelOptions = useMemo(
-    () =>
-      AVAILABLE_PROVIDER_OPTIONS.filter(
-        (option) => lockedProvider === null || option.value === lockedProvider,
-      ).flatMap((option) =>
-        modelOptionsByProvider[option.value].map(({ slug, name }) => ({
-          provider: option.value,
-          providerLabel: option.label,
-          slug,
-          name,
-          searchSlug: slug.toLowerCase(),
-          searchName: name.toLowerCase(),
-          searchProvider: option.label.toLowerCase(),
-        })),
-      ),
-    [lockedProvider, modelOptionsByProvider],
-  );
   const phase = derivePhase(activeThread?.session ?? null);
   const isSendBusy = sendPhase !== "idle";
   const isPreparingWorktree = sendPhase === "preparing-worktree";
@@ -1258,7 +1263,39 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const effectivePathQuery = pathTriggerQuery.length > 0 ? debouncedPathQuery : "";
   const effectiveSkillQuery = skillTriggerQuery.length > 0 ? debouncedSkillQuery : "";
   const branchesQuery = useQuery(gitBranchesQueryOptions(gitCwd));
-  const serverConfigQuery = useQuery(serverConfigQueryOptions());
+  const keybindings = serverConfigQuery.data?.keybindings ?? EMPTY_KEYBINDINGS;
+  const availableEditors = serverConfigQuery.data?.availableEditors ?? EMPTY_AVAILABLE_EDITORS;
+  const modelOptionsByProvider = useMemo(
+    () => ({
+      codex: providerStatuses.find((provider) => provider.provider === "codex")?.models ?? [],
+      claudeAgent:
+        providerStatuses.find((provider) => provider.provider === "claudeAgent")?.models ?? [],
+    }),
+    [providerStatuses],
+  );
+  const selectedModelForPickerWithCustomFallback = useMemo(() => {
+    const currentOptions = modelOptionsByProvider[selectedProvider];
+    return currentOptions.some((option) => option.slug === selectedModelForPicker)
+      ? selectedModelForPicker
+      : (normalizeModelSlug(selectedModelForPicker, selectedProvider) ?? selectedModelForPicker);
+  }, [modelOptionsByProvider, selectedModelForPicker, selectedProvider]);
+  const searchableModelOptions = useMemo(
+    () =>
+      AVAILABLE_PROVIDER_OPTIONS.filter(
+        (option) => lockedProvider === null || option.value === lockedProvider,
+      ).flatMap((option) =>
+        modelOptionsByProvider[option.value].map(({ slug, name }) => ({
+          provider: option.value,
+          providerLabel: option.label,
+          slug,
+          name,
+          searchSlug: slug.toLowerCase(),
+          searchName: name.toLowerCase(),
+          searchProvider: option.label.toLowerCase(),
+        })),
+      ),
+    [lockedProvider, modelOptionsByProvider],
+  );
   const workspaceEntriesQuery = useQuery(
     projectSearchEntriesQueryOptions({
       cwd: gitCwd,
@@ -1403,9 +1440,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     () => new Set(nonPersistedComposerImageIds),
     [nonPersistedComposerImageIds],
   );
-  const keybindings = serverConfigQuery.data?.keybindings ?? EMPTY_KEYBINDINGS;
-  const availableEditors = serverConfigQuery.data?.availableEditors ?? EMPTY_AVAILABLE_EDITORS;
-  const providerStatuses = serverConfigQuery.data?.providers ?? EMPTY_PROVIDER_STATUSES;
   const activeProviderStatus = useMemo(
     () => providerStatuses.find((status) => status.provider === selectedProvider) ?? null,
     [selectedProvider, providerStatuses],
@@ -2637,6 +2671,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       const outgoingQueuedText = formatOutgoingPrompt({
         provider: selectedProvider,
         model: selectedModel,
+        models: selectedProviderModels,
         effort: selectedPromptEffort,
         text: queuedText || IMAGE_ONLY_BOOTSTRAP_PROMPT,
       });
@@ -2751,6 +2786,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         const outgoingQueuedText = formatOutgoingPrompt({
           provider: queuedTurn.provider,
           model: queuedTurn.model,
+          models: getProviderModels(providerStatuses, queuedTurn.provider),
           effort: queuedTurn.promptEffort,
           text: queuedText || IMAGE_ONLY_BOOTSTRAP_PROMPT,
         });
@@ -3451,6 +3487,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     const outgoingMessageText = formatOutgoingPrompt({
       provider: selectedProvider,
       model: selectedModel,
+      models: selectedProviderModels,
       effort: selectedPromptEffort,
       text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
     });
@@ -3636,8 +3673,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
           attachments: turnAttachments,
         },
         modelSelection: selectedModelSelection,
-        ...(providerOptionsForDispatch ? { providerOptions: providerOptionsForDispatch } : {}),
-        assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
         runtimeMode,
         interactionMode,
         createdAt: messageCreatedAt,
@@ -3875,6 +3910,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       const outgoingMessageText = formatOutgoingPrompt({
         provider: selectedProvider,
         model: selectedModel,
+        models: selectedProviderModels,
         effort: selectedPromptEffort,
         text: trimmed,
       });
@@ -3919,8 +3955,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
             attachments: [],
           },
           modelSelection: selectedModelSelection,
-          ...(providerOptionsForDispatch ? { providerOptions: providerOptionsForDispatch } : {}),
-          assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
           runtimeMode,
           interactionMode: nextInteractionMode,
           ...(nextInteractionMode === "default" && activeProposedPlan
@@ -3966,11 +4000,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
       runtimeMode,
       selectedPromptEffort,
       selectedModelSelection,
-      providerOptionsForDispatch,
       selectedProvider,
+      selectedProviderModels,
       setComposerDraftInteractionMode,
       setThreadError,
-      settings.enableAssistantStreaming,
       selectedModel,
     ],
   );
@@ -3997,6 +4030,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     const outgoingImplementationPrompt = formatOutgoingPrompt({
       provider: selectedProvider,
       model: selectedModel,
+      models: selectedProviderModels,
       effort: selectedPromptEffort,
       text: implementationPrompt,
     });
@@ -4036,8 +4070,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
             attachments: [],
           },
           modelSelection: selectedModelSelection,
-          ...(providerOptionsForDispatch ? { providerOptions: providerOptionsForDispatch } : {}),
-          assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
           runtimeMode,
           interactionMode: "default",
           createdAt,
@@ -4088,9 +4120,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     runtimeMode,
     selectedPromptEffort,
     selectedModelSelection,
-    providerOptionsForDispatch,
     selectedProvider,
-    settings.enableAssistantStreaming,
+    selectedProviderModels,
     syncServerReadModel,
     selectedModel,
   ]);
@@ -4102,9 +4133,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
         scheduleComposerFocus();
         return;
       }
-      const resolvedModel = resolveAppModelSelection(provider, customModelsByProvider, model);
+      const resolvedProvider = resolveSelectableProvider(providerStatuses, provider);
+      const resolvedModel = resolveAppModelSelection(
+        resolvedProvider,
+        settings,
+        providerStatuses,
+        model,
+      );
       const nextModelSelection: ModelSelection = {
-        provider,
+        provider: resolvedProvider,
         model: resolvedModel,
       };
       setComposerDraftModelSelection(activeThread.id, nextModelSelection);
@@ -4117,7 +4154,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
       scheduleComposerFocus,
       setComposerDraftModelSelection,
       setStickyComposerModelSelection,
-      customModelsByProvider,
+      providerStatuses,
+      settings,
     ],
   );
   const setPromptFromTraits = useCallback(
@@ -4140,6 +4178,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     provider: selectedProvider,
     threadId,
     model: selectedModel,
+    models: selectedProviderModels,
     modelOptions: composerModelOptions?.[selectedProvider],
     prompt,
     onPromptChange: setPromptFromTraits,
@@ -4148,6 +4187,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     provider: selectedProvider,
     threadId,
     model: selectedModel,
+    models: selectedProviderModels,
     modelOptions: composerModelOptions?.[selectedProvider],
     prompt,
     onPromptChange: setPromptFromTraits,
@@ -4671,7 +4711,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       </header>
 
       {/* Error banner */}
-      <ProviderHealthBanner status={activeProviderStatus} />
+      <ProviderStatusBanner status={activeProviderStatus} />
       <ThreadErrorBanner
         error={activeThread.error}
         onDismiss={() => setThreadError(activeThread.id, null)}

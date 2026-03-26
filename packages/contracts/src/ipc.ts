@@ -35,6 +35,8 @@ import type {
 } from "./snippets";
 import type {
   ServerConfig,
+  ServerProviderUpdatedPayload,
+  ServerUpsertKeybindingResult,
   ServerGenerateSecretUrlInput,
   ServerGenerateSecretUrlResult,
 } from "./server";
@@ -48,7 +50,7 @@ import type {
   TerminalSessionSnapshot,
   TerminalWriteInput,
 } from "./terminal";
-import type { ServerUpsertKeybindingInput, ServerUpsertKeybindingResult } from "./server";
+import type { ServerUpsertKeybindingInput } from "./server";
 import type {
   ClientOrchestrationCommand,
   OrchestrationGetFullThreadDiffInput,
@@ -67,6 +69,7 @@ import type {
   CodexImportSessionSummary,
 } from "./codexImport";
 import { EditorId } from "./editor";
+import { ServerSettings, ServerSettingsPatch } from "./settings";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -203,10 +206,13 @@ export interface NativeApi {
   };
   server: {
     getConfig: () => Promise<ServerConfig>;
+    refreshProviders: () => Promise<ServerProviderUpdatedPayload>;
     generateSecretUrl: (
       input: ServerGenerateSecretUrlInput,
     ) => Promise<ServerGenerateSecretUrlResult>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
+    getSettings: () => Promise<ServerSettings>;
+    updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;
   };
   codexImport: {
     listSessions: (

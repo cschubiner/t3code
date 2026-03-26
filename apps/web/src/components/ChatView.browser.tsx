@@ -18,6 +18,7 @@ import {
   WS_CHANNELS,
   WS_METHODS,
   OrchestrationSessionStatus,
+  DEFAULT_SERVER_SETTINGS,
 } from "@t3tools/contracts";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { HttpResponse, http, ws } from "msw";
@@ -36,6 +37,7 @@ import { isMacPlatform } from "../lib/utils";
 import { getRouter } from "../router";
 import { useStore } from "../store";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
 const THREAD_ID = "thread-browser-test" as ThreadId;
 const UUID_ROUTE_RE = /^\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -184,13 +186,20 @@ function createBaseServerConfig(): ServerConfig {
     providers: [
       {
         provider: "codex",
+        enabled: true,
+        installed: true,
+        version: "0.116.0",
         status: "ready",
-        available: true,
         authStatus: "authenticated",
         checkedAt: NOW_ISO,
+        models: [],
       },
     ],
     availableEditors: [],
+    settings: {
+      ...DEFAULT_SERVER_SETTINGS,
+      ...DEFAULT_CLIENT_SETTINGS,
+    },
   };
 }
 

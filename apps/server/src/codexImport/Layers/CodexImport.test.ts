@@ -16,6 +16,7 @@ import { ProjectionSnapshotQuery } from "../../orchestration/Services/Projection
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { ProviderSessionDirectory } from "../../provider/Services/ProviderSessionDirectory.ts";
 import { AnalyticsService } from "../../telemetry/Services/AnalyticsService.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { CodexImport } from "../Services/CodexImport.ts";
 
 const tempPaths: string[] = [];
@@ -184,6 +185,7 @@ async function createCodexImportSystem(serverCwd = makeTempDir("t3code-server-cw
   const fullLayer = Layer.empty.pipe(
     Layer.provideMerge(runtimeLayer),
     Layer.provideMerge(ServerConfig.layerTest(serverCwd, stateDir)),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(AnalyticsService.layerTest),
     Layer.provideMerge(NodeServices.layer),
   );

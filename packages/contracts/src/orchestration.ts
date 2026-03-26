@@ -49,14 +49,14 @@ export const DEFAULT_PROVIDER_KIND: ProviderKind = "codex";
 export const CodexModelSelection = Schema.Struct({
   provider: Schema.Literal("codex"),
   model: TrimmedNonEmptyString,
-  options: Schema.optional(CodexModelOptions),
+  options: Schema.optionalKey(CodexModelOptions),
 });
 export type CodexModelSelection = typeof CodexModelSelection.Type;
 
 export const ClaudeModelSelection = Schema.Struct({
   provider: Schema.Literal("claudeAgent"),
   model: TrimmedNonEmptyString,
-  options: Schema.optional(ClaudeModelOptions),
+  options: Schema.optionalKey(ClaudeModelOptions),
 });
 export type ClaudeModelSelection = typeof ClaudeModelSelection.Type;
 
@@ -889,7 +889,6 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
   modelSelection: Schema.optional(ModelSelection),
-  providerOptions: Schema.optional(ProviderStartOptions),
   assistantDeliveryMode: Schema.optional(AssistantDeliveryMode),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE)),
   interactionMode: ProviderInteractionMode.pipe(
