@@ -39,6 +39,7 @@ import { ProjectionThreadProposedPlan } from "../../persistence/Services/Project
 import { ProjectionThreadQueuedTurn } from "../../persistence/Services/ProjectionThreadQueuedTurns.ts";
 import { ProjectionThreadSession } from "../../persistence/Services/ProjectionThreadSessions.ts";
 import { ProjectionThread } from "../../persistence/Services/ProjectionThreads.ts";
+import { ProviderSessionRuntime } from "../../persistence/Services/ProviderSessionRuntime.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
 import {
   ProjectionSnapshotQuery,
@@ -73,6 +74,12 @@ const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
   }),
 );
 const ProjectionThreadSessionDbRowSchema = ProjectionThreadSession;
+const ProviderSessionRuntimeDbRowSchema = ProviderSessionRuntime.mapFields(
+  Struct.assign({
+    resumeCursor: Schema.NullOr(Schema.fromJsonString(Schema.Unknown)),
+    runtimePayload: Schema.NullOr(Schema.fromJsonString(Schema.Unknown)),
+  }),
+);
 const ProjectionCheckpointDbRowSchema = ProjectionCheckpoint.mapFields(
   Struct.assign({
     files: Schema.fromJsonString(Schema.Array(OrchestrationCheckpointFile)),
@@ -107,6 +114,43 @@ function maxIso(left: string | null, right: string): string {
     return right;
   }
   return left > right ? left : right;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function readRuntimePayloadActiveTurnId(runtimePayload: unknown): TurnId | null {
+  const payload = asRecord(runtimePayload);
+  const rawActiveTurnId = payload?.activeTurnId;
+  return typeof rawActiveTurnId === "string" && rawActiveTurnId.length > 0
+    ? TurnId.makeUnsafe(rawActiveTurnId)
+    : null;
+}
+
+function readRuntimePayloadLastError(runtimePayload: unknown): string | null {
+  const payload = asRecord(runtimePayload);
+  const rawLastError = payload?.lastError;
+  return typeof rawLastError === "string" && rawLastError.length > 0 ? rawLastError : null;
+}
+
+function toOrchestrationSessionFromRuntime(
+  row: Schema.Schema.Type<typeof ProviderSessionRuntimeDbRowSchema>,
+): OrchestrationSession {
+  const activeTurnId = readRuntimePayloadActiveTurnId(row.runtimePayload);
+
+  return {
+    threadId: row.threadId,
+    status: row.status === "running" ? (activeTurnId === null ? "ready" : "running") : row.status,
+    providerName: row.providerName,
+    runtimeMode: row.runtimeMode,
+    activeTurnId,
+    lastError: readRuntimePayloadLastError(row.runtimePayload),
+    updatedAt: row.lastSeenAt,
+  };
 }
 
 function computeSnapshotSequence(
@@ -294,6 +338,25 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
+  const listProviderSessionRuntimeRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProviderSessionRuntimeDbRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          thread_id AS "threadId",
+          provider_name AS "providerName",
+          adapter_key AS "adapterKey",
+          runtime_mode AS "runtimeMode",
+          status,
+          last_seen_at AS "lastSeenAt",
+          resume_cursor_json AS "resumeCursor",
+          runtime_payload_json AS "runtimePayload"
+        FROM provider_session_runtime
+        ORDER BY thread_id ASC
+      `,
+  });
+
   const listCheckpointRows = SqlSchema.findAll({
     Request: Schema.Void,
     Result: ProjectionCheckpointDbRowSchema,
@@ -360,6 +423,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             proposedPlanRows,
             activityRows,
             sessionRows,
+            runtimeRows,
             checkpointRows,
             latestTurnRows,
             stateRows,
@@ -417,6 +481,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 toPersistenceSqlOrDecodeError(
                   "ProjectionSnapshotQuery.getSnapshot:listThreadSessions:query",
                   "ProjectionSnapshotQuery.getSnapshot:listThreadSessions:decodeRows",
+                ),
+              ),
+            ),
+            listProviderSessionRuntimeRows(undefined).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getSnapshot:listProviderSessionRuntime:query",
+                  "ProjectionSnapshotQuery.getSnapshot:listProviderSessionRuntime:decodeRows",
                 ),
               ),
             ),
@@ -598,6 +670,18 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               lastError: row.lastError,
               updatedAt: row.updatedAt,
             });
+          }
+
+          for (const row of runtimeRows) {
+            updatedAt = maxIso(updatedAt, row.lastSeenAt);
+            const runtimeSession = toOrchestrationSessionFromRuntime(row);
+            const projectedSession = sessionsByThread.get(row.threadId);
+            if (
+              projectedSession === undefined ||
+              projectedSession.updatedAt <= runtimeSession.updatedAt
+            ) {
+              sessionsByThread.set(row.threadId, runtimeSession);
+            }
           }
 
           const projects: Array<OrchestrationProject> = projectRows.map((row) => ({
