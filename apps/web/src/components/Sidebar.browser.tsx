@@ -1,6 +1,7 @@
 import "../index.css";
 
 import {
+  DEFAULT_UNIFIED_SETTINGS,
   type CodexImportPeekSessionResult,
   type CodexImportSessionSummary,
   ORCHESTRATION_WS_METHODS,
@@ -162,13 +163,17 @@ function createBaseServerConfig(): ServerConfig {
     providers: [
       {
         provider: "codex",
+        enabled: true,
+        installed: true,
+        version: "v1.0.0",
         status: "ready",
-        available: true,
         authStatus: "authenticated",
         checkedAt: NOW_ISO,
+        models: [],
       },
     ],
     availableEditors: [],
+    settings: DEFAULT_UNIFIED_SETTINGS,
   };
 }
 

@@ -13,6 +13,7 @@ import { deriveServerPaths, ServerConfig, type ServerConfigShape } from "./confi
 import { makeServerProviderLayer, makeServerRuntimeServicesLayer } from "./serverLayers";
 
 import {
+  DEFAULT_SERVER_SETTINGS,
   DEFAULT_TERMINAL_ID,
   EDITORS,
   EventId,
@@ -24,6 +25,7 @@ import {
   WS_CHANNELS,
   WS_METHODS,
   type WebSocketResponse,
+  type ServerProvider,
   type ProviderRuntimeEvent,
   type ServerProviderStatus,
   type KeybindingsConfig,
@@ -48,6 +50,10 @@ import { SqlClient, SqlError } from "effect/unstable/sql";
 import { ProviderService, type ProviderServiceShape } from "./provider/Services/ProviderService";
 import { ProviderSessionDirectory } from "./provider/Services/ProviderSessionDirectory.ts";
 import { ProviderHealth, type ProviderHealthShape } from "./provider/Services/ProviderHealth";
+import {
+  ProviderRegistry,
+  type ProviderRegistryShape,
+} from "./provider/Services/ProviderRegistry.ts";
 import { Open, type OpenShape } from "./open";
 import { GitManager, type GitManagerShape } from "./git/Services/GitManager.ts";
 import type { GitCoreShape } from "./git/Services/GitCore.ts";
@@ -55,6 +61,7 @@ import { GitCore } from "./git/Services/GitCore.ts";
 import { GitCommandError, GitManagerError } from "./git/Errors.ts";
 import { MigrationError } from "@effect/sql-sqlite-bun/SqliteMigrator";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
+import { ServerSettingsService } from "./serverSettings.ts";
 
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
 const asProviderItemId = (value: string): ProviderItemId => ProviderItemId.makeUnsafe(value);
@@ -66,18 +73,37 @@ const defaultOpenService: OpenShape = {
   openInEditor: () => Effect.void,
 };
 
+const defaultCodexProvider: ServerProvider = {
+  provider: "codex",
+  enabled: true,
+  installed: true,
+  version: "0.0.0-test",
+  status: "ready",
+  authStatus: "authenticated",
+  checkedAt: "2026-01-01T00:00:00.000Z",
+  models: [],
+};
+
+const defaultProviders: ReadonlyArray<ServerProvider> = [defaultCodexProvider];
+
 const defaultProviderStatuses: ReadonlyArray<ServerProviderStatus> = [
   {
-    provider: "codex",
+    provider: defaultCodexProvider.provider,
     status: "ready",
     available: true,
-    authStatus: "authenticated",
-    checkedAt: "2026-01-01T00:00:00.000Z",
+    authStatus: defaultCodexProvider.authStatus,
+    checkedAt: defaultCodexProvider.checkedAt,
   },
 ];
 
 const defaultProviderHealthService: ProviderHealthShape = {
   getStatuses: Effect.succeed(defaultProviderStatuses),
+};
+
+const defaultProviderRegistryService: ProviderRegistryShape = {
+  getProviders: Effect.succeed(defaultProviders),
+  refresh: () => Effect.succeed(defaultProviders),
+  streamChanges: Stream.empty,
 };
 
 class MockTerminalManager implements TerminalManagerShape {
@@ -453,6 +479,27 @@ function expectAvailableEditors(value: unknown): void {
   }
 }
 
+function expectServerConfigResult(
+  value: unknown,
+  expected: {
+    readonly cwd: string;
+    readonly keybindingsConfigPath: string;
+    readonly keybindings: ResolvedKeybindingsConfig;
+    readonly issues: unknown;
+  },
+): void {
+  expect(value).toEqual({
+    cwd: expected.cwd,
+    keybindingsConfigPath: expected.keybindingsConfigPath,
+    keybindings: expected.keybindings,
+    issues: expected.issues,
+    providers: defaultProviders,
+    availableEditors: expect.any(Array),
+    settings: DEFAULT_SERVER_SETTINGS,
+  });
+  expectAvailableEditors((value as { availableEditors: unknown }).availableEditors);
+}
+
 function ensureParentDir(filePath: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
 }
@@ -585,7 +632,9 @@ describe("WebSocket Server", () => {
       baseDir?: string;
       staticDir?: string;
       providerLayer?: Layer.Layer<ProviderService | ProviderSessionDirectory, never>;
+      providerRegistry?: ProviderRegistryShape;
       providerHealth?: ProviderHealthShape;
+      serverSettings?: Parameters<typeof ServerSettingsService.layerTest>[0];
       open?: OpenShape;
       gitManager?: GitManagerShape;
       gitCore?: Pick<GitCoreShape, "listBranches" | "initRepo" | "pullCurrentBranch">;
@@ -641,9 +690,13 @@ describe("WebSocket Server", () => {
     );
     const dependenciesLayer = Layer.empty.pipe(
       Layer.provideMerge(runtimeLayer),
+      Layer.provideMerge(
+        Layer.succeed(ProviderRegistry, options.providerRegistry ?? defaultProviderRegistryService),
+      ),
       Layer.provideMerge(providerHealthLayer),
       Layer.provideMerge(openLayer),
       Layer.provideMerge(serverConfigLayer),
+      Layer.provideMerge(ServerSettingsService.layerTest(options.serverSettings)),
       Layer.provideMerge(AnalyticsService.layerTest),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -949,15 +1002,12 @@ describe("WebSocket Server", () => {
 
     const response = await sendRequest(ws, WS_METHODS.serverGetConfig);
     expect(response.error).toBeUndefined();
-    expect(response.result).toEqual({
+    expectServerConfigResult(response.result, {
       cwd: "/my/workspace",
       keybindingsConfigPath: keybindingsPath,
       keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
       issues: [],
-      providers: defaultProviderStatuses,
-      availableEditors: expect.any(Array),
     });
-    expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
   });
 
   it("bootstraps default keybindings file when missing", async () => {
@@ -974,15 +1024,12 @@ describe("WebSocket Server", () => {
 
     const response = await sendRequest(ws, WS_METHODS.serverGetConfig);
     expect(response.error).toBeUndefined();
-    expect(response.result).toEqual({
+    expectServerConfigResult(response.result, {
       cwd: "/my/workspace",
       keybindingsConfigPath: keybindingsPath,
       keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
       issues: [],
-      providers: defaultProviderStatuses,
-      availableEditors: expect.any(Array),
     });
-    expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
 
     const persistedConfig = JSON.parse(
       fs.readFileSync(keybindingsPath, "utf8"),
@@ -1005,7 +1052,7 @@ describe("WebSocket Server", () => {
 
     const response = await sendRequest(ws, WS_METHODS.serverGetConfig);
     expect(response.error).toBeUndefined();
-    expect(response.result).toEqual({
+    expectServerConfigResult(response.result, {
       cwd: "/my/workspace",
       keybindingsConfigPath: keybindingsPath,
       keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
@@ -1015,10 +1062,7 @@ describe("WebSocket Server", () => {
           message: expect.stringContaining("expected JSON array"),
         },
       ],
-      providers: defaultProviderStatuses,
-      availableEditors: expect.any(Array),
     });
-    expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
     expect(fs.readFileSync(keybindingsPath, "utf8")).toBe("{ not-json");
   });
 
@@ -1050,7 +1094,8 @@ describe("WebSocket Server", () => {
       keybindingsConfigPath: string;
       keybindings: ResolvedKeybindingsConfig;
       issues: Array<{ kind: string; index?: number; message: string }>;
-      providers: ReadonlyArray<ServerProviderStatus>;
+      providers: ReadonlyArray<ServerProvider>;
+      settings: typeof DEFAULT_SERVER_SETTINGS;
       availableEditors: unknown;
     };
     expect(result.cwd).toBe("/my/workspace");
@@ -1070,7 +1115,8 @@ describe("WebSocket Server", () => {
     expect(result.keybindings).toHaveLength(DEFAULT_RESOLVED_KEYBINDINGS.length);
     expect(result.keybindings.some((entry) => entry.command === "terminal.toggle")).toBe(true);
     expect(result.keybindings.some((entry) => entry.command === "terminal.new")).toBe(true);
-    expect(result.providers).toEqual(defaultProviderStatuses);
+    expect(result.providers).toEqual(defaultProviders);
+    expect(result.settings).toEqual(DEFAULT_SERVER_SETTINGS);
     expectAvailableEditors(result.availableEditors);
   });
 
@@ -1098,7 +1144,6 @@ describe("WebSocket Server", () => {
     );
     expect(malformedPush.data).toEqual({
       issues: [{ kind: "keybindings.malformed-config", message: expect.any(String) }],
-      providers: defaultProviderStatuses,
     });
 
     const successPush = await rewriteKeybindingsAndWaitForPush(
@@ -1107,7 +1152,7 @@ describe("WebSocket Server", () => {
       "[]",
       (push) => Array.isArray(push.data.issues) && push.data.issues.length === 0,
     );
-    expect(successPush.data).toEqual({ issues: [], providers: defaultProviderStatuses });
+    expect(successPush.data).toEqual({ issues: [] });
   });
 
   it("routes shell.openInEditor through the injected open service", async () => {
@@ -1160,15 +1205,12 @@ describe("WebSocket Server", () => {
     const persistedConfig = JSON.parse(
       fs.readFileSync(keybindingsPath, "utf8"),
     ) as KeybindingsConfig;
-    expect(response.result).toEqual({
+    expectServerConfigResult(response.result, {
       cwd: "/my/workspace",
       keybindingsConfigPath: keybindingsPath,
       keybindings: compileKeybindings(persistedConfig),
       issues: [],
-      providers: defaultProviderStatuses,
-      availableEditors: expect.any(Array),
     });
-    expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
   });
 
   it("upserts keybinding rules and updates cached server config", async () => {
@@ -1208,17 +1250,12 @@ describe("WebSocket Server", () => {
 
     const configResponse = await sendRequest(ws, WS_METHODS.serverGetConfig);
     expect(configResponse.error).toBeUndefined();
-    expect(configResponse.result).toEqual({
+    expectServerConfigResult(configResponse.result, {
       cwd: "/my/workspace",
       keybindingsConfigPath: keybindingsPath,
       keybindings: compileKeybindings(persistedConfig),
       issues: [],
-      providers: defaultProviderStatuses,
-      availableEditors: expect.any(Array),
     });
-    expectAvailableEditors(
-      (configResponse.result as { availableEditors: unknown }).availableEditors,
-    );
   });
 
   it("returns error for unknown methods", async () => {
@@ -1380,6 +1417,7 @@ describe("WebSocket Server", () => {
     server = await createTestServer({
       cwd: "/test",
       providerLayer,
+      serverSettings: { enableAssistantStreaming: true },
     });
     const addr = server.address();
     const port = typeof addr === "object" && addr !== null ? addr.port : 0;
@@ -2049,10 +2087,6 @@ describe("WebSocket Server", () => {
       actionId: "client-action-1",
       cwd: "/test",
       action: "commit_push",
-      modelSelection: {
-        provider: "codex",
-        model: "gpt-5.4-mini",
-      },
     });
     expect(response.result).toBeUndefined();
     expect(response.error?.message).toContain("detached HEAD");
@@ -2061,10 +2095,6 @@ describe("WebSocket Server", () => {
         actionId: "client-action-1",
         cwd: "/test",
         action: "commit_push",
-        modelSelection: {
-          provider: "codex",
-          model: "gpt-5.4-mini",
-        },
       },
       expect.objectContaining({
         actionId: "client-action-1",

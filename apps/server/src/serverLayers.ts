@@ -25,10 +25,11 @@ import { makeCodexAdapterLive } from "./provider/Layers/CodexAdapter";
 import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry";
 import { makeProviderServiceLive } from "./provider/Layers/ProviderService";
 import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory";
-import { ProviderSessionDirectory } from "./provider/Services/ProviderSessionDirectory";
 import { ProviderService } from "./provider/Services/ProviderService";
+import { ProviderSessionDirectory } from "./provider/Services/ProviderSessionDirectory";
 import { makeEventNdjsonLogger } from "./provider/Layers/EventNdjsonLogger";
 import { CodexImportLive } from "./codexImport/Layers/CodexImport";
+import { ServerSettingsService } from "./serverSettings";
 
 import { TerminalManagerLive } from "./terminal/Layers/Manager";
 import { KeybindingsLive } from "./keybindings";
@@ -59,7 +60,11 @@ const makeRuntimePtyAdapterLayer = () =>
 export function makeServerProviderLayer(): Layer.Layer<
   ProviderService | ProviderSessionDirectory,
   ProviderUnsupportedError,
-  SqlClient.SqlClient | ServerConfig | FileSystem.FileSystem | AnalyticsService
+  | SqlClient.SqlClient
+  | ServerConfig
+  | ServerSettingsService
+  | FileSystem.FileSystem
+  | AnalyticsService
 > {
   return Effect.gen(function* () {
     const { providerEventLogPath } = yield* ServerConfig;
@@ -83,10 +88,9 @@ export function makeServerProviderLayer(): Layer.Layer<
       Layer.provide(claudeAdapterLayer),
       Layer.provideMerge(providerSessionDirectoryLayer),
     );
-    const providerServiceLayer = makeProviderServiceLive(
+    return makeProviderServiceLive(
       canonicalEventLogger ? { canonicalEventLogger } : undefined,
-    ).pipe(Layer.provide(adapterRegistryLayer), Layer.provide(providerSessionDirectoryLayer));
-    return Layer.merge(providerServiceLayer, providerSessionDirectoryLayer);
+    ).pipe(Layer.provide(adapterRegistryLayer), Layer.provideMerge(providerSessionDirectoryLayer));
   }).pipe(Layer.unwrap);
 }
 

@@ -33,6 +33,7 @@ import {
 } from "../Services/ProviderSessionDirectory.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { AnalyticsService } from "../../telemetry/Services/AnalyticsService.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 
 export interface ProviderServiceLiveOptions {
   readonly canonicalEventLogPath?: string;
@@ -254,6 +255,7 @@ function readPersistedCwd(
 const makeProviderService = (options?: ProviderServiceLiveOptions) =>
   Effect.gen(function* () {
     const analytics = yield* Effect.service(AnalyticsService);
+    const serverSettings = yield* ServerSettingsService;
     const canonicalEventLogger =
       options?.canonicalEventLogger ??
       (options?.canonicalEventLogPath !== undefined
@@ -281,7 +283,6 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
       threadId: ThreadId,
       extra?: {
         readonly modelSelection?: unknown;
-        readonly providerOptions?: unknown;
         readonly lastRuntimeEvent?: string;
         readonly lastRuntimeEventAt?: string;
       },
@@ -453,6 +454,21 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           threadId,
           provider: mergedInput.provider ?? "codex",
         };
+        const settings = yield* serverSettings.getSettings.pipe(
+          Effect.mapError((error) =>
+            toValidationError(
+              "ProviderService.startSession",
+              `Failed to load provider settings: ${error.message}`,
+              error,
+            ),
+          ),
+        );
+        if (!settings.providers[input.provider].enabled) {
+          return yield* toValidationError(
+            "ProviderService.startSession",
+            `Provider '${input.provider}' is disabled in T3 Code settings.`,
+          );
+        }
         const persistedBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));
         const effectiveResumeCursor =
           input.resumeCursor ??
@@ -474,7 +490,6 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
 
         yield* upsertSessionBinding(session, threadId, {
           modelSelection: input.modelSelection,
-          providerOptions: input.providerOptions,
         });
         yield* analytics.record("provider.session.started", {
           provider: session.provider,

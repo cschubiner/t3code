@@ -49,7 +49,7 @@ import {
   deriveDisplayedUserMessageState,
   type ParsedTerminalContextEntry,
 } from "~/lib/terminalContext";
-import { type TimestampFormat } from "../../appSettings";
+import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatTimestamp } from "../../timestampFormat";
 import {
   buildInlineTerminalContextText,
