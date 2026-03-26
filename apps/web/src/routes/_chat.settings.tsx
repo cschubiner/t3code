@@ -11,11 +11,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
-import {
-  DEFAULT_GIT_TEXT_GENERATION_MODEL,
-  type DesktopRemoteAccessStatus,
-  type ProviderKind,
-} from "@t3tools/contracts";
+import { type DesktopRemoteAccessStatus, type ProviderKind } from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 import { useAppSettings } from "../appSettings";
 import {
@@ -50,7 +46,6 @@ import { Textarea } from "../components/ui/textarea";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 import { cn } from "../lib/utils";
 import { ensureNativeApi, readNativeApi } from "../nativeApi";
-import { APP_VERSION } from "../branding";
 import { toastManager } from "~/components/ui/toast";
 
 const THEME_OPTIONS = [

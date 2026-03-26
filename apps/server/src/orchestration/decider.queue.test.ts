@@ -52,7 +52,7 @@ async function createReadModelWithQueuedTurns() {
           projectId: PROJECT_ID,
           title: "Queue tests",
           workspaceRoot: "/tmp/queue-tests",
-          defaultModel: null,
+          defaultModelSelection: null,
           scripts: [],
           createdAt,
           updatedAt: createdAt,
@@ -72,7 +72,10 @@ async function createReadModelWithQueuedTurns() {
           threadId: THREAD_ID,
           projectId: PROJECT_ID,
           title: "Queue thread",
-          model: "gpt-5",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5",
+          },
           runtimeMode: "full-access",
           interactionMode: "default",
           branch: null,
@@ -214,8 +217,10 @@ describe("decider queued turns", () => {
     expect(result[2]?.payload).toMatchObject({
       threadId: THREAD_ID,
       messageId: MessageId.makeUnsafe("message-b"),
-      provider: "codex",
-      model: "gpt-5",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5",
+      },
       runtimeMode: "full-access",
       interactionMode: "default",
     });
@@ -280,7 +285,10 @@ describe("decider queued turns", () => {
     ]);
     expect(result[0]?.payload).toMatchObject({
       threadId: THREAD_ID,
-      model: "gpt-5.1",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.1",
+      },
     });
     expect(result[1]?.payload).toMatchObject({
       threadId: THREAD_ID,
@@ -293,7 +301,10 @@ describe("decider queued turns", () => {
     expect(result[5]?.payload).toMatchObject({
       threadId: THREAD_ID,
       messageId: MessageId.makeUnsafe("message-a"),
-      model: "gpt-5.1",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.1",
+      },
       runtimeMode: "approval-required",
       interactionMode: "plan",
     });

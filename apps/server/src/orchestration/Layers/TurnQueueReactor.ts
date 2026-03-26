@@ -155,12 +155,20 @@ const make = Effect.gen(function* () {
       const dispatchAt = new Date().toISOString();
 
       const promoteQueuedTurn = Effect.gen(function* () {
-        if (nextQueuedTurn.model !== null && nextQueuedTurn.model !== thread.model) {
+        if (
+          nextQueuedTurn.model !== null &&
+          (nextQueuedTurn.model !== thread.modelSelection.model ||
+            (nextQueuedTurn.provider !== null &&
+              nextQueuedTurn.provider !== thread.modelSelection.provider))
+        ) {
           yield* orchestrationEngine.dispatch({
             type: "thread.meta.update",
             commandId: serverCommandId("queued-turn-model-sync"),
             threadId,
-            model: nextQueuedTurn.model,
+            modelSelection: {
+              provider: nextQueuedTurn.provider ?? thread.modelSelection.provider,
+              model: nextQueuedTurn.model,
+            },
           });
         }
 

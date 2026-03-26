@@ -33,7 +33,6 @@ import Migration0020 from "./Migrations/016_CanonicalizeModelSelections.ts";
 import Migration0017 from "./Migrations/017_ProjectionThreadQueuedTurnSortOrder.ts";
 import Migration0018 from "./Migrations/018_Snippets.ts";
 import Migration0019 from "./Migrations/019_LegacyProjectionSchemaRepair.ts";
-import { Effect } from "effect";
 
 /**
  * Migration loader with all migrations defined inline.

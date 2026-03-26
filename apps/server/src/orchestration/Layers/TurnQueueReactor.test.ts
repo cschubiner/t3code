@@ -32,7 +32,10 @@ function createThread(
     id: THREAD_ID,
     projectId: PROJECT_ID,
     title: "Queue reactor thread",
-    model: "gpt-5",
+    modelSelection: {
+      provider: "codex",
+      model: "gpt-5",
+    },
     runtimeMode: "full-access",
     interactionMode: "default",
     branch: null,

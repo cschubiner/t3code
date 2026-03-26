@@ -50,7 +50,7 @@ function makeNavigationProject(id: Project["id"], name: string, expanded = true)
     id,
     name,
     cwd: `/repo/${name}`,
-    model: "gpt-5",
+    defaultModelSelection: { provider: "codex", model: "gpt-5" },
     expanded,
     scripts: [],
   };
@@ -66,7 +66,7 @@ function makeNavigationThread(
     codexThreadId: null,
     projectId,
     title: String(id),
-    model: "gpt-5",
+    modelSelection: { provider: "codex", model: "gpt-5" },
     runtimeMode: "full-access",
     interactionMode: "default",
     session: null,

@@ -105,7 +105,6 @@ import { isNonEmpty as isNonEmptyString } from "effect/String";
 import {
   deriveSidebarThreadProjectName,
   deriveThreadSidebarPullRequestReferences,
-  getFallbackThreadIdAfterDelete,
   getVisibleThreadsForProject,
   isTypingInSidebarTextEntry,
   projectNavigationTargetsForSidebar,
@@ -929,7 +928,6 @@ export default function Sidebar() {
       });
     },
     [
-      appSettings.sidebarThreadSortOrder,
       clearComposerDraftForThread,
       clearProjectDraftThreadById,
       clearTerminalState,

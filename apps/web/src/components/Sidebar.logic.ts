@@ -540,7 +540,6 @@ export function sortThreadsForSidebar<
   });
 }
 
-<<<<<<< HEAD
 export function getFallbackThreadIdAfterDelete<
   T extends Pick<Thread, "id" | "projectId" | "createdAt" | "updatedAt" | "messages">,
 >(input: {

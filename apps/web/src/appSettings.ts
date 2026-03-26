@@ -6,7 +6,6 @@ import {
   type ProviderKind,
   type ProviderStartOptions,
 } from "@t3tools/contracts";
-import { getModelOptions } from "@t3tools/shared/model";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import { EnvMode } from "./components/BranchToolbar.logic";
 import { normalizeCustomModelSlugs } from "./modelSelection";
@@ -34,10 +33,6 @@ export type ProviderCustomModelConfig = {
 };
 const MAX_SKILL_ROOT_COUNT = 32;
 const MAX_SKILL_ROOT_LENGTH = 4096;
-const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
-  codex: new Set(getModelOptions("codex").map((option) => option.slug)),
-  claudeAgent: new Set(getModelOptions("claudeAgent").map((option) => option.slug)),
-};
 
 const withDefaults =
   <

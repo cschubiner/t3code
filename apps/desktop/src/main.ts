@@ -151,17 +151,6 @@ function sanitizeLogValue(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
-function backendChildEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
-  delete env.T3CODE_PORT;
-  delete env.T3CODE_AUTH_TOKEN;
-  delete env.T3CODE_MODE;
-  delete env.T3CODE_NO_BROWSER;
-  delete env.T3CODE_HOST;
-  delete env.T3CODE_DESKTOP_WS_URL;
-  return env;
-}
-
 function writeDesktopLogHeader(message: string): void {
   if (!desktopLogSink) return;
   desktopLogSink.write(`[${logTimestamp()}] [${logScope("desktop")}] ${message}\n`);

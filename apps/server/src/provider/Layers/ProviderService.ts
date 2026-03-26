@@ -110,6 +110,114 @@ function toRuntimePayloadFromSession(
   };
 }
 
+function toPersistedStatusFromRuntimeState(
+  state: "starting" | "ready" | "running" | "waiting" | "stopped" | "error",
+): "starting" | "running" | "stopped" | "error" {
+  switch (state) {
+    case "starting":
+      return "starting";
+    case "stopped":
+      return "stopped";
+    case "error":
+      return "error";
+    case "ready":
+    case "running":
+    case "waiting":
+    default:
+      return "running";
+  }
+}
+
+function runtimeBindingUpdateFromEvent(event: ProviderRuntimeEvent): ProviderRuntimeBinding | null {
+  const base = {
+    threadId: event.threadId,
+    provider: event.provider,
+    runtimePayload: {
+      lastRuntimeEvent: event.type,
+      lastRuntimeEventAt: event.createdAt,
+    },
+  } satisfies ProviderRuntimeBinding;
+
+  switch (event.type) {
+    case "session.started":
+      return {
+        ...base,
+        status: "running",
+      };
+    case "session.state.changed":
+      return {
+        ...base,
+        status: toPersistedStatusFromRuntimeState(event.payload.state),
+        runtimePayload: {
+          ...base.runtimePayload,
+          activeTurnId:
+            event.payload.state === "ready" ||
+            event.payload.state === "stopped" ||
+            event.payload.state === "error"
+              ? null
+              : undefined,
+          lastError: event.payload.state === "error" ? (event.payload.reason ?? null) : null,
+        },
+      };
+    case "turn.started":
+      return {
+        ...base,
+        status: "running",
+        runtimePayload: {
+          ...base.runtimePayload,
+          activeTurnId: event.turnId,
+          lastError: null,
+        },
+      };
+    case "turn.completed":
+      return {
+        ...base,
+        status:
+          (("status" in event ? event.status : undefined) ?? event.payload.state) === "failed"
+            ? "error"
+            : "running",
+        runtimePayload: {
+          ...base.runtimePayload,
+          activeTurnId: null,
+          lastError:
+            (("status" in event ? event.status : undefined) ?? event.payload.state) === "failed"
+              ? (event.payload.errorMessage ?? null)
+              : null,
+        },
+      };
+    case "turn.aborted":
+      return {
+        ...base,
+        status: "running",
+        runtimePayload: {
+          ...base.runtimePayload,
+          activeTurnId: null,
+        },
+      };
+    case "session.exited":
+      return {
+        ...base,
+        status: "stopped",
+        runtimePayload: {
+          ...base.runtimePayload,
+          activeTurnId: null,
+        },
+      };
+    case "runtime.error":
+      return {
+        ...base,
+        status: "error",
+        runtimePayload: {
+          ...base.runtimePayload,
+          ...(event.turnId !== undefined ? { activeTurnId: event.turnId } : {}),
+          lastError: event.payload.message,
+        },
+      };
+    default:
+      return null;
+  }
+}
+
 function readPersistedModelSelection(
   runtimePayload: ProviderRuntimeBinding["runtimePayload"],
 ): ModelSelection | undefined {
@@ -192,7 +300,13 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
       registry.getByProvider(provider),
     );
     const processRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
-      publishRuntimeEvent(event);
+      Effect.gen(function* () {
+        const bindingUpdate = runtimeBindingUpdateFromEvent(event);
+        if (bindingUpdate) {
+          yield* directory.upsert(bindingUpdate).pipe(Effect.orDie);
+        }
+        yield* publishRuntimeEvent(event);
+      });
 
     const worker = Effect.forever(
       Queue.take(runtimeEventQueue).pipe(Effect.flatMap(processRuntimeEvent)),

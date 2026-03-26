@@ -1,5 +1,5 @@
 import { Option, Schema, SchemaIssue, Struct } from "effect";
-import { ClaudeModelOptions, CodexModelOptions } from "./model";
+import { ClaudeModelOptions, CodexModelOptions, ProviderModelOptions } from "./model";
 import {
   ApprovalRequestId,
   CheckpointRef,

@@ -251,7 +251,7 @@ describe("OrchestrationEngine", () => {
         projectId: asProjectId("project-a"),
         title: "Project A",
         workspaceRoot: "/tmp/project-a",
-        defaultModel: "gpt-5-codex",
+        defaultModelSelection: { provider: "codex", model: "gpt-5-codex" },
         createdAt,
       }),
     );
@@ -262,7 +262,7 @@ describe("OrchestrationEngine", () => {
         projectId: asProjectId("project-b"),
         title: "Project B",
         workspaceRoot: "/tmp/project-b",
-        defaultModel: "gpt-5-codex",
+        defaultModelSelection: { provider: "codex", model: "gpt-5-codex" },
         createdAt,
       }),
     );
@@ -273,7 +273,7 @@ describe("OrchestrationEngine", () => {
         threadId: ThreadId.makeUnsafe("thread-project-move"),
         projectId: asProjectId("project-a"),
         title: "Project move",
-        model: "gpt-5-codex",
+        modelSelection: { provider: "codex", model: "gpt-5-codex" },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "full-access",
         branch: null,
@@ -324,7 +324,7 @@ describe("OrchestrationEngine", () => {
         projectId: asProjectId("project-import"),
         title: "Imported Project",
         workspaceRoot: "/tmp/project-import",
-        defaultModel: "gpt-5-codex",
+        defaultModelSelection: { provider: "codex", model: "gpt-5-codex" },
         createdAt,
       }),
     );

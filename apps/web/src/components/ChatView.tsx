@@ -4,6 +4,7 @@ import {
   type ClaudeCodeEffort,
   type MessageId,
   type ModelSelection,
+  type ProviderModelOptions,
   type ProjectScript,
   type ModelSlug,
   type ProviderKind,
@@ -234,6 +235,17 @@ function formatOutgoingPrompt(params: {
   }
   return params.text;
 }
+
+function toProviderModelOptions(
+  provider: ProviderKind,
+  options: ProviderModelOptions[ProviderKind] | null | undefined,
+): ProviderModelOptions | null {
+  if (!options) {
+    return null;
+  }
+  return provider === "codex" ? { codex: options } : { claudeAgent: options };
+}
+
 const EMPTY_QUEUED_TURNS: ThreadQueuedTurn[] = [];
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const SCRIPT_TERMINAL_COLS = 120;
@@ -563,7 +575,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
             localQueuedTurns.map(mapQueuedComposerTurnToThreadQueuedTurn),
           )
         : undefined,
-    [draftThread, fallbackDraftProject?.defaultModelSelection, localDraftError, localQueuedTurns, threadId],
+    [
+      draftThread,
+      fallbackDraftProject?.defaultModelSelection,
+      localDraftError,
+      localQueuedTurns,
+      threadId,
+    ],
   );
   const activeThread = serverThread ?? localDraftThread;
   const runtimeMode =
@@ -2569,7 +2587,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         runtimeMode,
         interactionMode: input?.interactionMode ?? interactionMode,
         serviceTier: null,
-        modelOptions: selectedModelOptionsForDispatch ?? null,
+        modelOptions: toProviderModelOptions(selectedProvider, selectedModelOptionsForDispatch),
         promptEffort: selectedPromptEffort,
       });
       promptRef.current = "";
@@ -2618,6 +2636,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       const queuedText = appendTerminalContextsToPrompt(trimmed, queuedTerminalContexts);
       const outgoingQueuedText = formatOutgoingPrompt({
         provider: selectedProvider,
+        model: selectedModel,
         effort: selectedPromptEffort,
         text: queuedText || IMAGE_ONLY_BOOTSTRAP_PROMPT,
       });
@@ -2634,7 +2653,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         await persistThreadSettingsForNextTurn({
           threadId: threadIdForQueue,
           createdAt,
-          ...(selectedModel ? { model: selectedModel } : {}),
+          ...(selectedModel ? { modelSelection: selectedModelSelection } : {}),
           runtimeMode,
           interactionMode: input?.interactionMode ?? interactionMode,
         });
@@ -2649,6 +2668,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
           })),
         );
 
+        const queuedModelOptions = toProviderModelOptions(
+          selectedProvider,
+          selectedModelOptionsForDispatch,
+        );
+
         await api.orchestration.dispatchCommand({
           type: "thread.turn.queue.enqueue",
           commandId: newCommandId(),
@@ -2660,9 +2684,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             attachments: turnAttachments,
           },
           model: selectedModel || undefined,
-          ...(selectedModelOptionsForDispatch
-            ? { modelOptions: selectedModelOptionsForDispatch }
-            : {}),
+          ...(queuedModelOptions ? { modelOptions: queuedModelOptions } : {}),
           ...(providerOptionsForDispatch ? { providerOptions: providerOptionsForDispatch } : {}),
           provider: selectedProvider,
           assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
@@ -2701,6 +2723,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       persistThreadSettingsForNextTurn,
       runtimeMode,
       selectedModel,
+      selectedModelSelection,
       selectedModelOptionsForDispatch,
       selectedPromptEffort,
       selectedProvider,
@@ -2727,6 +2750,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         );
         const outgoingQueuedText = formatOutgoingPrompt({
           provider: queuedTurn.provider,
+          model: queuedTurn.model,
           effort: queuedTurn.promptEffort,
           text: queuedText || IMAGE_ONLY_BOOTSTRAP_PROMPT,
         });

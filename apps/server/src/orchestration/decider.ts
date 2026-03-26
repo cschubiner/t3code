@@ -350,7 +350,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           projectId: command.projectId,
           title: command.title,
-          model: command.model,
+          modelSelection: {
+            provider: "codex",
+            model: command.model,
+          },
           runtimeMode: command.runtimeMode,
           interactionMode: command.interactionMode,
           branch: command.branch,
@@ -707,7 +710,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       }
       const events: Array<Omit<OrchestrationEvent, "sequence">> = [];
 
-      if (queuedTurn.model !== null && queuedTurn.model !== thread.model) {
+      if (
+        queuedTurn.model !== null &&
+        (queuedTurn.model !== thread.modelSelection.model ||
+          (queuedTurn.provider !== null && queuedTurn.provider !== thread.modelSelection.provider))
+      ) {
         events.push({
           ...withEventBase({
             aggregateKind: "thread",
@@ -718,7 +725,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           type: "thread.meta-updated",
           payload: {
             threadId: command.threadId,
-            model: queuedTurn.model,
+            modelSelection: {
+              provider: queuedTurn.provider ?? thread.modelSelection.provider,
+              model: queuedTurn.model,
+            },
             updatedAt: command.createdAt,
           },
         });

@@ -44,6 +44,10 @@ const NOW_ISO = "2026-03-04T12:00:00.000Z";
 const BASE_TIME_MS = Date.parse(NOW_ISO);
 const ATTACHMENT_SVG = "<svg xmlns='http://www.w3.org/2000/svg' width='120' height='300'></svg>";
 const dispatchCommandErrorsByType = new Map<string, string>();
+const DEFAULT_MODEL_SELECTION = {
+  provider: "codex" as const,
+  model: "gpt-5",
+};
 
 interface WsRequestEnvelope {
   id: string;
@@ -260,7 +264,7 @@ function createThreadRecord(options: {
     id: options.id,
     projectId: options.projectId,
     title: options.title,
-    model: "gpt-5",
+    modelSelection: DEFAULT_MODEL_SELECTION,
     interactionMode: "default",
     runtimeMode: "full-access",
     branch: "main",
@@ -458,7 +462,7 @@ function createSnapshotForGlobalThreadSearch(): OrchestrationReadModel {
         id: PROJECT_ID,
         title: "Project",
         workspaceRoot: "/repo/project",
-        defaultModel: "gpt-5",
+        defaultModelSelection: DEFAULT_MODEL_SELECTION,
         scripts: [],
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
@@ -468,7 +472,7 @@ function createSnapshotForGlobalThreadSearch(): OrchestrationReadModel {
         id: metadataProjectId,
         title: "Gamma Workspace",
         workspaceRoot: "/repo/gamma",
-        defaultModel: "gpt-5",
+        defaultModelSelection: DEFAULT_MODEL_SELECTION,
         scripts: [],
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,

@@ -29,6 +29,10 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 const NOW_ISO = "2026-03-12T12:00:00.000Z";
 const PROJECT_ALPHA_ID = "project-alpha" as ProjectId;
 const PROJECT_BETA_ID = "project-beta" as ProjectId;
+const DEFAULT_MODEL_SELECTION = {
+  provider: "codex" as const,
+  model: "gpt-5",
+};
 const THREAD_A8 = "thread-a8" as ThreadId;
 const THREAD_A7 = "thread-a7" as ThreadId;
 const THREAD_A6 = "thread-a6" as ThreadId;
@@ -179,7 +183,7 @@ function createThread(options: {
     id: options.id,
     projectId: options.projectId,
     title: options.title,
-    model: "gpt-5",
+    modelSelection: DEFAULT_MODEL_SELECTION,
     interactionMode: "default",
     runtimeMode: "full-access",
     branch: null,
@@ -213,7 +217,7 @@ function createSnapshot(): OrchestrationReadModel {
         id: PROJECT_ALPHA_ID,
         title: "Alpha",
         workspaceRoot: "/repo/alpha",
-        defaultModel: "gpt-5",
+        defaultModelSelection: DEFAULT_MODEL_SELECTION,
         scripts: [],
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
@@ -223,7 +227,7 @@ function createSnapshot(): OrchestrationReadModel {
         id: PROJECT_BETA_ID,
         title: "Beta",
         workspaceRoot: "/repo/beta",
-        defaultModel: "gpt-5",
+        defaultModelSelection: DEFAULT_MODEL_SELECTION,
         scripts: [],
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,

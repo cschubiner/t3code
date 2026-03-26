@@ -1,13 +1,24 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
+type ColumnRow = {
+  readonly name: string;
+};
+
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
-  yield* sql`
-    ALTER TABLE projection_thread_queued_turns
-    ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0
-  `.pipe(Effect.catchTag("SqlError", () => Effect.void));
+  const queuedTurnColumns = yield* sql<ColumnRow>`
+    SELECT name
+    FROM pragma_table_info('projection_thread_queued_turns')
+  `;
+
+  if (!queuedTurnColumns.some((column) => column.name === "sort_order")) {
+    yield* sql`
+      ALTER TABLE projection_thread_queued_turns
+      ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0
+    `;
+  }
 
   yield* sql`
     WITH ordered AS (

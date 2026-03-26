@@ -369,7 +369,10 @@ describe("ProviderCommandReactor", () => {
     expect(harness.sendTurn.mock.calls[0]?.[0]).toEqual({
       threadId: "thread-1",
       input: "Send this immediately",
-      model: "gpt-5-codex",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5-codex",
+      },
       interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
     });
 
