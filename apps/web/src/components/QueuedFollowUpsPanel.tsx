@@ -28,7 +28,7 @@ import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
 
 const QUEUED_TURN_PREVIEW_MAX_CHARS = 72;
-const QUEUED_FOLLOW_UP_VISIBLE_ROWS = 2.75;
+const QUEUED_FOLLOW_UP_VISIBLE_ROWS = 1.75;
 const QUEUED_FOLLOW_UP_ROW_MIN_HEIGHT_REM = 6;
 const QUEUED_FOLLOW_UP_ROW_GAP_REM = 0.5;
 const QUEUED_FOLLOW_UP_SCROLL_MAX_HEIGHT_REM =
