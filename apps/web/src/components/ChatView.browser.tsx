@@ -3192,7 +3192,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         () => document.querySelector<HTMLElement>('[data-testid="queued-follow-ups-scroll-area"]'),
         "Unable to find the queued follow-ups scroll area.",
       );
-      expect(scrollArea.style.maxHeight).toBe("10.875rem");
+      expect(scrollArea.style.maxHeight).toBe("12.5625rem");
       expect(scrollArea.className).toContain("overflow-y-auto");
 
       const secondRow = await waitForQueuedRow(String(queuedMessageId));
