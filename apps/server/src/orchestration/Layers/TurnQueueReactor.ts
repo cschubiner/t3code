@@ -136,6 +136,10 @@ const make = Effect.gen(function* () {
         threadId,
       });
       if (Option.isSome(pendingTurnStart)) {
+        if (thread.latestTurn === null) {
+          return;
+        }
+
         const pendingMessageStillQueued = thread.queuedTurns.some(
           (queuedTurn) => queuedTurn.messageId === pendingTurnStart.value.messageId,
         );
