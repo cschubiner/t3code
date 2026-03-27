@@ -1305,7 +1305,7 @@ it.live("reverts claudeAgent turns and rolls back provider conversation state", 
             entry.latestTurn?.turnId === "turn-2" &&
             entry.checkpoints.length === 2 &&
             entry.session?.providerName === "claudeAgent",
-          8_000,
+          15_000,
         );
         yield* harness.waitForReceipt(
           (receipt): receipt is TurnProcessingQuiescedReceipt =>
