@@ -28,8 +28,8 @@ import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
 
 const QUEUED_TURN_PREVIEW_MAX_CHARS = 72;
-const QUEUED_FOLLOW_UP_VISIBLE_ROWS = 1.75;
-const QUEUED_FOLLOW_UP_ROW_MIN_HEIGHT_REM = 6;
+const QUEUED_FOLLOW_UP_VISIBLE_ROWS = 2.75;
+const QUEUED_FOLLOW_UP_ROW_MIN_HEIGHT_REM = 4.25;
 const QUEUED_FOLLOW_UP_ROW_GAP_REM = 0.5;
 const QUEUED_FOLLOW_UP_SCROLL_MAX_HEIGHT_REM =
   QUEUED_FOLLOW_UP_VISIBLE_ROWS * QUEUED_FOLLOW_UP_ROW_MIN_HEIGHT_REM +
@@ -98,13 +98,13 @@ function SortableQueuedFollowUpRow({
         transition,
       }}
       className={cn(
-        "min-h-24 rounded-xl border border-border/70 bg-background/75 px-3 py-3 transition-shadow",
+        "rounded-lg border border-border/60 bg-background/70 px-2.5 py-2 transition-shadow",
         isDragging && "z-20 opacity-85 shadow-lg",
         isBusy && "ring-1 ring-primary/35",
       )}
       data-testid={`queued-follow-up-row-${queuedTurn.messageId}`}
     >
-      <div className="flex min-w-0 gap-3">
+      <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2.5">
         <button
           type="button"
           className={cn(
@@ -121,19 +121,19 @@ function SortableQueuedFollowUpRow({
           <GripVerticalIcon className="size-4" />
         </button>
 
-        <div className="min-w-0 flex-1 space-y-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-medium text-muted-foreground">#{index + 1}</span>
+        <div className="min-w-0 space-y-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] font-medium text-muted-foreground">#{index + 1}</span>
             {index === 0 ? (
-              <Badge variant="secondary" className="rounded-full px-2 text-[11px]">
+              <Badge variant="secondary" size="sm" className="rounded-full px-1.5 text-[10px]">
                 Next
               </Badge>
             ) : null}
-            <Badge variant="outline" className="rounded-full px-2 text-[11px]">
+            <Badge variant="outline" size="sm" className="rounded-full px-1.5 text-[10px]">
               {interactionModeLabel(queuedTurn.interactionMode)}
             </Badge>
             {queuedTurn.attachments.length > 0 ? (
-              <Badge variant="outline" className="rounded-full px-2 text-[11px]">
+              <Badge variant="outline" size="sm" className="rounded-full px-1.5 text-[10px]">
                 {queuedTurn.attachments.length === 1
                   ? "1 image"
                   : `${queuedTurn.attachments.length} images`}
@@ -161,60 +161,70 @@ function SortableQueuedFollowUpRow({
               </div>
             </div>
           ) : (
-            <p className="whitespace-pre-wrap break-words text-sm text-foreground">{preview}</p>
+            <p className="line-clamp-2 text-[13px] leading-5 break-words text-foreground">
+              {preview}
+            </p>
           )}
         </div>
 
         {!isEditing ? (
-          <div className="flex shrink-0 flex-wrap items-start justify-end gap-1.5 max-sm:w-full max-sm:justify-start">
+          <div className="flex shrink-0 items-center gap-0.5 rounded-full border border-border/60 bg-muted/30 p-0.5">
             <Button
               type="button"
-              size="sm"
+              size="icon-xs"
               variant="ghost"
-              className="h-8 rounded-full px-2.5 text-xs"
+              className="rounded-full text-muted-foreground hover:bg-background/80 hover:text-foreground"
               onClick={onSaveAsSnippet}
               disabled={isInteractionDisabled || !canSaveAsSnippet}
+              aria-label="Save as snippet"
+              title="Save as snippet"
               data-testid={`queued-follow-up-save-snippet-${queuedTurn.messageId}`}
             >
-              <HeartIcon className="mr-1 size-3.5" />
-              Save as snippet
+              <HeartIcon className="size-3.5" />
+              <span className="sr-only">Save as snippet</span>
             </Button>
             <Button
               type="button"
-              size="sm"
+              size="icon-xs"
               variant="ghost"
-              className="h-8 rounded-full px-2.5 text-xs"
+              className="rounded-full text-muted-foreground hover:bg-background/80 hover:text-foreground"
               onClick={onEdit}
               disabled={isInteractionDisabled}
+              aria-label="Edit"
+              title="Edit"
             >
-              <PencilIcon className="mr-1 size-3.5" />
-              Edit
+              <PencilIcon className="size-3.5" />
+              <span className="sr-only">Edit</span>
             </Button>
             <Button
               type="button"
-              size="sm"
-              variant="ghost"
-              className="h-8 rounded-full px-2.5 text-xs"
+              size="icon-xs"
+              variant="secondary"
+              className="rounded-full border-primary/10 bg-primary/15 text-primary hover:bg-primary/20 hover:text-primary"
               onClick={onSendNow}
               disabled={isInteractionDisabled}
+              aria-label="Send now"
+              title="Send now"
             >
               {isBusy ? (
-                <LoaderCircleIcon className="mr-1 size-3.5 animate-spin" />
+                <LoaderCircleIcon className="size-3.5 animate-spin" />
               ) : (
-                <SendHorizontalIcon className="mr-1 size-3.5" />
+                <SendHorizontalIcon className="size-3.5" />
               )}
-              Send now
+              <span className="sr-only">Send now</span>
             </Button>
             <Button
               type="button"
-              size="sm"
+              size="icon-xs"
               variant="ghost"
-              className="h-8 rounded-full px-2.5 text-xs text-muted-foreground"
+              className="rounded-full text-muted-foreground hover:bg-background/80 hover:text-destructive"
               onClick={onDelete}
               disabled={isInteractionDisabled}
+              aria-label="Delete"
+              title="Delete"
             >
-              <Trash2Icon className="mr-1 size-3.5" />
-              Delete
+              <Trash2Icon className="size-3.5" />
+              <span className="sr-only">Delete</span>
             </Button>
           </div>
         ) : (
