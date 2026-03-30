@@ -11,7 +11,7 @@ describe("estimateTimelineMessageHeight", () => {
         role: "assistant",
         text: "a".repeat(144),
       }),
-    ).toBe(122);
+    ).toBe(74);
   });
 
   it("uses assistant sizing rules for system messages", () => {
@@ -20,7 +20,33 @@ describe("estimateTimelineMessageHeight", () => {
         role: "system",
         text: "a".repeat(144),
       }),
-    ).toBe(122);
+    ).toBe(74);
+  });
+
+  it("strips assistant markdown syntax before estimating wrapped text", () => {
+    expect(
+      estimateTimelineMessageHeight({
+        role: "assistant",
+        text: [
+          "Yes, for this change they're in good shape.",
+          "",
+          "I added the regression test in [ChatView.browser.tsx](/tmp/ChatView.browser.tsx), and these all passed:",
+          "- `bun fmt`",
+          "- `bun lint`",
+          "- `bun typecheck`",
+        ].join("\n"),
+      }),
+    ).toBe(170);
+  });
+
+  it("does not wrap fenced assistant code blocks by viewport width", () => {
+    const message = {
+      role: "assistant" as const,
+      text: ["```ts", "const reallyLongLine = '" + "x".repeat(220) + "';", "```"].join("\n"),
+    };
+
+    expect(estimateTimelineMessageHeight(message, { timelineWidthPx: 320 })).toBe(72);
+    expect(estimateTimelineMessageHeight(message, { timelineWidthPx: 768 })).toBe(72);
   });
 
   it("adds one attachment row for one or two user attachments", () => {
@@ -132,7 +158,7 @@ describe("estimateTimelineMessageHeight", () => {
       text: "a".repeat(200),
     };
 
-    expect(estimateTimelineMessageHeight(message, { timelineWidthPx: 320 })).toBe(188);
-    expect(estimateTimelineMessageHeight(message, { timelineWidthPx: 768 })).toBe(122);
+    expect(estimateTimelineMessageHeight(message, { timelineWidthPx: 320 })).toBe(140);
+    expect(estimateTimelineMessageHeight(message, { timelineWidthPx: 768 })).toBe(74);
   });
 });
