@@ -3688,10 +3688,46 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
       const displays = wrappers.map((wrapper) => getComputedStyle(wrapper).display);
 
-      expect(wrappers.length).toBeGreaterThanOrEqual(2);
-      expect(displays).toContain("contents");
-      expect(displays.filter((display) => display === "contents")).toHaveLength(1);
-      expect(displays).toContain("flex");
+      expect(wrappers).toHaveLength(2);
+      expect(displays).toEqual(["flex", "contents"]);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("uses the available thread width on wide desktop viewports", async () => {
+    const mounted = await mountChatView({
+      viewport: {
+        name: "wide-desktop",
+        width: 1440,
+        height: 1_100,
+        textTolerancePx: 44,
+        attachmentTolerancePx: 56,
+      },
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-wide-layout" as MessageId,
+        targetText: "wide desktop layout thread",
+      }),
+    });
+
+    try {
+      const timelineRoot = document.querySelector<HTMLElement>("[data-timeline-root='true']");
+      expect(timelineRoot).toBeTruthy();
+      const scrollContainer = timelineRoot?.parentElement;
+      expect(scrollContainer).toBeTruthy();
+      const composerForm = document.querySelector<HTMLElement>("[data-chat-composer-form='true']");
+      expect(composerForm).toBeTruthy();
+
+      const timelineWidth = timelineRoot!.getBoundingClientRect().width;
+      const scrollStyles = getComputedStyle(scrollContainer!);
+      const horizontalPadding =
+        (Number.parseFloat(scrollStyles.paddingLeft) || 0) +
+        (Number.parseFloat(scrollStyles.paddingRight) || 0);
+      const availableContentWidth = scrollContainer!.clientWidth - horizontalPadding;
+      const composerWidth = composerForm!.getBoundingClientRect().width;
+
+      expect(timelineWidth).toBeGreaterThanOrEqual(availableContentWidth - 8);
+      expect(composerWidth).toBeGreaterThanOrEqual(availableContentWidth - 2);
     } finally {
       await mounted.cleanup();
     }

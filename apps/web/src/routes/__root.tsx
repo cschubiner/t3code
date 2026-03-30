@@ -38,6 +38,8 @@ export const Route = createRootRouteWithContext<{
 });
 
 function RootRouteView() {
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+
   if (!readNativeApi()) {
     return (
       <div className="flex h-screen flex-col bg-background text-foreground">
@@ -55,9 +57,13 @@ function RootRouteView() {
       <AnchoredToastProvider>
         <EventRouter />
         <DesktopProjectBootstrap />
-        <AppSidebarLayout>
+        {pathname.startsWith("/settings") ? (
+          <AppSidebarLayout>
+            <Outlet />
+          </AppSidebarLayout>
+        ) : (
           <Outlet />
-        </AppSidebarLayout>
+        )}
       </AnchoredToastProvider>
     </ToastProvider>
   );
