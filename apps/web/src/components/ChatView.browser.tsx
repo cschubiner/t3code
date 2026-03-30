@@ -3127,6 +3127,75 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("allows queueing again while send-now is still pending", async () => {
+    const deferredSendNow = createDeferred<unknown>();
+    wsRpcOverrides.set(ORCHESTRATION_WS_METHODS.dispatchCommand, (body) => {
+      const command =
+        typeof body.command === "object" && body.command !== null
+          ? (body.command as { type?: string })
+          : null;
+      if (command?.type === "thread.turn.queue.send-now") {
+        return deferredSendNow.promise;
+      }
+      return {};
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshot(),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Steer this right now");
+      await waitForLayout();
+
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+          ...steerShortcutModifiers(),
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          const enqueueRequest = listDispatchCommandsByType("thread.turn.queue.enqueue").at(-1);
+          const sendNowRequest = listDispatchCommandsByType("thread.turn.queue.send-now").at(-1);
+          const enqueueCommand = enqueueRequest?.command as
+            | { message?: { text?: string; messageId?: string } }
+            | undefined;
+          const sendNowCommand = sendNowRequest?.command as { messageId?: string } | undefined;
+          expect(enqueueCommand?.message?.text).toBe("Steer this right now");
+          expect(sendNowCommand?.messageId).toBe(enqueueCommand?.message?.messageId);
+          expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.prompt ?? "").toBe(
+            "",
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Queue after steer");
+      await waitForLayout();
+
+      findButtonByText(document, "Queue")?.click();
+
+      await vi.waitFor(
+        () => {
+          const queueRequests = listDispatchCommandsByType("thread.turn.queue.enqueue");
+          expect(queueRequests.at(-1)?.command?.message?.text).toBe("Queue after steer");
+          expect(findButtonByText(document, "Queueing...")).toBeNull();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      deferredSendNow.resolve({});
+      await mounted.cleanup();
+    }
+  });
+
   it("queues next up with mod+shift+enter during a running turn", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,

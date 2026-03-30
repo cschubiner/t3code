@@ -2740,6 +2740,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
           createdAt,
         });
 
+        setPendingQueuedTurnMessageId(null);
+        for (const image of queuedImages) {
+          revokeBlobPreviewUrl(image.previewUrl);
+        }
+        promptRef.current = "";
+        clearComposerDraftContent(threadIdForQueue);
+        setComposerHighlightedItemId(null);
+        setComposerCursor(0);
+        setComposerTrigger(null);
+
         if (input?.sendNow) {
           await api.orchestration.dispatchCommand({
             type: "thread.turn.queue.send-now",
@@ -2758,16 +2768,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
             createdAt: new Date().toISOString(),
           });
         }
-
-        setPendingQueuedTurnMessageId(null);
-        for (const image of queuedImages) {
-          revokeBlobPreviewUrl(image.previewUrl);
-        }
-        promptRef.current = "";
-        clearComposerDraftContent(threadIdForQueue);
-        setComposerHighlightedItemId(null);
-        setComposerCursor(0);
-        setComposerTrigger(null);
         return true;
       } catch (err) {
         setPendingQueuedTurnMessageId(null);
