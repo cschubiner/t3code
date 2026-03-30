@@ -17,6 +17,19 @@ function renderSidebarButton(className?: string) {
 }
 
 describe("sidebar interactive cursors", () => {
+  it("can render a layout-less provider wrapper when requested", () => {
+    const html = renderToStaticMarkup(
+      <SidebarProvider layout="contents">
+        <SidebarMenuButton>Projects</SidebarMenuButton>
+      </SidebarProvider>,
+    );
+
+    expect(html).toContain('data-slot="sidebar-wrapper"');
+    expect(html).toContain("group/sidebar-wrapper");
+    expect(html).toContain("contents");
+    expect(html).not.toContain("min-h-svh");
+  });
+
   it("uses a pointer cursor for menu buttons by default", () => {
     const html = renderSidebarButton();
 
