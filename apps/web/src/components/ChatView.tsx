@@ -2694,15 +2694,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setThreadError(threadIdForQueue, null);
       setPendingQueuedTurnMessageId(messageIdForQueue);
 
-      try {
-        await persistThreadSettingsForNextTurn({
-          threadId: threadIdForQueue,
-          createdAt,
-          ...(selectedModel ? { modelSelection: selectedModelSelection } : {}),
-          runtimeMode,
-          interactionMode: input?.interactionMode ?? interactionMode,
-        });
+      void persistThreadSettingsForNextTurn({
+        threadId: threadIdForQueue,
+        createdAt,
+        ...(selectedModel ? { modelSelection: selectedModelSelection } : {}),
+        runtimeMode,
+        interactionMode: input?.interactionMode ?? interactionMode,
+      }).catch((error: unknown) => {
+        console.warn("Failed to persist thread settings for queued turn.", error);
+      });
 
+      try {
         const turnAttachments = await Promise.all(
           queuedImages.map(async (image) => ({
             type: "image" as const,
@@ -2757,6 +2759,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           });
         }
 
+        setPendingQueuedTurnMessageId(null);
         for (const image of queuedImages) {
           revokeBlobPreviewUrl(image.previewUrl);
         }

@@ -2858,6 +2858,69 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("queues even while persisting runtime mode for the next turn is still pending", async () => {
+    const deferredRuntimeModeUpdate = createDeferred<unknown>();
+    wsRpcOverrides.set(ORCHESTRATION_WS_METHODS.dispatchCommand, (body) => {
+      const command =
+        typeof body.command === "object" && body.command !== null
+          ? (body.command as { type?: string })
+          : null;
+      if (command?.type === "thread.runtime-mode.set") {
+        return deferredRuntimeModeUpdate.promise;
+      }
+      return {};
+    });
+
+    const runningSnapshot = createRunningSnapshot();
+    const slowRuntimeThreads = runningSnapshot.threads.slice();
+    const slowRuntimeThreadIndex = slowRuntimeThreads.findIndex(
+      (thread) => thread.id === THREAD_ID,
+    );
+    const slowRuntimeThread = slowRuntimeThreads[slowRuntimeThreadIndex];
+    if (slowRuntimeThread && slowRuntimeThreadIndex >= 0) {
+      slowRuntimeThreads[slowRuntimeThreadIndex] = Object.assign({}, slowRuntimeThread, {
+        runtimeMode: "approval-required",
+        session: slowRuntimeThread.session
+          ? {
+              ...slowRuntimeThread.session,
+              runtimeMode: "approval-required",
+            }
+          : null,
+      });
+    }
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: {
+        ...runningSnapshot,
+        threads: slowRuntimeThreads,
+      },
+    });
+
+    try {
+      useComposerDraftStore.getState().setRuntimeMode(THREAD_ID, "full-access");
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Queue despite slow mode sync");
+      await waitForLayout();
+
+      findButtonByText(document, "Queue")?.click();
+
+      await vi.waitFor(
+        () => {
+          expect(listDispatchCommandsByType("thread.runtime-mode.set")).toHaveLength(1);
+          const queueRequest = listDispatchCommandsByType("thread.turn.queue.enqueue").at(-1);
+          expect(queueRequest?.command?.message?.text).toBe("Queue despite slow mode sync");
+          expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.prompt ?? "").toBe(
+            "",
+          );
+          expect(findButtonByText(document, "Queueing...")).toBeNull();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      deferredRuntimeModeUpdate.resolve({});
+      await mounted.cleanup();
+    }
+  });
+
   it("queues additional messages while preparing a new worktree", async () => {
     const deferredWorktree = createDeferred<{
       worktree: { branch: string; path: string };
