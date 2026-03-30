@@ -4,9 +4,7 @@ import { buildInlineTerminalContextText } from "./chat/userMessageTerminalContex
 const ASSISTANT_CHARS_PER_LINE_FALLBACK = 72;
 const USER_CHARS_PER_LINE_FALLBACK = 56;
 const LINE_HEIGHT_PX = 22;
-const ASSISTANT_BASE_HEIGHT_PX = 30;
-const ASSISTANT_BLOCK_GAP_HEIGHT_PX = 8;
-const ASSISTANT_CODE_BLOCK_CHROME_HEIGHT_PX = 20;
+const ASSISTANT_BASE_HEIGHT_PX = 78;
 const USER_BASE_HEIGHT_PX = 96;
 const ATTACHMENTS_PER_ROW = 2;
 // Attachment thumbnails render with `max-h-[220px]` plus ~8px row gap.
@@ -18,7 +16,6 @@ const USER_MONO_AVG_CHAR_WIDTH_PX = 8.4;
 const ASSISTANT_AVG_CHAR_WIDTH_PX = 7.2;
 const MIN_USER_CHARS_PER_LINE = 4;
 const MIN_ASSISTANT_CHARS_PER_LINE = 20;
-const ASSISTANT_MARKDOWN_ESTIMATE_CACHE_MAX_ENTRIES = 500;
 
 interface TimelineMessageHeightInput {
   role: "user" | "assistant" | "system";
@@ -29,15 +26,6 @@ interface TimelineMessageHeightInput {
 interface TimelineHeightEstimateLayout {
   timelineWidthPx: number | null;
 }
-
-interface AssistantMarkdownEstimateShape {
-  blockCount: number;
-  codeBlockCount: number;
-  codeLineCount: number;
-  textLines: string[];
-}
-
-const assistantMarkdownEstimateCache = new Map<string, AssistantMarkdownEstimateShape>();
 
 function estimateWrappedLineCount(text: string, charsPerLine: number): number {
   if (text.length === 0) return 1;
@@ -78,101 +66,14 @@ function estimateCharsPerLineForAssistant(timelineWidthPx: number | null): numbe
   );
 }
 
-function normalizeAssistantMarkdownLine(line: string): string {
-  return line
-    .replace(/^\s{0,3}#{1,6}\s+/, "")
-    .replace(/^\s{0,3}(?:[-+*]|\d+\.)\s+/, "")
-    .replace(/^\s{0,3}>+\s?/, "")
-    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/[*_~]/g, "")
-    .trim();
-}
-
-function buildAssistantMarkdownEstimateShape(markdown: string): AssistantMarkdownEstimateShape {
-  const cached = assistantMarkdownEstimateCache.get(markdown);
-  if (cached) {
-    return cached;
-  }
-
-  const textLines: string[] = [];
-  let codeLineCount = 0;
-  let blockCount = 0;
-  let codeBlockCount = 0;
-  let inCodeBlock = false;
-  let currentBlockHasContent = false;
-
-  for (const line of markdown.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith("```")) {
-      if (!inCodeBlock) {
-        inCodeBlock = true;
-        codeBlockCount += 1;
-        if (!currentBlockHasContent) {
-          blockCount += 1;
-          currentBlockHasContent = true;
-        }
-      } else {
-        inCodeBlock = false;
-      }
-      continue;
-    }
-
-    if (trimmed.length === 0) {
-      currentBlockHasContent = false;
-      continue;
-    }
-
-    if (!currentBlockHasContent) {
-      blockCount += 1;
-      currentBlockHasContent = true;
-    }
-
-    if (inCodeBlock) {
-      codeLineCount += 1;
-      continue;
-    }
-
-    textLines.push(normalizeAssistantMarkdownLine(line) || trimmed);
-  }
-
-  const shape = {
-    blockCount,
-    codeBlockCount,
-    codeLineCount,
-    textLines,
-  } satisfies AssistantMarkdownEstimateShape;
-
-  assistantMarkdownEstimateCache.set(markdown, shape);
-  if (assistantMarkdownEstimateCache.size > ASSISTANT_MARKDOWN_ESTIMATE_CACHE_MAX_ENTRIES) {
-    const oldestKey = assistantMarkdownEstimateCache.keys().next().value;
-    if (typeof oldestKey === "string") {
-      assistantMarkdownEstimateCache.delete(oldestKey);
-    }
-  }
-
-  return shape;
-}
-
 export function estimateTimelineMessageHeight(
   message: TimelineMessageHeightInput,
   layout: TimelineHeightEstimateLayout = { timelineWidthPx: null },
 ): number {
   if (message.role === "assistant") {
     const charsPerLine = estimateCharsPerLineForAssistant(layout.timelineWidthPx);
-    const assistantMarkdown = buildAssistantMarkdownEstimateShape(message.text);
-    const estimatedTextLines = assistantMarkdown.textLines.reduce(
-      (total, line) => total + estimateWrappedLineCount(line, charsPerLine),
-      0,
-    );
-    const estimatedLines = estimatedTextLines + assistantMarkdown.codeLineCount;
-    return (
-      ASSISTANT_BASE_HEIGHT_PX +
-      estimatedLines * LINE_HEIGHT_PX +
-      Math.max(0, assistantMarkdown.blockCount - 1) * ASSISTANT_BLOCK_GAP_HEIGHT_PX +
-      assistantMarkdown.codeBlockCount * ASSISTANT_CODE_BLOCK_CHROME_HEIGHT_PX
-    );
+    const estimatedLines = estimateWrappedLineCount(message.text, charsPerLine);
+    return ASSISTANT_BASE_HEIGHT_PX + estimatedLines * LINE_HEIGHT_PX;
   }
 
   if (message.role === "user") {
