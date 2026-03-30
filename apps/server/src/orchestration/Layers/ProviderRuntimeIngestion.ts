@@ -1280,7 +1280,7 @@ const make = Effect.gen(function* () {
 
   const worker = yield* makeDrainableWorker(processInputSafely);
 
-  const start: ProviderRuntimeIngestionShape["start"] = Effect.gen(function* () {
+  const start: ProviderRuntimeIngestionShape["start"] = Effect.fn("start")(function* () {
     yield* Effect.forkScoped(
       Stream.runForEach(providerService.streamEvents, (event) =>
         worker.enqueue({ source: "runtime", event }),

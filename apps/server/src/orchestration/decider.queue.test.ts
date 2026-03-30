@@ -34,7 +34,7 @@ function eventFrom(input: {
     correlationId: CommandId.makeUnsafe(input.commandId),
     metadata: {},
     payload: input.payload as never,
-  };
+  } as OrchestrationEvent;
 }
 
 async function createReadModelWithQueuedTurns() {

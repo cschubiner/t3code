@@ -6,7 +6,6 @@ import {
   type ModelSelection,
   type ProviderModelOptions,
   type ProjectScript,
-  type ModelSlug,
   type ProviderKind,
   type ProjectEntry,
   type ProjectId,
@@ -25,6 +24,7 @@ import {
   ProviderInteractionMode,
   RuntimeMode,
 } from "@t3tools/contracts";
+import { truncate } from "@t3tools/shared/String";
 import { applyClaudePromptEffortPrefix, normalizeModelSlug } from "@t3tools/shared/model";
 import {
   useCallback,
@@ -90,7 +90,6 @@ import {
   proposedPlanTitle,
   resolvePlanFollowUpSubmission,
 } from "../proposedPlan";
-import { truncateTitle } from "../truncateTitle";
 import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
@@ -3676,7 +3675,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           titleSeed = "New thread";
         }
       }
-      const title = truncateTitle(titleSeed);
+      const title = truncate(titleSeed);
       const threadCreateModelSelection: ModelSelection = {
         provider: selectedProvider,
         model:
@@ -4122,7 +4121,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       effort: selectedPromptEffort,
       text: implementationPrompt,
     });
-    const nextThreadTitle = truncateTitle(buildPlanImplementationThreadTitle(planMarkdown));
+    const nextThreadTitle = truncate(buildPlanImplementationThreadTitle(planMarkdown));
     const nextThreadModelSelection: ModelSelection = selectedModelSelection;
 
     sendInFlightRef.current = true;
@@ -4215,7 +4214,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   ]);
 
   const onProviderModelSelect = useCallback(
-    (provider: ProviderKind, model: ModelSlug) => {
+    (provider: ProviderKind, model: string) => {
       if (!activeThread) return;
       if (lockedProvider !== null && provider !== lockedProvider) {
         scheduleComposerFocus();

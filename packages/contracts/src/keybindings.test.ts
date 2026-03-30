@@ -106,6 +106,12 @@ it.effect("parses keybinding rules", () =>
       command: "snippets.open",
     });
     assert.strictEqual(parsedSnippetsOpen.command, "snippets.open");
+
+    const parsedThreadJumpPrevious = yield* decode(KeybindingRule, {
+      key: "mod+shift+[",
+      command: "thread.previous",
+    });
+    assert.strictEqual(parsedThreadJumpPrevious.command, "thread.previous");
   }),
 );
 
@@ -180,8 +186,19 @@ it.effect("parses resolved keybindings arrays", () =>
           modKey: true,
         },
       },
+      {
+        command: "thread.jump.3",
+        shortcut: {
+          key: "3",
+          metaKey: false,
+          ctrlKey: false,
+          shiftKey: false,
+          altKey: false,
+          modKey: true,
+        },
+      },
     ]);
-    assert.lengthOf(parsed, 1);
+    assert.lengthOf(parsed, 2);
   }),
 );
 

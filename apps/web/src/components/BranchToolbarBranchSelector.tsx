@@ -28,6 +28,7 @@ import {
   EnvMode,
   resolveBranchSelectionTarget,
   resolveBranchToolbarValue,
+  shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
 import { Button } from "./ui/button";
 import {
@@ -136,11 +137,20 @@ export function BranchToolbarBranchSelector({
     () =>
       normalizedDeferredBranchQuery.length === 0
         ? branchPickerItems
-        : branchPickerItems.filter((itemValue) => {
-            if (createBranchItemValue && itemValue === createBranchItemValue) return true;
-            return itemValue.toLowerCase().includes(normalizedDeferredBranchQuery);
-          }),
-    [branchPickerItems, createBranchItemValue, normalizedDeferredBranchQuery],
+        : branchPickerItems.filter((itemValue) =>
+            shouldIncludeBranchPickerItem({
+              itemValue,
+              normalizedQuery: normalizedDeferredBranchQuery,
+              createBranchItemValue,
+              checkoutPullRequestItemValue,
+            }),
+          ),
+    [
+      branchPickerItems,
+      checkoutPullRequestItemValue,
+      createBranchItemValue,
+      normalizedDeferredBranchQuery,
+    ],
   );
   const [resolvedActiveBranch, setOptimisticBranch] = useOptimistic(
     canonicalActiveBranch,
@@ -403,7 +413,6 @@ export function BranchToolbarBranchSelector({
         key={itemValue}
         index={index}
         value={itemValue}
-        className={itemValue === resolvedActiveBranch ? "bg-accent text-foreground" : undefined}
         style={style}
         onClick={() => selectBranch(branch)}
       >

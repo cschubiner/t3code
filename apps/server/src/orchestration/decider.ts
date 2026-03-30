@@ -13,6 +13,8 @@ import {
   requireProjectAbsent,
   requireThread,
   requireThreadAbsent,
+  requireThreadArchived,
+  requireThreadNotArchived,
 } from "./commandInvariants.ts";
 
 const nowIso = () => new Date().toISOString();
@@ -54,6 +56,14 @@ function getThreadFromReadModel(readModel: OrchestrationReadModel, threadId: str
 }
 
 type ReadModelQueuedTurn = OrchestrationReadModel["threads"][number]["queuedTurns"][number];
+type ThreadMessageSentEvent = Omit<
+  Extract<OrchestrationEvent, { type: "thread.message-sent" }>,
+  "sequence"
+>;
+type ThreadTurnStartRequestedEvent = Omit<
+  Extract<OrchestrationEvent, { type: "thread.turn-start-requested" }>,
+  "sequence"
+>;
 
 function buildQueuedTurnUpsertEvent(input: {
   readonly command: Pick<OrchestrationCommand, "commandId">;
@@ -145,7 +155,19 @@ function buildTurnStartEvents(input: {
     | Extract<OrchestrationCommand, { type: "thread.turn.start" }>["sourceProposedPlan"]
     | undefined;
 }): ReadonlyArray<Omit<OrchestrationEvent, "sequence">> {
-  const userMessageEvent: Omit<OrchestrationEvent, "sequence"> = {
+  const derivedModelSelection =
+    input.modelSelection !== undefined
+      ? input.modelSelection
+      : input.provider != null && input.model != null
+        ? ({
+            provider: input.provider,
+            model: input.model,
+            ...(input.modelOptions?.[input.provider] !== undefined
+              ? { options: input.modelOptions[input.provider] }
+              : {}),
+          } as ThreadTurnStartRequestedEvent["payload"]["modelSelection"])
+        : undefined;
+  const userMessageEvent: ThreadMessageSentEvent = {
     ...withEventBase({
       aggregateKind: "thread",
       aggregateId: input.threadId,
@@ -165,7 +187,7 @@ function buildTurnStartEvents(input: {
       updatedAt: input.occurredAt,
     },
   };
-  const turnStartRequestedEvent: Omit<OrchestrationEvent, "sequence"> = {
+  const turnStartRequestedEvent: ThreadTurnStartRequestedEvent = {
     ...withEventBase({
       aggregateKind: "thread",
       aggregateId: input.threadId,
@@ -177,19 +199,7 @@ function buildTurnStartEvents(input: {
     payload: {
       threadId: input.threadId,
       messageId: input.messageId,
-      ...(input.modelSelection !== undefined
-        ? { modelSelection: input.modelSelection }
-        : input.provider != null && input.model != null
-          ? {
-              modelSelection: {
-                provider: input.provider,
-                model: input.model,
-                ...(input.modelOptions?.[input.provider] !== undefined
-                  ? { options: input.modelOptions[input.provider] }
-                  : {}),
-              },
-            }
-          : {}),
+      ...(derivedModelSelection !== undefined ? { modelSelection: derivedModelSelection } : {}),
       ...(input.providerOptions != null ? { providerOptions: input.providerOptions } : {}),
       assistantDeliveryMode: input.assistantDeliveryMode ?? DEFAULT_ASSISTANT_DELIVERY_MODE,
       runtimeMode: input.runtimeMode,
@@ -440,6 +450,51 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           deletedAt: occurredAt,
+        },
+      };
+    }
+
+    case "thread.archive": {
+      yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = nowIso();
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.archived",
+        payload: {
+          threadId: command.threadId,
+          archivedAt: occurredAt,
+          updatedAt: occurredAt,
+        },
+      };
+    }
+
+    case "thread.unarchive": {
+      yield* requireThreadArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = nowIso();
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.unarchived",
+        payload: {
+          threadId: command.threadId,
+          updatedAt: occurredAt,
         },
       };
     }

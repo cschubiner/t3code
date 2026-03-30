@@ -79,7 +79,7 @@ const defaultCodexProvider: ServerProvider = {
   installed: true,
   version: "0.0.0-test",
   status: "ready",
-  authStatus: "authenticated",
+  auth: { status: "authenticated" },
   checkedAt: "2026-01-01T00:00:00.000Z",
   models: [],
 };
@@ -91,7 +91,7 @@ const defaultProviderStatuses: ReadonlyArray<ServerProviderStatus> = [
     provider: defaultCodexProvider.provider,
     status: "ready",
     available: true,
-    authStatus: defaultCodexProvider.authStatus,
+    authStatus: defaultCodexProvider.auth.status,
     checkedAt: defaultCodexProvider.checkedAt,
   },
 ];

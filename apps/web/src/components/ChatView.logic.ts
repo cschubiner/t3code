@@ -38,6 +38,7 @@ export function buildLocalDraftThread(
     queuedTurns,
     error,
     createdAt: draftThread.createdAt,
+    archivedAt: null,
     latestTurn: null,
     lastVisitedAt: draftThread.createdAt,
     branch: draftThread.branch,
