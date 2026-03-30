@@ -15,6 +15,7 @@ import {
   MAX_WHEN_EXPRESSION_DEPTH,
   ResolvedKeybindingRule,
   ResolvedKeybindingsConfig,
+  THREAD_JUMP_KEYBINDING_COMMANDS,
   type ServerConfigIssue,
 } from "@t3tools/contracts";
 import { Mutable } from "effect/Types";
@@ -88,6 +89,12 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+shift+e", command: "chat.branchSelector.focus", when: "!terminalFocus" },
   { key: "mod+o", command: "editor.openFavorite" },
   { key: "mod+shift+s", command: "snippets.open", when: "!terminalFocus" },
+  { key: "mod+shift+[", command: "thread.previous" },
+  { key: "mod+shift+]", command: "thread.next" },
+  ...THREAD_JUMP_KEYBINDING_COMMANDS.map((command, index) => ({
+    key: `mod+${index + 1}`,
+    command,
+  })),
 ];
 
 function normalizeKeyToken(token: string): string {

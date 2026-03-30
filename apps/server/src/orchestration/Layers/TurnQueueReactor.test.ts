@@ -51,6 +51,7 @@ function createThread(
     },
     createdAt: CREATED_AT,
     updatedAt: CREATED_AT,
+    archivedAt: null,
     deletedAt: null,
     messages: [],
     queuedTurns: [

@@ -465,6 +465,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             latestTurnId: null,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
+            archivedAt: null,
             deletedAt: null,
           });
           return;

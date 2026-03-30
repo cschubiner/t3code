@@ -46,6 +46,7 @@ export function normalizeSkillRootPaths(roots: Iterable<string | null | undefine
 }
 
 export const ClientSettingsSchema = Schema.Struct({
+  confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
   diffWordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
   extraSkillRoots: Schema.Array(Schema.String.check(Schema.isMaxLength(MAX_SKILL_ROOT_LENGTH)))
@@ -136,6 +137,7 @@ const ClaudeModelOptionsPatch = Schema.Struct({
   thinking: Schema.optionalKey(ClaudeModelOptions.fields.thinking),
   effort: Schema.optionalKey(ClaudeModelOptions.fields.effort),
   fastMode: Schema.optionalKey(ClaudeModelOptions.fields.fastMode),
+  contextWindow: Schema.optionalKey(ClaudeModelOptions.fields.contextWindow),
 });
 
 const ModelSelectionPatch = Schema.Union([

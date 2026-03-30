@@ -1,6 +1,5 @@
 import {
   type ProjectEntry,
-  type ModelSlug,
   type ProviderKind,
   type SkillSource,
   type Snippet,
@@ -33,7 +32,7 @@ export type ComposerCommandItem =
       id: string;
       type: "model";
       provider: ProviderKind;
-      model: ModelSlug;
+      model: string;
       label: string;
       description: string;
     }
