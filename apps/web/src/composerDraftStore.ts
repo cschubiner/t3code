@@ -1547,6 +1547,14 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
         if (threadId.length === 0) {
           return;
         }
+        const existing = get().draftsByThreadId[threadId];
+        const shouldPreserveComposerDraft =
+          (get().queuedTurnsByThreadId[threadId]?.length ?? 0) > 0;
+        if (existing && !shouldPreserveComposerDraft) {
+          for (const image of existing.images) {
+            revokeObjectPreviewUrl(image.previewUrl);
+          }
+        }
         set((state) => {
           const hasDraftThread = state.draftThreadsByThreadId[threadId] !== undefined;
           const hasProjectMapping = Object.values(state.projectDraftThreadIdByProjectId).includes(
@@ -1562,7 +1570,16 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           ) as Record<ProjectId, ThreadId>;
           const { [threadId]: _removedDraftThread, ...restDraftThreadsByThreadId } =
             state.draftThreadsByThreadId;
+          if (shouldPreserveComposerDraft) {
+            return {
+              draftThreadsByThreadId: restDraftThreadsByThreadId,
+              projectDraftThreadIdByProjectId: nextProjectDraftThreadIdByProjectId,
+            };
+          }
+          const { [threadId]: _removedComposerDraft, ...restDraftsByThreadId } =
+            state.draftsByThreadId;
           return {
+            draftsByThreadId: restDraftsByThreadId,
             draftThreadsByThreadId: restDraftThreadsByThreadId,
             projectDraftThreadIdByProjectId: nextProjectDraftThreadIdByProjectId,
           };
@@ -2367,18 +2384,22 @@ export function useEffectiveComposerModelState(input: {
 }
 
 /**
- * Clear draft threads that have been promoted to server threads.
+ * Clear a draft thread once the server has materialized the same thread id.
  *
- * Call this after a snapshot sync so the route guard in `_chat.$threadId`
- * sees the server thread before the draft is removed — avoids a redirect
- * to `/` caused by a gap where neither draft nor server thread exists.
+ * Use the single-thread helper for live `thread.created` events and the
+ * iterable helper for bootstrap/recovery paths that discover multiple server
+ * threads at once.
  */
-export function clearPromotedDraftThreads(serverThreadIds: ReadonlySet<ThreadId>): void {
+export function clearPromotedDraftThread(threadId: ThreadId): void {
   const store = useComposerDraftStore.getState();
-  const draftThreadIds = Object.keys(store.draftThreadsByThreadId) as ThreadId[];
-  for (const draftId of draftThreadIds) {
-    if (serverThreadIds.has(draftId)) {
-      store.clearPromotedDraftThread(draftId);
-    }
+  if (!store.getDraftThread(threadId)) {
+    return;
+  }
+  store.clearPromotedDraftThread(threadId);
+}
+
+export function clearPromotedDraftThreads(serverThreadIds: Iterable<ThreadId>): void {
+  for (const threadId of serverThreadIds) {
+    clearPromotedDraftThread(threadId);
   }
 }

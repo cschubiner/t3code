@@ -57,6 +57,7 @@ function makeState(thread: Thread): AppState {
     threads: [thread],
     threadsHydrated: true,
     sidebarThreadListMode: "grouped",
+    bootstrapComplete: true,
   };
 }
 
@@ -213,6 +214,7 @@ describe("store pure functions", () => {
       threads: [],
       threadsHydrated: true,
       sidebarThreadListMode: "grouped",
+      bootstrapComplete: true,
     };
 
     const next = reorderProjects(state, project1, project3);
@@ -309,6 +311,7 @@ describe("store read model sync", () => {
       threads: [],
       threadsHydrated: true,
       sidebarThreadListMode: "grouped",
+      bootstrapComplete: true,
     };
     const readModel: OrchestrationReadModel = {
       snapshotSequence: 2,

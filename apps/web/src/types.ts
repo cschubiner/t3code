@@ -48,6 +48,7 @@ export interface ChatMessage {
   role: "user" | "assistant" | "system";
   text: string;
   attachments?: ChatAttachment[];
+  turnId?: TurnId | null;
   createdAt: string;
   completedAt?: string | undefined;
   streaming: boolean;
@@ -122,6 +123,7 @@ export interface Thread {
   archivedAt: string | null;
   updatedAt?: string | undefined;
   latestTurn: OrchestrationLatestTurn | null;
+  pendingSourceProposedPlan?: OrchestrationLatestTurn["sourceProposedPlan"];
   lastVisitedAt?: string | undefined;
   branch: string | null;
   worktreePath: string | null;

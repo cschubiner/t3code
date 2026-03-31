@@ -20,7 +20,10 @@ type SidebarProject = {
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
 };
-type SidebarThreadSortInput = Pick<Thread, "createdAt" | "updatedAt" | "messages">;
+type SidebarThreadSortInput = Pick<Thread, "createdAt" | "updatedAt"> & {
+  latestUserMessageAt?: string | null;
+  messages?: Pick<Thread["messages"][number], "createdAt" | "role">[];
+};
 
 export type ThreadTraversalDirection = "previous" | "next";
 
@@ -351,6 +354,34 @@ export function resolveSidebarNewThreadEnvMode(input: {
   return input.requestedEnvMode ?? input.defaultEnvMode;
 }
 
+export function orderItemsByPreferredIds<TItem, TId>(input: {
+  items: readonly TItem[];
+  preferredIds: readonly TId[];
+  getId: (item: TItem) => TId;
+}): TItem[] {
+  const { getId, items, preferredIds } = input;
+  if (preferredIds.length === 0) {
+    return [...items];
+  }
+
+  const itemsById = new Map(items.map((item) => [getId(item), item] as const));
+  const preferredIdSet = new Set(preferredIds);
+  const emittedPreferredIds = new Set<TId>();
+  const ordered = preferredIds.flatMap((id) => {
+    if (emittedPreferredIds.has(id)) {
+      return [];
+    }
+    const item = itemsById.get(id);
+    if (!item) {
+      return [];
+    }
+    emittedPreferredIds.add(id);
+    return [item];
+  });
+  const remaining = items.filter((item) => !preferredIdSet.has(getId(item)));
+  return [...ordered, ...remaining];
+}
+
 export function getVisibleSidebarThreadIds<TThreadId>(
   renderedProjects: readonly {
     shouldShowThreadPanel?: boolean;
@@ -584,15 +615,15 @@ export function resolveProjectStatusIndicator(
   return highestPriorityStatus;
 }
 
-export function getVisibleThreadsForProject(input: {
-  threads: readonly Thread[];
-  activeThreadId: Thread["id"] | undefined;
+export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input: {
+  threads: readonly T[];
+  activeThreadId: T["id"] | undefined;
   isThreadListExpanded: boolean;
   previewLimit: number;
 }): {
   hasHiddenThreads: boolean;
-  hiddenThreads: Thread[];
-  visibleThreads: Thread[];
+  visibleThreads: T[];
+  hiddenThreads: T[];
 } {
   const { activeThreadId, isThreadListExpanded, previewLimit, threads } = input;
   const hasHiddenThreads = threads.length > previewLimit;
@@ -639,9 +670,13 @@ function toSortableTimestamp(iso: string | undefined): number | null {
 }
 
 function getLatestUserMessageTimestamp(thread: SidebarThreadSortInput): number {
+  if (thread.latestUserMessageAt) {
+    return toSortableTimestamp(thread.latestUserMessageAt) ?? Number.NEGATIVE_INFINITY;
+  }
+
   let latestUserMessageTimestamp: number | null = null;
 
-  for (const message of thread.messages) {
+  for (const message of thread.messages ?? []) {
     if (message.role !== "user") continue;
     const messageTimestamp = toSortableTimestamp(message.createdAt);
     if (messageTimestamp === null) continue;
@@ -673,7 +708,7 @@ function threadRecentSortTimestamp(thread: Pick<Thread, "createdAt" | "updatedAt
 }
 
 export function sortThreadsForSidebar<
-  T extends Pick<Thread, "id" | "createdAt" | "updatedAt" | "messages">,
+  T extends Pick<Thread, "id" | "createdAt" | "updatedAt"> & SidebarThreadSortInput,
 >(threads: readonly T[], sortOrder: SidebarThreadSortOrder): T[] {
   return threads.toSorted((left, right) => {
     const rightTimestamp = getThreadSortTimestamp(right, sortOrder);
@@ -686,7 +721,7 @@ export function sortThreadsForSidebar<
 }
 
 export function getFallbackThreadIdAfterDelete<
-  T extends Pick<Thread, "id" | "projectId" | "createdAt" | "updatedAt" | "messages">,
+  T extends Pick<Thread, "id" | "projectId" | "createdAt" | "updatedAt"> & SidebarThreadSortInput,
 >(input: {
   threads: readonly T[];
   deletedThreadId: T["id"];
@@ -744,7 +779,10 @@ export function getProjectSortTimestamp(
   return toSortableTimestamp(project.updatedAt ?? project.createdAt) ?? Number.NEGATIVE_INFINITY;
 }
 
-export function sortProjectsForSidebar<TProject extends SidebarProject, TThread extends Thread>(
+export function sortProjectsForSidebar<
+  TProject extends SidebarProject,
+  TThread extends Pick<Thread, "projectId" | "createdAt" | "updatedAt"> & SidebarThreadSortInput,
+>(
   projects: readonly TProject[],
   threads: readonly TThread[],
   sortOrder: SidebarProjectSortOrder,
