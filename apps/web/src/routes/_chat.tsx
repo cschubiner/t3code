@@ -27,7 +27,7 @@ function ChatRouteGlobalShortcuts() {
   const requestBranchSelectorFocus = useChatToolbarFocusStore(
     (state) => state.requestBranchSelectorFocus,
   );
-  const { activeDraftThread, activeThread, handleNewThread, projects, routeThreadId } =
+  const { activeDraftThread, activeThread, defaultProjectId, handleNewThread, routeThreadId } =
     useHandleNewThread();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const keybindings = serverConfigQuery.data?.keybindings ?? EMPTY_KEYBINDINGS;
@@ -48,7 +48,7 @@ function ChatRouteGlobalShortcuts() {
         return;
       }
 
-      const projectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? projects[0]?.id;
+      const projectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? defaultProjectId;
       if (!projectId) return;
 
       const command = resolveShortcutCommand(event, keybindings, {
@@ -96,8 +96,8 @@ function ChatRouteGlobalShortcuts() {
     clearSelection,
     handleNewThread,
     keybindings,
-    projects,
     requestBranchSelectorFocus,
+    defaultProjectId,
     selectedThreadIdsSize,
     terminalOpen,
     appSettings.defaultThreadEnvMode,

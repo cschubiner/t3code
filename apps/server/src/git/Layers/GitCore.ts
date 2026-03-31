@@ -32,6 +32,8 @@ import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
+const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
 const STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY = 2_048;
@@ -50,9 +52,12 @@ class StatusUpstreamRefreshCacheKey extends Data.Class<{
 }> {}
 
 interface ExecuteGitOptions {
+  stdin?: string | undefined;
   timeoutMs?: number | undefined;
   allowNonZeroExit?: boolean | undefined;
   fallbackErrorMessage?: string | undefined;
+  maxOutputBytes?: number | undefined;
+  truncateOutputAtMaxBytes?: boolean | undefined;
   progress?: ExecuteGitProgress | undefined;
 }
 
@@ -87,6 +92,45 @@ function parseNumstatEntries(
     });
   }
   return entries;
+}
+
+function splitNullSeparatedPaths(input: string, truncated: boolean): string[] {
+  const parts = input.split("\0");
+  if (parts.length === 0) return [];
+  if (truncated && parts[parts.length - 1]?.length) {
+    parts.pop();
+  }
+  return parts.filter((value) => value.length > 0);
+}
+
+function chunkPathsForGitCheckIgnore(relativePaths: readonly string[]): string[][] {
+  const chunks: string[][] = [];
+  let chunk: string[] = [];
+  let chunkBytes = 0;
+
+  for (const relativePath of relativePaths) {
+    const relativePathBytes = Buffer.byteLength(relativePath) + 1;
+    if (chunk.length > 0 && chunkBytes + relativePathBytes > GIT_CHECK_IGNORE_MAX_STDIN_BYTES) {
+      chunks.push(chunk);
+      chunk = [];
+      chunkBytes = 0;
+    }
+
+    chunk.push(relativePath);
+    chunkBytes += relativePathBytes;
+
+    if (chunkBytes >= GIT_CHECK_IGNORE_MAX_STDIN_BYTES) {
+      chunks.push(chunk);
+      chunk = [];
+      chunkBytes = 0;
+    }
+  }
+
+  if (chunk.length > 0) {
+    chunks.push(chunk);
+  }
+
+  return chunks;
 }
 
 function parsePorcelainPath(line: string): string | null {
@@ -439,12 +483,14 @@ const collectOutput = Effect.fn(function* <E>(
   input: Pick<ExecuteGitInput, "operation" | "cwd" | "args">,
   stream: Stream.Stream<Uint8Array, E>,
   maxOutputBytes: number,
+  truncateOutputAtMaxBytes: boolean,
   onLine: ((line: string) => Effect.Effect<void, never>) | undefined,
-): Effect.fn.Return<string, GitCommandError> {
+): Effect.fn.Return<{ readonly text: string; readonly truncated: boolean }, GitCommandError> {
   const decoder = new TextDecoder();
   let bytes = 0;
   let text = "";
   let lineBuffer = "";
+  let truncated = false;
 
   const emitCompleteLines = (flush: boolean) =>
     Effect.gen(function* () {
@@ -469,8 +515,11 @@ const collectOutput = Effect.fn(function* <E>(
 
   yield* Stream.runForEach(stream, (chunk) =>
     Effect.gen(function* () {
-      bytes += chunk.byteLength;
-      if (bytes > maxOutputBytes) {
+      if (truncateOutputAtMaxBytes && truncated) {
+        return;
+      }
+      const nextBytes = bytes + chunk.byteLength;
+      if (!truncateOutputAtMaxBytes && nextBytes > maxOutputBytes) {
         return yield* new GitCommandError({
           operation: input.operation,
           command: quoteGitCommand(input.args),
@@ -478,18 +527,24 @@ const collectOutput = Effect.fn(function* <E>(
           detail: `${quoteGitCommand(input.args)} output exceeded ${maxOutputBytes} bytes and was truncated.`,
         });
       }
-      const decoded = decoder.decode(chunk, { stream: true });
+      const chunkToDecode =
+        truncateOutputAtMaxBytes && nextBytes > maxOutputBytes
+          ? chunk.subarray(0, Math.max(0, maxOutputBytes - bytes))
+          : chunk;
+      bytes += chunkToDecode.byteLength;
+      truncated = truncateOutputAtMaxBytes && nextBytes > maxOutputBytes;
+      const decoded = decoder.decode(chunkToDecode, { stream: !truncated });
       text += decoded;
       lineBuffer += decoded;
       yield* emitCompleteLines(false);
     }),
   ).pipe(Effect.mapError(toGitCommandError(input, "output stream failed.")));
 
-  const remainder = decoder.decode();
+  const remainder = truncated ? "" : decoder.decode();
   text += remainder;
   lineBuffer += remainder;
   yield* emitCompleteLines(true);
-  return text;
+  return { text, truncated };
 });
 
 export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"] }) =>
@@ -511,6 +566,7 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
         } as const;
         const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
         const maxOutputBytes = input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
+        const truncateOutputAtMaxBytes = input.truncateOutputAtMaxBytes ?? false;
 
         const commandEffect = Effect.gen(function* () {
           const trace2Monitor = yield* createTrace2Monitor(commandInput, input.progress).pipe(
@@ -537,25 +593,32 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
                 commandInput,
                 child.stdout,
                 maxOutputBytes,
+                truncateOutputAtMaxBytes,
                 input.progress?.onStdoutLine,
               ),
               collectOutput(
                 commandInput,
                 child.stderr,
                 maxOutputBytes,
+                truncateOutputAtMaxBytes,
                 input.progress?.onStderrLine,
               ),
               child.exitCode.pipe(
                 Effect.map((value) => Number(value)),
                 Effect.mapError(toGitCommandError(commandInput, "failed to report exit code.")),
               ),
+              input.stdin === undefined
+                ? Effect.void
+                : Stream.run(Stream.encodeText(Stream.make(input.stdin)), child.stdin).pipe(
+                    Effect.mapError(toGitCommandError(commandInput, "failed to write stdin.")),
+                  ),
             ],
             { concurrency: "unbounded" },
-          );
+          ).pipe(Effect.map(([stdout, stderr, exitCode]) => [stdout, stderr, exitCode] as const));
           yield* trace2Monitor.flush;
 
           if (!input.allowNonZeroExit && exitCode !== 0) {
-            const trimmedStderr = stderr.trim();
+            const trimmedStderr = stderr.text.trim();
             return yield* new GitCommandError({
               operation: commandInput.operation,
               command: quoteGitCommand(commandInput.args),
@@ -567,7 +630,13 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
             });
           }
 
-          return { code: exitCode, stdout, stderr } satisfies ExecuteGitResult;
+          return {
+            code: exitCode,
+            stdout: stdout.text,
+            stderr: stderr.text,
+            stdoutTruncated: stdout.truncated,
+            stderrTruncated: stderr.truncated,
+          } satisfies ExecuteGitResult;
         });
 
         return yield* commandEffect.pipe(
@@ -596,13 +665,18 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
       cwd: string,
       args: readonly string[],
       options: ExecuteGitOptions = {},
-    ): Effect.Effect<{ code: number; stdout: string; stderr: string }, GitCommandError> =>
+    ): Effect.Effect<ExecuteGitResult, GitCommandError> =>
       execute({
         operation,
         cwd,
         args,
+        ...(options.stdin !== undefined ? { stdin: options.stdin } : {}),
         allowNonZeroExit: true,
         ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+        ...(options.maxOutputBytes !== undefined ? { maxOutputBytes: options.maxOutputBytes } : {}),
+        ...(options.truncateOutputAtMaxBytes !== undefined
+          ? { truncateOutputAtMaxBytes: options.truncateOutputAtMaxBytes }
+          : {}),
         ...(options.progress ? { progress: options.progress } : {}),
       }).pipe(
         Effect.flatMap((result) => {
@@ -657,6 +731,60 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
           timeoutMs: 5_000,
         },
       ).pipe(Effect.map((result) => result.code === 0));
+
+    const isInsideWorkTree: GitCoreShape["isInsideWorkTree"] = (cwd) =>
+      executeGit("GitCore.isInsideWorkTree", cwd, ["rev-parse", "--is-inside-work-tree"], {
+        allowNonZeroExit: true,
+        timeoutMs: 5_000,
+      }).pipe(Effect.map((result) => result.code === 0 && result.stdout.trim() === "true"));
+
+    const listWorkspaceFiles: GitCoreShape["listWorkspaceFiles"] = (cwd) =>
+      executeGit(
+        "GitCore.listWorkspaceFiles",
+        cwd,
+        ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+        {
+          timeoutMs: 20_000,
+          maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+          truncateOutputAtMaxBytes: true,
+        },
+      ).pipe(
+        Effect.map((result) => ({
+          paths: splitNullSeparatedPaths(result.stdout, result.stdoutTruncated),
+          truncated: result.stdoutTruncated,
+        })),
+      );
+
+    const filterIgnoredPaths: GitCoreShape["filterIgnoredPaths"] = (cwd, relativePaths) =>
+      Effect.gen(function* () {
+        if (relativePaths.length === 0) {
+          return [];
+        }
+
+        const ignoredPaths = new Set<string>();
+        for (const chunk of chunkPathsForGitCheckIgnore(relativePaths)) {
+          const result = yield* executeGit(
+            "GitCore.filterIgnoredPaths",
+            cwd,
+            ["check-ignore", "--no-index", "-z", "--stdin"],
+            {
+              stdin: `${chunk.join("\0")}\0`,
+              allowNonZeroExit: true,
+              timeoutMs: 20_000,
+              maxOutputBytes: 16 * 1024 * 1024,
+              truncateOutputAtMaxBytes: true,
+            },
+          );
+          for (const ignoredPath of splitNullSeparatedPaths(
+            result.stdout,
+            result.stdoutTruncated,
+          )) {
+            ignoredPaths.add(ignoredPath);
+          }
+        }
+
+        return relativePaths.filter((relativePath) => !ignoredPaths.has(relativePath));
+      });
 
     const resolveAvailableBranchName = (
       cwd: string,
@@ -1804,6 +1932,9 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
       pullCurrentBranch,
       readRangeContext,
       readConfigValue,
+      isInsideWorkTree,
+      listWorkspaceFiles,
+      filterIgnoredPaths,
       listBranches,
       createWorktree,
       fetchPullRequestBranch,

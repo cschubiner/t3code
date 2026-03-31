@@ -108,7 +108,7 @@ const defaultProviderRegistryService: ProviderRegistryShape = {
 
 class MockTerminalManager implements TerminalManagerShape {
   private readonly sessions = new Map<string, TerminalSessionSnapshot>();
-  private readonly listeners = new Set<(event: TerminalEvent) => void>();
+  private readonly listeners = new Set<(event: TerminalEvent) => Effect.Effect<void>>();
 
   private key(threadId: string, terminalId: string): string {
     return `${threadId}\u0000${terminalId}`;
@@ -116,7 +116,7 @@ class MockTerminalManager implements TerminalManagerShape {
 
   emitEvent(event: TerminalEvent): void {
     for (const listener of this.listeners) {
-      listener(event);
+      void Effect.runPromise(listener(event));
     }
   }
 
@@ -233,8 +233,6 @@ class MockTerminalManager implements TerminalManagerShape {
         this.listeners.delete(listener);
       };
     });
-
-  readonly dispose: TerminalManagerShape["dispose"] = Effect.void;
 }
 
 // ---------------------------------------------------------------------------

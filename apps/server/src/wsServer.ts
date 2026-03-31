@@ -66,6 +66,7 @@ import { ServerConfig } from "./config";
 import { GitCore } from "./git/Services/GitCore.ts";
 import { GitHubCli } from "./git/Services/GitHubCli.ts";
 import { tryHandleProjectFaviconRequest } from "./projectFaviconRoute";
+import { ProjectFaviconResolver } from "./project/Services/ProjectFaviconResolver.ts";
 import {
   ATTACHMENTS_ROUTE_PREFIX,
   normalizeAttachmentRelativePath,
@@ -298,6 +299,7 @@ export type ServerRuntimeServices =
   | GitManager
   | GitCore
   | GitHubCli
+  | ProjectFaviconResolver
   | TerminalManager
   | SnippetRepository
   | Keybindings
@@ -532,195 +534,198 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       res.end(body);
     };
 
-    void Effect.runPromise(
-      Effect.gen(function* () {
-        const url = new URL(req.url ?? "/", `http://localhost:${port}`);
-        if (tryHandleProjectFaviconRequest(url, res)) {
-          return;
-        }
+    const requestEffect = Effect.gen(function* () {
+      const url = new URL(req.url ?? "/", `http://localhost:${port}`);
+      if (yield* tryHandleProjectFaviconRequest(url, res)) {
+        return;
+      }
 
-        if (url.pathname === "/api/github-pr-status") {
-          const cwd = url.searchParams.get("cwd")?.trim();
-          const reference = url.searchParams.get("url")?.trim();
-          if (!cwd || !reference) {
-            respond(
-              400,
-              {
-                "Content-Type": "application/json",
-                "Access-Control-Allow-Origin": "*",
-              },
-              '{"state":null}',
-            );
-            return;
-          }
-
-          const pullRequest = yield* gitHubCli
-            .getPullRequest({
-              cwd,
-              reference,
-            })
-            .pipe(Effect.catch(() => Effect.succeed(null)));
-
+      if (url.pathname === "/api/github-pr-status") {
+        const cwd = url.searchParams.get("cwd")?.trim();
+        const reference = url.searchParams.get("url")?.trim();
+        if (!cwd || !reference) {
           respond(
-            200,
+            400,
             {
               "Content-Type": "application/json",
-              "Cache-Control": "private, max-age=300",
               "Access-Control-Allow-Origin": "*",
             },
-            JSON.stringify({
-              state: pullRequest?.state ?? null,
-              number: pullRequest?.number ?? null,
-              url: pullRequest?.url ?? reference,
-            }),
+            '{"state":null}',
           );
           return;
         }
 
-        if (url.pathname.startsWith(ATTACHMENTS_ROUTE_PREFIX)) {
-          const rawRelativePath = url.pathname.slice(ATTACHMENTS_ROUTE_PREFIX.length);
-          const normalizedRelativePath = normalizeAttachmentRelativePath(rawRelativePath);
-          if (!normalizedRelativePath) {
-            respond(400, { "Content-Type": "text/plain" }, "Invalid attachment path");
-            return;
-          }
+        const pullRequest = yield* gitHubCli
+          .getPullRequest({
+            cwd,
+            reference,
+          })
+          .pipe(Effect.catch(() => Effect.succeed(null)));
 
-          const isIdLookup =
-            !normalizedRelativePath.includes("/") && !normalizedRelativePath.includes(".");
-          const filePath = isIdLookup
-            ? resolveAttachmentPathById({
-                attachmentsDir: serverConfig.attachmentsDir,
-                attachmentId: normalizedRelativePath,
-              })
-            : resolveAttachmentRelativePath({
-                attachmentsDir: serverConfig.attachmentsDir,
-                relativePath: normalizedRelativePath,
-              });
-          if (!filePath) {
-            respond(
-              isIdLookup ? 404 : 400,
-              { "Content-Type": "text/plain" },
-              isIdLookup ? "Not Found" : "Invalid attachment path",
-            );
-            return;
-          }
+        respond(
+          200,
+          {
+            "Content-Type": "application/json",
+            "Cache-Control": "private, max-age=300",
+            "Access-Control-Allow-Origin": "*",
+          },
+          JSON.stringify({
+            state: pullRequest?.state ?? null,
+            number: pullRequest?.number ?? null,
+            url: pullRequest?.url ?? reference,
+          }),
+        );
+        return;
+      }
 
-          const fileInfo = yield* fileSystem
-            .stat(filePath)
-            .pipe(Effect.catch(() => Effect.succeed(null)));
-          if (!fileInfo || fileInfo.type !== "File") {
-            respond(404, { "Content-Type": "text/plain" }, "Not Found");
-            return;
-          }
-
-          const contentType = Mime.getType(filePath) ?? "application/octet-stream";
-          res.writeHead(200, {
-            "Content-Type": contentType,
-            "Cache-Control": "public, max-age=31536000, immutable",
-          });
-          const streamExit = yield* Stream.runForEach(fileSystem.stream(filePath), (chunk) =>
-            Effect.sync(() => {
-              if (!res.destroyed) {
-                res.write(chunk);
-              }
-            }),
-          ).pipe(Effect.exit);
-          if (Exit.isFailure(streamExit)) {
-            if (!res.destroyed) {
-              res.destroy();
-            }
-            return;
-          }
-          if (!res.writableEnded) {
-            res.end();
-          }
+      if (url.pathname.startsWith(ATTACHMENTS_ROUTE_PREFIX)) {
+        const rawRelativePath = url.pathname.slice(ATTACHMENTS_ROUTE_PREFIX.length);
+        const normalizedRelativePath = normalizeAttachmentRelativePath(rawRelativePath);
+        if (!normalizedRelativePath) {
+          respond(400, { "Content-Type": "text/plain" }, "Invalid attachment path");
           return;
         }
 
-        // In dev mode, redirect to Vite dev server
-        if (devUrl) {
-          respond(302, { Location: devUrl.href });
-          return;
-        }
-
-        // Serve static files from the web app build
-        if (!staticDir) {
+        const isIdLookup =
+          !normalizedRelativePath.includes("/") && !normalizedRelativePath.includes(".");
+        const filePath = isIdLookup
+          ? resolveAttachmentPathById({
+              attachmentsDir: serverConfig.attachmentsDir,
+              attachmentId: normalizedRelativePath,
+            })
+          : resolveAttachmentRelativePath({
+              attachmentsDir: serverConfig.attachmentsDir,
+              relativePath: normalizedRelativePath,
+            });
+        if (!filePath) {
           respond(
-            503,
+            isIdLookup ? 404 : 400,
             { "Content-Type": "text/plain" },
-            "No static directory configured and no dev URL set.",
+            isIdLookup ? "Not Found" : "Invalid attachment path",
           );
           return;
-        }
-
-        const staticRoot = path.resolve(staticDir);
-        const staticRequestPath = url.pathname === "/" ? "/index.html" : url.pathname;
-        const rawStaticRelativePath = staticRequestPath.replace(/^[/\\]+/, "");
-        const hasRawLeadingParentSegment = rawStaticRelativePath.startsWith("..");
-        const staticRelativePath = path.normalize(rawStaticRelativePath).replace(/^[/\\]+/, "");
-        const hasPathTraversalSegment = staticRelativePath.startsWith("..");
-        if (
-          staticRelativePath.length === 0 ||
-          hasRawLeadingParentSegment ||
-          hasPathTraversalSegment ||
-          staticRelativePath.includes("\0")
-        ) {
-          respond(400, { "Content-Type": "text/plain" }, "Invalid static file path");
-          return;
-        }
-
-        const isWithinStaticRoot = (candidate: string) =>
-          candidate === staticRoot ||
-          candidate.startsWith(
-            staticRoot.endsWith(path.sep) ? staticRoot : `${staticRoot}${path.sep}`,
-          );
-
-        let filePath = path.resolve(staticRoot, staticRelativePath);
-        if (!isWithinStaticRoot(filePath)) {
-          respond(400, { "Content-Type": "text/plain" }, "Invalid static file path");
-          return;
-        }
-
-        const ext = path.extname(filePath);
-        if (!ext) {
-          filePath = path.resolve(filePath, "index.html");
-          if (!isWithinStaticRoot(filePath)) {
-            respond(400, { "Content-Type": "text/plain" }, "Invalid static file path");
-            return;
-          }
         }
 
         const fileInfo = yield* fileSystem
           .stat(filePath)
           .pipe(Effect.catch(() => Effect.succeed(null)));
         if (!fileInfo || fileInfo.type !== "File") {
-          const indexPath = path.resolve(staticRoot, "index.html");
-          const indexData = yield* fileSystem
-            .readFile(indexPath)
-            .pipe(Effect.catch(() => Effect.succeed(null)));
-          if (!indexData) {
-            respond(404, { "Content-Type": "text/plain" }, "Not Found");
-            return;
-          }
-          respond(200, { "Content-Type": "text/html; charset=utf-8" }, indexData);
+          respond(404, { "Content-Type": "text/plain" }, "Not Found");
           return;
         }
 
         const contentType = Mime.getType(filePath) ?? "application/octet-stream";
-        const data = yield* fileSystem
-          .readFile(filePath)
-          .pipe(Effect.catch(() => Effect.succeed(null)));
-        if (!data) {
-          respond(500, { "Content-Type": "text/plain" }, "Internal Server Error");
+        const fileBytes = yield* fileSystem.readFile(filePath).pipe(
+          Effect.mapError(
+            () =>
+              new RouteRequestError({
+                message: `Failed to read attachment '${path.basename(filePath)}'.`,
+              }),
+          ),
+        );
+        respond(
+          200,
+          {
+            "Content-Type": contentType,
+            "Cache-Control": "public, max-age=31536000, immutable",
+          },
+          fileBytes,
+        );
+        return;
+      }
+
+      // In dev mode, redirect to Vite dev server
+      if (devUrl) {
+        respond(302, { Location: devUrl.href });
+        return;
+      }
+
+      // Serve static files from the web app build
+      if (!staticDir) {
+        respond(
+          503,
+          { "Content-Type": "text/plain" },
+          "No static directory configured and no dev URL set.",
+        );
+        return;
+      }
+
+      const staticRoot = path.resolve(staticDir);
+      const staticRequestPath = url.pathname === "/" ? "/index.html" : url.pathname;
+      const rawStaticRelativePath = staticRequestPath.replace(/^[/\\]+/, "");
+      const hasRawLeadingParentSegment = rawStaticRelativePath.startsWith("..");
+      const staticRelativePath = path.normalize(rawStaticRelativePath).replace(/^[/\\]+/, "");
+      const hasPathTraversalSegment = staticRelativePath.startsWith("..");
+      if (
+        staticRelativePath.length === 0 ||
+        hasRawLeadingParentSegment ||
+        hasPathTraversalSegment ||
+        staticRelativePath.includes("\0")
+      ) {
+        respond(400, { "Content-Type": "text/plain" }, "Invalid static file path");
+        return;
+      }
+
+      const isWithinStaticRoot = (candidate: string) =>
+        candidate === staticRoot ||
+        candidate.startsWith(
+          staticRoot.endsWith(path.sep) ? staticRoot : `${staticRoot}${path.sep}`,
+        );
+
+      let filePath = path.resolve(staticRoot, staticRelativePath);
+      if (!isWithinStaticRoot(filePath)) {
+        respond(400, { "Content-Type": "text/plain" }, "Invalid static file path");
+        return;
+      }
+
+      const ext = path.extname(filePath);
+      if (!ext) {
+        filePath = path.resolve(filePath, "index.html");
+        if (!isWithinStaticRoot(filePath)) {
+          respond(400, { "Content-Type": "text/plain" }, "Invalid static file path");
           return;
         }
-        respond(200, { "Content-Type": contentType }, data);
-      }),
-    ).catch(() => {
+      }
+
+      const fileInfo = yield* fileSystem
+        .stat(filePath)
+        .pipe(Effect.catch(() => Effect.succeed(null)));
+      if (!fileInfo || fileInfo.type !== "File") {
+        const indexPath = path.resolve(staticRoot, "index.html");
+        const indexData = yield* fileSystem
+          .readFile(indexPath)
+          .pipe(Effect.catch(() => Effect.succeed(null)));
+        if (!indexData) {
+          respond(404, { "Content-Type": "text/plain" }, "Not Found");
+          return;
+        }
+        respond(200, { "Content-Type": "text/html; charset=utf-8" }, indexData);
+        return;
+      }
+
+      const contentType = Mime.getType(filePath) ?? "application/octet-stream";
+      const data = yield* fileSystem
+        .readFile(filePath)
+        .pipe(Effect.catch(() => Effect.succeed(null)));
+      if (!data) {
+        respond(500, { "Content-Type": "text/plain" }, "Internal Server Error");
+        return;
+      }
+      respond(200, { "Content-Type": contentType }, data);
+    });
+    try {
+      void runPromise(requestEffect).catch((error) => {
+        console.error("HTTP request handling failed", error);
+        if (!res.headersSent) {
+          respond(500, { "Content-Type": "text/plain" }, "Internal Server Error");
+        }
+      });
+    } catch (error) {
+      console.error("HTTP request dispatch failed", error);
       if (!res.headersSent) {
         respond(500, { "Content-Type": "text/plain" }, "Internal Server Error");
       }
-    });
+    }
   });
 
   // WebSocket server — upgrades from the HTTP server
@@ -855,13 +860,17 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   }
 
   const runtimeServices = yield* Effect.services<
-    ServerRuntimeServices | ServerConfig | FileSystem.FileSystem | Path.Path
+    | ServerRuntimeServices
+    | ServerConfig
+    | FileSystem.FileSystem
+    | Path.Path
+    | ProjectFaviconResolver
   >();
   const runPromise = Effect.runPromiseWith(runtimeServices);
   const upstreamProxyUrl = upstreamWsUrl?.trim() ? upstreamWsUrl.trim() : undefined;
 
-  const unsubscribeTerminalEvents = yield* terminalManager.subscribe(
-    (event) => void Effect.runPromise(pushBus.publishAll(WS_CHANNELS.terminalEvent, event)),
+  const unsubscribeTerminalEvents = yield* terminalManager.subscribe((event) =>
+    pushBus.publishAll(WS_CHANNELS.terminalEvent, event),
   );
   yield* Effect.addFinalizer(() => Effect.sync(() => unsubscribeTerminalEvents()));
   yield* readiness.markTerminalSubscriptionsReady;
