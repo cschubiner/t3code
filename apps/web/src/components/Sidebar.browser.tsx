@@ -552,6 +552,25 @@ async function mountApp(
   cleanup: () => Promise<void>;
   router: ReturnType<typeof getRouter>;
 }> {
+  const bootstrapThreadId = initialEntry.startsWith("/")
+    ? (initialEntry.slice(1) as ThreadId)
+    : null;
+  if (bootstrapThreadId) {
+    const bootstrapThread = fixture.snapshot.threads.find(
+      (thread) => thread.id === bootstrapThreadId,
+    );
+    if (bootstrapThread) {
+      fixture = {
+        ...fixture,
+        welcome: {
+          ...fixture.welcome,
+          bootstrapProjectId: bootstrapThread.projectId,
+          bootstrapThreadId,
+        },
+      };
+    }
+  }
+
   const host = document.createElement("div");
   host.style.position = "fixed";
   host.style.inset = "0";
@@ -564,6 +583,14 @@ async function mountApp(
   const router = getRouter(createMemoryHistory({ initialEntries: [initialEntry] }));
   const screen = await render(<RouterProvider router={router} />, { container: host });
   await waitForLayout();
+  if (initialEntry.startsWith("/thread-")) {
+    await router.navigate({
+      to: "/$threadId",
+      params: { threadId: initialEntry.slice(1) as ThreadId },
+      replace: true,
+    });
+    await waitForPath(router, initialEntry);
+  }
 
   if (options?.waitForSidebarThreadTitle !== null) {
     await waitForSidebarThread(options?.waitForSidebarThreadTitle ?? "Alpha 5");
