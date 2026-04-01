@@ -88,6 +88,7 @@ const ProviderSessionRuntimeDbRowSchema = ProviderSessionRuntime.mapFields(
   Struct.assign({
     resumeCursor: Schema.NullOr(Schema.fromJsonString(Schema.Unknown)),
     runtimePayload: Schema.NullOr(Schema.fromJsonString(Schema.Unknown)),
+    activeTurnState: Schema.NullOr(Schema.String),
   }),
 );
 const ProjectionCheckpointDbRowSchema = ProjectionCheckpoint.mapFields(
@@ -147,10 +148,25 @@ function readRuntimePayloadLastError(runtimePayload: unknown): string | null {
   return typeof rawLastError === "string" && rawLastError.length > 0 ? rawLastError : null;
 }
 
+function normalizeSessionActiveTurnId(
+  status: OrchestrationSession["status"],
+  activeTurnId: TurnId | null,
+  activeTurnState: string | null,
+): TurnId | null {
+  if (status !== "running" || activeTurnId === null) {
+    return null;
+  }
+  return activeTurnState === null || activeTurnState === "running" ? activeTurnId : null;
+}
+
 function toOrchestrationSessionFromRuntime(
   row: Schema.Schema.Type<typeof ProviderSessionRuntimeDbRowSchema>,
 ): OrchestrationSession {
-  const activeTurnId = readRuntimePayloadActiveTurnId(row.runtimePayload);
+  const activeTurnId = normalizeSessionActiveTurnId(
+    row.status,
+    readRuntimePayloadActiveTurnId(row.runtimePayload),
+    row.activeTurnState,
+  );
 
   return {
     threadId: row.threadId,
@@ -166,10 +182,11 @@ function toOrchestrationSessionFromRuntime(
 function toOrchestrationSessionFromProjection(
   row: Schema.Schema.Type<typeof ProjectionThreadSessionDbRowSchema>,
 ): OrchestrationSession {
-  const activeTurnId =
-    row.status === "running" && row.activeTurnId !== null && row.activeTurnState !== "completed"
-      ? row.activeTurnId
-      : null;
+  const activeTurnId = normalizeSessionActiveTurnId(
+    row.status,
+    row.activeTurnId,
+    row.activeTurnState,
+  );
 
   return {
     threadId: row.threadId,
@@ -378,16 +395,20 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     execute: () =>
       sql`
         SELECT
-          thread_id AS "threadId",
-          provider_name AS "providerName",
-          adapter_key AS "adapterKey",
-          runtime_mode AS "runtimeMode",
-          status,
-          last_seen_at AS "lastSeenAt",
-          resume_cursor_json AS "resumeCursor",
-          runtime_payload_json AS "runtimePayload"
+          provider_session_runtime.thread_id AS "threadId",
+          provider_session_runtime.provider_name AS "providerName",
+          provider_session_runtime.adapter_key AS "adapterKey",
+          provider_session_runtime.runtime_mode AS "runtimeMode",
+          provider_session_runtime.status,
+          provider_session_runtime.last_seen_at AS "lastSeenAt",
+          provider_session_runtime.resume_cursor_json AS "resumeCursor",
+          provider_session_runtime.runtime_payload_json AS "runtimePayload",
+          projection_turns.state AS "activeTurnState"
         FROM provider_session_runtime
-        ORDER BY thread_id ASC
+        LEFT JOIN projection_turns
+          ON projection_turns.thread_id = provider_session_runtime.thread_id
+         AND projection_turns.turn_id = json_extract(provider_session_runtime.runtime_payload_json, '$.activeTurnId')
+        ORDER BY provider_session_runtime.thread_id ASC
       `,
   });
 
