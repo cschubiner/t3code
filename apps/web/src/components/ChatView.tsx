@@ -484,6 +484,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewHandoffTimeoutByMessageIdRef = useRef<Record<string, number>>({});
   const sendInFlightRef = useRef(false);
+  const flushingLocalQueuedTurnsRef = useRef(false);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
   const pendingThreadSearchRestoreRef = useRef<{
@@ -2740,7 +2741,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
           createdAt,
         });
 
-        setPendingQueuedTurnMessageId(null);
+        setPendingQueuedTurnMessageId((current) =>
+          current === messageIdForQueue ? null : current,
+        );
         for (const image of queuedImages) {
           revokeBlobPreviewUrl(image.previewUrl);
         }
@@ -2770,7 +2773,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
         }
         return true;
       } catch (err) {
-        setPendingQueuedTurnMessageId(null);
+        setPendingQueuedTurnMessageId((current) =>
+          current === messageIdForQueue ? null : current,
+        );
         setThreadError(
           threadIdForQueue,
           err instanceof Error ? err.message : "Failed to queue follow-up.",
@@ -2812,48 +2817,57 @@ export default function ChatView({ threadId }: ChatViewProps) {
         EMPTY_LOCAL_QUEUED_TURNS;
 
       for (const queuedTurn of queuedTurnsToFlush) {
-        const queuedText = appendTerminalContextsToPrompt(
-          queuedTurn.text,
-          queuedTurn.terminalContexts,
-        );
-        const outgoingQueuedText = formatOutgoingPrompt({
-          provider: queuedTurn.provider,
-          model: queuedTurn.model,
-          models: getProviderModels(providerStatuses, queuedTurn.provider),
-          effort: queuedTurn.promptEffort,
-          text: queuedText || IMAGE_ONLY_BOOTSTRAP_PROMPT,
-        });
-        const turnAttachments = await Promise.all(
-          queuedTurn.images.map(async (image) => ({
-            type: "image" as const,
-            name: image.name,
-            mimeType: image.mimeType,
-            sizeBytes: image.sizeBytes,
-            dataUrl: await readFileAsDataUrl(image.file),
-          })),
-        );
+        const queuedMessageId = queuedTurn.id as MessageId;
+        setPendingQueuedTurnMessageId(queuedMessageId);
 
-        await api.orchestration.dispatchCommand({
-          type: "thread.turn.queue.enqueue",
-          commandId: newCommandId(),
-          threadId: targetThreadId,
-          message: {
-            messageId: queuedTurn.id as MessageId,
-            role: "user",
-            text: outgoingQueuedText,
-            attachments: turnAttachments,
-          },
-          model: queuedTurn.model ?? undefined,
-          ...(queuedTurn.modelOptions ? { modelOptions: queuedTurn.modelOptions } : {}),
-          ...(providerOptionsForDispatch ? { providerOptions: providerOptionsForDispatch } : {}),
-          provider: queuedTurn.provider,
-          assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
-          runtimeMode: queuedTurn.runtimeMode,
-          interactionMode: queuedTurn.interactionMode,
-          createdAt: queuedTurn.queuedAt,
-        });
+        try {
+          const queuedText = appendTerminalContextsToPrompt(
+            queuedTurn.text,
+            queuedTurn.terminalContexts,
+          );
+          const outgoingQueuedText = formatOutgoingPrompt({
+            provider: queuedTurn.provider,
+            model: queuedTurn.model,
+            models: getProviderModels(providerStatuses, queuedTurn.provider),
+            effort: queuedTurn.promptEffort,
+            text: queuedText || IMAGE_ONLY_BOOTSTRAP_PROMPT,
+          });
+          const turnAttachments = await Promise.all(
+            queuedTurn.images.map(async (image) => ({
+              type: "image" as const,
+              name: image.name,
+              mimeType: image.mimeType,
+              sizeBytes: image.sizeBytes,
+              dataUrl: await readFileAsDataUrl(image.file),
+            })),
+          );
 
-        consumeLocalQueuedTurn(targetThreadId, queuedTurn.id);
+          await api.orchestration.dispatchCommand({
+            type: "thread.turn.queue.enqueue",
+            commandId: newCommandId(),
+            threadId: targetThreadId,
+            message: {
+              messageId: queuedMessageId,
+              role: "user",
+              text: outgoingQueuedText,
+              attachments: turnAttachments,
+            },
+            model: queuedTurn.model ?? undefined,
+            ...(queuedTurn.modelOptions ? { modelOptions: queuedTurn.modelOptions } : {}),
+            ...(providerOptionsForDispatch ? { providerOptions: providerOptionsForDispatch } : {}),
+            provider: queuedTurn.provider,
+            assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
+            runtimeMode: queuedTurn.runtimeMode,
+            interactionMode: queuedTurn.interactionMode,
+            createdAt: queuedTurn.queuedAt,
+          });
+
+          consumeLocalQueuedTurn(targetThreadId, queuedTurn.id);
+        } finally {
+          setPendingQueuedTurnMessageId((current) =>
+            current === queuedMessageId ? null : current,
+          );
+        }
       }
     },
     [
@@ -2861,8 +2875,34 @@ export default function ChatView({ threadId }: ChatViewProps) {
       providerOptionsForDispatch,
       providerStatuses,
       settings.enableAssistantStreaming,
+      setPendingQueuedTurnMessageId,
     ],
   );
+
+  useEffect(() => {
+    if (
+      phase !== "running" ||
+      !activeThread ||
+      !isServerThread ||
+      localQueuedTurns.length === 0 ||
+      pendingQueuedTurnMessageId !== null ||
+      flushingLocalQueuedTurnsRef.current
+    ) {
+      return;
+    }
+
+    flushingLocalQueuedTurnsRef.current = true;
+    void flushLocalQueuedTurnsToServer(activeThread.id).finally(() => {
+      flushingLocalQueuedTurnsRef.current = false;
+    });
+  }, [
+    activeThread,
+    flushLocalQueuedTurnsToServer,
+    isServerThread,
+    localQueuedTurns.length,
+    pendingQueuedTurnMessageId,
+    phase,
+  ]);
 
   const removeQueuedTurnFromServer = useCallback(
     async (messageId: MessageId) => {
@@ -3496,11 +3536,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
           description: toastCopy.description,
         });
       }
-      await queueComposerTurn({
+      const queued = await queueComposerTurn({
         text: trimmed,
         interactionMode,
         terminalContexts: sendableComposerTerminalContexts,
       });
+      if (!queued && pendingQueuedTurnMessageId !== null) {
+        queueComposerTurnLocally({
+          text: trimmed,
+          interactionMode,
+          terminalContexts: sendableComposerTerminalContexts,
+        });
+      }
       return;
     }
     if (phase === "running" && disposition === "queue-front") {
@@ -5322,11 +5369,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                     size="sm"
                                     variant="outline"
                                     className="h-9 rounded-full px-4 sm:h-8"
-                                    disabled={
-                                      isSendBusy ||
-                                      isConnecting ||
-                                      pendingQueuedTurnMessageId !== null
-                                    }
+                                    disabled={isSendBusy || isConnecting}
                                     onClick={() => void onSend(undefined, "queue")}
                                   >
                                     {pendingQueuedTurnMessageId !== null ? "Queueing..." : "Queue"}
