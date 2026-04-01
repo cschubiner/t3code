@@ -324,8 +324,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const queryClient = useQueryClient();
   const createWorktreeMutation = useMutation(gitCreateWorktreeMutationOptions({ queryClient }));
   const removeWorktreeMutation = useMutation(gitRemoveWorktreeMutationOptions({ queryClient }));
-  const branchSelectorFocusRequestId = useChatToolbarFocusStore(
-    (state) => state.branchSelectorFocusRequestId,
+  const branchSelectorFocusRequest = useChatToolbarFocusStore(
+    (state) => state.branchSelectorFocusRequest,
+  );
+  const clearBranchSelectorFocusRequest = useChatToolbarFocusStore(
+    (state) => state.clearBranchSelectorFocusRequest,
   );
   const composerDraft = useComposerThreadDraft(threadId);
   const prompt = composerDraft.prompt;
@@ -395,6 +398,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
+  const [branchSelectorFocusRequestId, setBranchSelectorFocusRequestId] = useState(0);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
   optimisticUserMessagesRef.current = optimisticUserMessages;
@@ -418,6 +422,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
     ApprovalRequestId[]
   >([]);
+
+  useEffect(() => {
+    if (!branchSelectorFocusRequest || branchSelectorFocusRequest.threadId !== threadId) {
+      return;
+    }
+    setBranchSelectorFocusRequestId(branchSelectorFocusRequest.requestId);
+    clearBranchSelectorFocusRequest();
+  }, [branchSelectorFocusRequest, clearBranchSelectorFocusRequest, threadId]);
   const [pendingUserInputAnswersByRequestId, setPendingUserInputAnswersByRequestId] = useState<
     Record<string, Record<string, PendingUserInputDraftAnswer>>
   >({});

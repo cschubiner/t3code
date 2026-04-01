@@ -1,14 +1,25 @@
+import type { ThreadId } from "@t3tools/contracts";
 import { create } from "zustand";
 
+interface BranchSelectorFocusRequest {
+  requestId: number;
+  threadId: ThreadId;
+}
+
 interface ChatToolbarFocusStore {
-  branchSelectorFocusRequestId: number;
-  requestBranchSelectorFocus: () => void;
+  branchSelectorFocusRequest: BranchSelectorFocusRequest | null;
+  requestBranchSelectorFocus: (threadId: ThreadId) => void;
+  clearBranchSelectorFocusRequest: () => void;
 }
 
 export const useChatToolbarFocusStore = create<ChatToolbarFocusStore>((set) => ({
-  branchSelectorFocusRequestId: 0,
-  requestBranchSelectorFocus: () =>
+  branchSelectorFocusRequest: null,
+  requestBranchSelectorFocus: (threadId) =>
     set((state) => ({
-      branchSelectorFocusRequestId: state.branchSelectorFocusRequestId + 1,
+      branchSelectorFocusRequest: {
+        requestId: (state.branchSelectorFocusRequest?.requestId ?? 0) + 1,
+        threadId,
+      },
     })),
+  clearBranchSelectorFocusRequest: () => set({ branchSelectorFocusRequest: null }),
 }));

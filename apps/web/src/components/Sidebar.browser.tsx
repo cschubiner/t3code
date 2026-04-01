@@ -620,7 +620,7 @@ describe("Sidebar navigation keybindings", () => {
       sidebarThreadListMode: "grouped",
     });
     useChatToolbarFocusStore.setState({
-      branchSelectorFocusRequestId: 0,
+      branchSelectorFocusRequest: null,
     });
     useThreadNavigationHistoryStore.getState().clearHistory();
     useThreadSelectionStore.getState().clearSelection();
@@ -1104,7 +1104,7 @@ describe("Import From Codex dialog", () => {
       threadsHydrated: false,
     });
     useChatToolbarFocusStore.setState({
-      branchSelectorFocusRequestId: 0,
+      branchSelectorFocusRequest: null,
     });
     useThreadNavigationHistoryStore.getState().clearHistory();
     useThreadSelectionStore.getState().clearSelection();
