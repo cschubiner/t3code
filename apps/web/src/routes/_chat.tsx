@@ -70,9 +70,10 @@ function ChatRouteGlobalShortcuts() {
       }
 
       if (command === "chat.branchSelector.focus") {
+        if (!routeThreadId) return;
         event.preventDefault();
         event.stopPropagation();
-        requestBranchSelectorFocus();
+        requestBranchSelectorFocus(routeThreadId);
         return;
       }
 
@@ -97,6 +98,7 @@ function ChatRouteGlobalShortcuts() {
     handleNewThread,
     keybindings,
     requestBranchSelectorFocus,
+    routeThreadId,
     defaultProjectId,
     selectedThreadIdsSize,
     terminalOpen,
