@@ -71,6 +71,7 @@ import {
 } from "./TestProviderAdapter.integration.ts";
 import { deriveServerPaths, ServerConfig } from "../src/config.ts";
 import { WorkspaceEntriesLive } from "../src/workspace/Layers/WorkspaceEntries.ts";
+import { WorkspacePathsLive } from "../src/workspace/Layers/WorkspacePaths.ts";
 
 function runGit(cwd: string, args: ReadonlyArray<string>) {
   return execFileSync("git", args, {
@@ -324,6 +325,7 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(
         WorkspaceEntriesLive.pipe(
           Layer.provideMerge(gitCoreLayer),
+          Layer.provideMerge(WorkspacePathsLive),
           Layer.provide(NodeServices.layer),
         ),
       ),

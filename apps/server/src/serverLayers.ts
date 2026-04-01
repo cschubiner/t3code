@@ -30,7 +30,6 @@ import { ProviderSessionDirectory } from "./provider/Services/ProviderSessionDir
 import { makeEventNdjsonLogger } from "./provider/Layers/EventNdjsonLogger";
 import { CodexImportLive } from "./codexImport/Layers/CodexImport";
 import { ServerSettingsService } from "./serverSettings";
-
 import { TerminalManagerLive } from "./terminal/Layers/Manager";
 import { KeybindingsLive } from "./keybindings";
 import { GitManagerLive } from "./git/Layers/GitManager";
@@ -92,9 +91,13 @@ export function makeServerProviderLayer(): Layer.Layer<
       Layer.provide(claudeAdapterLayer),
       Layer.provideMerge(providerSessionDirectoryLayer),
     );
-    return makeProviderServiceLive(
-      canonicalEventLogger ? { canonicalEventLogger } : undefined,
-    ).pipe(Layer.provide(adapterRegistryLayer), Layer.provideMerge(providerSessionDirectoryLayer));
+    return Layer.mergeAll(
+      providerSessionDirectoryLayer,
+      makeProviderServiceLive(canonicalEventLogger ? { canonicalEventLogger } : undefined).pipe(
+        Layer.provide(adapterRegistryLayer),
+        Layer.provide(providerSessionDirectoryLayer),
+      ),
+    );
   }).pipe(Layer.unwrap);
 }
 
@@ -139,7 +142,7 @@ export function makeServerRuntimeServicesLayer() {
   );
   const checkpointReactorLayer = CheckpointReactorLive.pipe(
     Layer.provideMerge(runtimeServicesLayer),
-    Layer.provideMerge(WorkspaceEntriesLive),
+    Layer.provideMerge(WorkspaceEntriesLive.pipe(Layer.provideMerge(WorkspacePathsLive))),
   );
   const turnQueueReactorLayer = TurnQueueReactorLive.pipe(Layer.provideMerge(runtimeServicesLayer));
   const orchestrationReactorLayer = OrchestrationReactorLive.pipe(
@@ -157,7 +160,7 @@ export function makeServerRuntimeServicesLayer() {
   );
 
   const workspacePathsLayer = WorkspacePathsLive;
-  const workspaceEntriesLayer = WorkspaceEntriesLive;
+  const workspaceEntriesLayer = WorkspaceEntriesLive.pipe(Layer.provideMerge(workspacePathsLayer));
   const workspaceFileSystemLayer = WorkspaceFileSystemLive.pipe(
     Layer.provide(workspacePathsLayer),
     Layer.provide(workspaceEntriesLayer),

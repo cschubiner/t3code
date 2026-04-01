@@ -1,6 +1,5 @@
 import type {
   GitCheckoutInput,
-  GitActionProgressEvent,
   GitCreateBranchInput,
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
@@ -14,8 +13,6 @@ import type {
   GitPullResult,
   GitRemoveWorktreeInput,
   GitResolvePullRequestResult,
-  GitRunStackedActionInput,
-  GitRunStackedActionResult,
   GitStatusInput,
   GitStatusResult,
 } from "./git";
@@ -37,8 +34,6 @@ import type {
   ServerConfig,
   ServerProviderUpdatedPayload,
   ServerUpsertKeybindingResult,
-  ServerGenerateSecretUrlInput,
-  ServerGenerateSecretUrlResult,
 } from "./server";
 import type {
   TerminalClearInput,
@@ -202,8 +197,6 @@ export interface NativeApi {
     // Stacked action API
     pull: (input: GitPullInput) => Promise<GitPullResult>;
     status: (input: GitStatusInput) => Promise<GitStatusResult>;
-    runStackedAction: (input: GitRunStackedActionInput) => Promise<GitRunStackedActionResult>;
-    onActionProgress: (callback: (event: GitActionProgressEvent) => void) => () => void;
   };
   contextMenu: {
     show: <T extends string>(
@@ -214,9 +207,6 @@ export interface NativeApi {
   server: {
     getConfig: () => Promise<ServerConfig>;
     refreshProviders: () => Promise<ServerProviderUpdatedPayload>;
-    generateSecretUrl: (
-      input: ServerGenerateSecretUrlInput,
-    ) => Promise<ServerGenerateSecretUrlResult>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
     getSettings: () => Promise<ServerSettings>;
     updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;

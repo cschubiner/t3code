@@ -1,23 +1,20 @@
 import {
   CommandId,
-  type ContextMenuItem,
+  DEFAULT_SERVER_SETTINGS,
+  type DesktopBridge,
   EventId,
-  ORCHESTRATION_WS_CHANNELS,
-  ORCHESTRATION_WS_METHODS,
-  type OrchestrationEvent,
   ProjectId,
-  ThreadId,
-  type WsPushChannel,
-  type WsPushData,
-  type WsPushMessage,
-  WS_CHANNELS,
-  WS_METHODS,
-  type WsPush,
+  SnippetId,
+  type OrchestrationEvent,
+  type ServerConfig,
   type ServerProvider,
+  type TerminalEvent,
+  ThreadId,
 } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const requestMock = vi.fn<(...args: Array<unknown>) => Promise<unknown>>();
+import type { ContextMenuItem } from "@t3tools/contracts";
+
 const showContextMenuFallbackMock =
   vi.fn<
     <T extends string>(
@@ -25,39 +22,89 @@ const showContextMenuFallbackMock =
       position?: { x: number; y: number },
     ) => Promise<T | null>
   >();
-const channelListeners = new Map<string, Set<(message: WsPush) => void>>();
-const latestPushByChannel = new Map<string, WsPush>();
-const subscribeMock = vi.fn<
-  (
-    channel: string,
-    listener: (message: WsPush) => void,
-    options?: { replayLatest?: boolean },
-  ) => () => void
->((channel, listener, options) => {
-  const listeners = channelListeners.get(channel) ?? new Set<(message: WsPush) => void>();
+
+function registerListener<T>(listeners: Set<(event: T) => void>, listener: (event: T) => void) {
   listeners.add(listener);
-  channelListeners.set(channel, listeners);
-  const latest = latestPushByChannel.get(channel);
-  if (latest && options?.replayLatest) {
-    listener(latest);
-  }
   return () => {
     listeners.delete(listener);
-    if (listeners.size === 0) {
-      channelListeners.delete(channel);
-    }
   };
-});
+}
 
-vi.mock("./wsTransport", () => {
+const terminalEventListeners = new Set<(event: TerminalEvent) => void>();
+const orchestrationEventListeners = new Set<(event: OrchestrationEvent) => void>();
+
+const rpcClientMock = {
+  dispose: vi.fn(),
+  terminal: {
+    open: vi.fn(),
+    write: vi.fn(),
+    resize: vi.fn(),
+    clear: vi.fn(),
+    restart: vi.fn(),
+    close: vi.fn(),
+    onEvent: vi.fn((listener: (event: TerminalEvent) => void) =>
+      registerListener(terminalEventListeners, listener),
+    ),
+  },
+  projects: {
+    searchEntries: vi.fn(),
+    writeFile: vi.fn(),
+  },
+  skills: {
+    search: vi.fn(),
+  },
+  snippets: {
+    list: vi.fn(),
+    create: vi.fn(),
+    delete: vi.fn(),
+    onUpdated: vi.fn(() => () => undefined),
+  },
+  shell: {
+    openInEditor: vi.fn(),
+  },
+  git: {
+    pull: vi.fn(),
+    status: vi.fn(),
+    runStackedAction: vi.fn(),
+    listBranches: vi.fn(),
+    createWorktree: vi.fn(),
+    removeWorktree: vi.fn(),
+    createBranch: vi.fn(),
+    checkout: vi.fn(),
+    init: vi.fn(),
+    resolvePullRequest: vi.fn(),
+    preparePullRequestThread: vi.fn(),
+  },
+  server: {
+    getConfig: vi.fn(),
+    refreshProviders: vi.fn(),
+    upsertKeybinding: vi.fn(),
+    getSettings: vi.fn(),
+    updateSettings: vi.fn(),
+    subscribeConfig: vi.fn(),
+    subscribeLifecycle: vi.fn(),
+  },
+  codexImport: {
+    listSessions: vi.fn(),
+    peekSession: vi.fn(),
+    importSessions: vi.fn(),
+  },
+  orchestration: {
+    getSnapshot: vi.fn(),
+    dispatchCommand: vi.fn(),
+    getTurnDiff: vi.fn(),
+    getFullThreadDiff: vi.fn(),
+    replayEvents: vi.fn(),
+    onDomainEvent: vi.fn((listener: (event: OrchestrationEvent) => void) =>
+      registerListener(orchestrationEventListeners, listener),
+    ),
+  },
+};
+
+vi.mock("./wsRpcClient", () => {
   return {
-    WsTransport: class MockWsTransport {
-      request = requestMock;
-      subscribe = subscribeMock;
-      getLatestPush(channel: string) {
-        return latestPushByChannel.get(channel) ?? null;
-      }
-    },
+    getWsRpcClient: () => rpcClientMock,
+    __resetWsRpcClientForTests: vi.fn(),
   };
 });
 
@@ -65,20 +112,9 @@ vi.mock("./contextMenuFallback", () => ({
   showContextMenuFallback: showContextMenuFallbackMock,
 }));
 
-let nextPushSequence = 1;
-
-function emitPush<C extends WsPushChannel>(channel: C, data: WsPushData<C>): void {
-  const listeners = channelListeners.get(channel);
-  const message = {
-    type: "push" as const,
-    sequence: nextPushSequence++,
-    channel,
-    data,
-  } as WsPushMessage<C>;
-  latestPushByChannel.set(channel, message);
-  if (!listeners) return;
+function emitEvent<T>(listeners: Set<(event: T) => void>, event: T) {
   for (const listener of listeners) {
-    listener(message);
+    listener(event);
   }
 }
 
@@ -90,6 +126,52 @@ function getWindowForTest(): Window & typeof globalThis & { desktopBridge?: unkn
     testGlobal.window = {} as Window & typeof globalThis & { desktopBridge?: unknown };
   }
   return testGlobal.window;
+}
+
+function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridge {
+  const bridge: DesktopBridge = {
+    getWsUrl: () => null,
+    pickFolder: async () => null,
+    confirm: async () => true,
+    setTheme: async () => undefined,
+    showContextMenu: async () => null,
+    openExternal: async () => true,
+    onMenuAction: () => () => undefined,
+    getUpdateState: async () => {
+      throw new Error("getUpdateState not implemented in test");
+    },
+    checkForUpdate: async () => {
+      throw new Error("checkForUpdate not implemented in test");
+    },
+    downloadUpdate: async () => {
+      throw new Error("downloadUpdate not implemented in test");
+    },
+    installUpdate: async () => {
+      throw new Error("installUpdate not implemented in test");
+    },
+    onUpdateState: () => () => undefined,
+    getRemoteAccessStatus: async () => ({
+      enabled: false,
+      state: "disabled",
+      provider: "tailscale",
+      preferredUrl: null,
+      urls: [],
+      message: null,
+    }),
+    setRemoteAccessEnabled: async () => ({
+      enabled: false,
+      state: "disabled",
+      provider: "tailscale",
+      preferredUrl: null,
+      urls: [],
+      message: null,
+    }),
+    onRemoteAccessStatus: () => () => undefined,
+  };
+  return {
+    ...bridge,
+    ...overrides,
+  };
 }
 
 const defaultProviders: ReadonlyArray<ServerProvider> = [
@@ -105,14 +187,22 @@ const defaultProviders: ReadonlyArray<ServerProvider> = [
   },
 ];
 
+const baseServerConfig: ServerConfig = {
+  cwd: "/tmp/workspace",
+  keybindingsConfigPath: "/tmp/workspace/.config/keybindings.json",
+  keybindings: [],
+  issues: [],
+  providers: defaultProviders,
+  availableEditors: ["cursor"],
+  settings: DEFAULT_SERVER_SETTINGS,
+};
+
 beforeEach(() => {
   vi.resetModules();
-  requestMock.mockReset();
+  vi.clearAllMocks();
   showContextMenuFallbackMock.mockReset();
-  subscribeMock.mockClear();
-  channelListeners.clear();
-  latestPushByChannel.clear();
-  nextPushSequence = 1;
+  terminalEventListeners.clear();
+  orchestrationEventListeners.clear();
   Reflect.deleteProperty(getWindowForTest(), "desktopBridge");
 });
 
@@ -121,149 +211,27 @@ afterEach(() => {
 });
 
 describe("wsNativeApi", () => {
-  it("delivers and caches valid server.welcome payloads", async () => {
-    const { createWsNativeApi, onServerWelcome } = await import("./wsNativeApi");
+  it("forwards server config fetches directly to the RPC client", async () => {
+    rpcClientMock.server.getConfig.mockResolvedValue(baseServerConfig);
+    const { createWsNativeApi } = await import("./wsNativeApi");
 
-    createWsNativeApi();
-    const listener = vi.fn();
-    onServerWelcome(listener);
+    const api = createWsNativeApi();
 
-    const payload = { cwd: "/tmp/workspace", projectName: "t3-code" };
-    emitPush(WS_CHANNELS.serverWelcome, payload);
-
-    expect(listener).toHaveBeenCalledTimes(1);
-    expect(listener).toHaveBeenCalledWith(expect.objectContaining(payload));
-
-    const lateListener = vi.fn();
-    onServerWelcome(lateListener);
-
-    expect(lateListener).toHaveBeenCalledTimes(1);
-    expect(lateListener).toHaveBeenCalledWith(expect.objectContaining(payload));
+    await expect(api.server.getConfig()).resolves.toEqual(baseServerConfig);
+    expect(rpcClientMock.server.getConfig).toHaveBeenCalledWith();
+    expect(rpcClientMock.server.subscribeConfig).not.toHaveBeenCalled();
+    expect(rpcClientMock.server.subscribeLifecycle).not.toHaveBeenCalled();
   });
 
-  it("preserves bootstrap ids from server.welcome payloads", async () => {
-    const { createWsNativeApi, onServerWelcome } = await import("./wsNativeApi");
-
-    createWsNativeApi();
-    const listener = vi.fn();
-    onServerWelcome(listener);
-
-    emitPush(WS_CHANNELS.serverWelcome, {
-      cwd: "/tmp/workspace",
-      projectName: "t3-code",
-      bootstrapProjectId: ProjectId.makeUnsafe("project-1"),
-      bootstrapThreadId: ThreadId.makeUnsafe("thread-1"),
-    });
-
-    expect(listener).toHaveBeenCalledTimes(1);
-    expect(listener).toHaveBeenCalledWith(
-      expect.objectContaining({
-        cwd: "/tmp/workspace",
-        projectName: "t3-code",
-        bootstrapProjectId: "project-1",
-        bootstrapThreadId: "thread-1",
-      }),
-    );
-  });
-
-  it("delivers successive server.welcome payloads to active listeners", async () => {
-    const { createWsNativeApi, onServerWelcome } = await import("./wsNativeApi");
-
-    createWsNativeApi();
-    const listener = vi.fn();
-    onServerWelcome(listener);
-
-    emitPush(WS_CHANNELS.serverWelcome, { cwd: "/tmp/one", projectName: "one" });
-    emitPush(WS_CHANNELS.serverWelcome, { cwd: "/tmp/workspace", projectName: "t3-code" });
-
-    expect(listener).toHaveBeenCalledTimes(2);
-    expect(listener).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        cwd: "/tmp/workspace",
-        projectName: "t3-code",
-      }),
-    );
-  });
-
-  it("delivers and caches valid server.configUpdated payloads", async () => {
-    const { createWsNativeApi, onServerConfigUpdated } = await import("./wsNativeApi");
-
-    createWsNativeApi();
-    const listener = vi.fn();
-    onServerConfigUpdated(listener);
-
-    const payload = {
-      issues: [
-        {
-          kind: "keybindings.invalid-entry",
-          index: 1,
-          message: "Entry at index 1 is invalid.",
-        },
-      ],
-    } as const;
-    emitPush(WS_CHANNELS.serverConfigUpdated, payload);
-
-    expect(listener).toHaveBeenCalledTimes(1);
-    expect(listener).toHaveBeenCalledWith(payload);
-
-    const lateListener = vi.fn();
-    onServerConfigUpdated(lateListener);
-    expect(lateListener).toHaveBeenCalledTimes(1);
-    expect(lateListener).toHaveBeenCalledWith(payload);
-  });
-
-  it("delivers successive server.configUpdated payloads to active listeners", async () => {
-    const { createWsNativeApi, onServerConfigUpdated } = await import("./wsNativeApi");
-
-    createWsNativeApi();
-    const listener = vi.fn();
-    onServerConfigUpdated(listener);
-
-    emitPush(WS_CHANNELS.serverConfigUpdated, {
-      issues: [{ kind: "keybindings.malformed-config", message: "bad json" }],
-    });
-    emitPush(WS_CHANNELS.serverConfigUpdated, {
-      issues: [],
-    });
-
-    expect(listener).toHaveBeenCalledTimes(2);
-    expect(listener).toHaveBeenLastCalledWith({
-      issues: [],
-    });
-  });
-
-  it("delivers and caches valid server.providersUpdated payloads", async () => {
-    const { createWsNativeApi, onServerProvidersUpdated } = await import("./wsNativeApi");
-
-    createWsNativeApi();
-    const listener = vi.fn();
-    onServerProvidersUpdated(listener);
-
-    const payload = {
-      providers: defaultProviders,
-    } as const;
-    emitPush(WS_CHANNELS.serverProvidersUpdated, payload);
-
-    expect(listener).toHaveBeenCalledTimes(1);
-    expect(listener).toHaveBeenCalledWith(payload);
-
-    const lateListener = vi.fn();
-    onServerProvidersUpdated(lateListener);
-    expect(lateListener).toHaveBeenCalledTimes(1);
-    expect(lateListener).toHaveBeenCalledWith(payload);
-  });
-
-  it("forwards valid terminal and orchestration events", async () => {
+  it("forwards terminal and orchestration stream events", async () => {
     const { createWsNativeApi } = await import("./wsNativeApi");
 
     const api = createWsNativeApi();
     const onTerminalEvent = vi.fn();
     const onDomainEvent = vi.fn();
-    const onActionProgress = vi.fn();
 
     api.terminal.onEvent(onTerminalEvent);
     api.orchestration.onDomainEvent(onDomainEvent);
-    api.git.onActionProgress(onActionProgress);
 
     const terminalEvent = {
       threadId: "thread-1",
@@ -272,7 +240,7 @@ describe("wsNativeApi", () => {
       type: "output",
       data: "hello",
     } as const;
-    emitPush(WS_CHANNELS.terminalEvent, terminalEvent);
+    emitEvent(terminalEventListeners, terminalEvent);
 
     const orchestrationEvent = {
       sequence: 1,
@@ -289,39 +257,23 @@ describe("wsNativeApi", () => {
         projectId: ProjectId.makeUnsafe("project-1"),
         title: "Project",
         workspaceRoot: "/tmp/workspace",
-        defaultModelSelection: null,
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
         scripts: [],
         createdAt: "2026-02-24T00:00:00.000Z",
         updatedAt: "2026-02-24T00:00:00.000Z",
       },
     } satisfies Extract<OrchestrationEvent, { type: "project.created" }>;
-    emitPush(ORCHESTRATION_WS_CHANNELS.domainEvent, orchestrationEvent);
-    emitPush(WS_CHANNELS.gitActionProgress, {
-      actionId: "action-1",
-      cwd: "/repo",
-      action: "commit",
-      kind: "phase_started",
-      phase: "commit",
-      label: "Committing...",
-    });
+    emitEvent(orchestrationEventListeners, orchestrationEvent);
 
-    expect(onTerminalEvent).toHaveBeenCalledTimes(1);
     expect(onTerminalEvent).toHaveBeenCalledWith(terminalEvent);
-    expect(onDomainEvent).toHaveBeenCalledTimes(1);
     expect(onDomainEvent).toHaveBeenCalledWith(orchestrationEvent);
-    expect(onActionProgress).toHaveBeenCalledTimes(1);
-    expect(onActionProgress).toHaveBeenCalledWith({
-      actionId: "action-1",
-      cwd: "/repo",
-      action: "commit",
-      kind: "phase_started",
-      phase: "commit",
-      label: "Committing...",
-    });
   });
 
-  it("wraps orchestration dispatch commands in the command envelope", async () => {
-    requestMock.mockResolvedValue(undefined);
+  it("sends orchestration dispatch commands as the direct RPC payload", async () => {
+    rpcClientMock.orchestration.dispatchCommand.mockResolvedValue({ sequence: 1 });
     const { createWsNativeApi } = await import("./wsNativeApi");
 
     const api = createWsNativeApi();
@@ -339,13 +291,11 @@ describe("wsNativeApi", () => {
     } as const;
     await api.orchestration.dispatchCommand(command);
 
-    expect(requestMock).toHaveBeenCalledWith(ORCHESTRATION_WS_METHODS.dispatchCommand, {
-      command,
-    });
+    expect(rpcClientMock.orchestration.dispatchCommand).toHaveBeenCalledWith(command);
   });
 
-  it("forwards workspace file writes to the websocket project method", async () => {
-    requestMock.mockResolvedValue({ relativePath: "plan.md" });
+  it("forwards workspace file writes to the project RPC", async () => {
+    rpcClientMock.projects.writeFile.mockResolvedValue({ relativePath: "plan.md" });
     const { createWsNativeApi } = await import("./wsNativeApi");
 
     const api = createWsNativeApi();
@@ -355,43 +305,15 @@ describe("wsNativeApi", () => {
       contents: "# Plan\n",
     });
 
-    expect(requestMock).toHaveBeenCalledWith(WS_METHODS.projectsWriteFile, {
+    expect(rpcClientMock.projects.writeFile).toHaveBeenCalledWith({
       cwd: "/tmp/project",
       relativePath: "plan.md",
       contents: "# Plan\n",
     });
   });
 
-  it("uses no client timeout for git.runStackedAction", async () => {
-    requestMock.mockResolvedValue({
-      action: "commit",
-      branch: { status: "skipped_not_requested" },
-      commit: { status: "created", commitSha: "abc1234", subject: "Test" },
-      push: { status: "skipped_not_requested" },
-      pr: { status: "skipped_not_requested" },
-    });
-    const { createWsNativeApi } = await import("./wsNativeApi");
-
-    const api = createWsNativeApi();
-    await api.git.runStackedAction({
-      actionId: "action-1",
-      cwd: "/repo",
-      action: "commit",
-    });
-
-    expect(requestMock).toHaveBeenCalledWith(
-      WS_METHODS.gitRunStackedAction,
-      {
-        actionId: "action-1",
-        cwd: "/repo",
-        action: "commit",
-      },
-      { timeoutMs: null },
-    );
-  });
-
-  it("forwards full-thread diff requests to the orchestration websocket method", async () => {
-    requestMock.mockResolvedValue({ diff: "patch" });
+  it("forwards full-thread diff requests to the orchestration RPC", async () => {
+    rpcClientMock.orchestration.getFullThreadDiff.mockResolvedValue({ diff: "patch" });
     const { createWsNativeApi } = await import("./wsNativeApi");
 
     const api = createWsNativeApi();
@@ -400,60 +322,59 @@ describe("wsNativeApi", () => {
       toTurnCount: 1,
     });
 
-    expect(requestMock).toHaveBeenCalledWith(ORCHESTRATION_WS_METHODS.getFullThreadDiff, {
+    expect(rpcClientMock.orchestration.getFullThreadDiff).toHaveBeenCalledWith({
       threadId: "thread-1",
       toTurnCount: 1,
     });
   });
 
-  it("forwards Codex import methods to websocket transport", async () => {
-    requestMock
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce({
-        sessionId: "session-1",
-        title: "Session",
-        cwd: "/tmp/project",
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-        model: "gpt-5-codex",
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        kind: "direct",
-        transcriptAvailable: true,
-        transcriptError: null,
-        alreadyImported: false,
-        importedThreadId: null,
-        messages: [],
-      })
-      .mockResolvedValueOnce({
-        results: [],
-      });
+  it("forwards provider refreshes directly to the RPC client", async () => {
+    const nextProviders: ReadonlyArray<ServerProvider> = [
+      {
+        ...defaultProviders[0]!,
+        checkedAt: "2026-01-03T00:00:00.000Z",
+      },
+    ];
+    rpcClientMock.server.refreshProviders.mockResolvedValue({ providers: nextProviders });
     const { createWsNativeApi } = await import("./wsNativeApi");
 
     const api = createWsNativeApi();
-    await api.codexImport.listSessions({ kind: "direct", days: 30, limit: 50 });
-    await api.codexImport.peekSession({ sessionId: "session-1", messageCount: 10 });
-    await api.codexImport.importSessions({ sessionIds: ["session-1"] });
 
-    expect(requestMock).toHaveBeenNthCalledWith(1, WS_METHODS.codexImportListSessions, {
-      kind: "direct",
-      days: 30,
-      limit: 50,
-    });
-    expect(requestMock).toHaveBeenNthCalledWith(2, WS_METHODS.codexImportPeekSession, {
-      sessionId: "session-1",
-      messageCount: 10,
-    });
-    expect(requestMock).toHaveBeenNthCalledWith(3, WS_METHODS.codexImportImportSessions, {
-      sessionIds: ["session-1"],
-    });
+    await expect(api.server.refreshProviders()).resolves.toEqual({ providers: nextProviders });
+    expect(rpcClientMock.server.refreshProviders).toHaveBeenCalledWith();
   });
 
-  it("forwards skill search requests to websocket transport", async () => {
-    requestMock.mockResolvedValue({
-      skills: [],
-      truncated: false,
+  it("forwards skill, snippet, and Codex import methods to the RPC client", async () => {
+    rpcClientMock.skills.search.mockResolvedValue({ skills: [], truncated: false });
+    rpcClientMock.snippets.list.mockResolvedValue({ snippets: [] });
+    rpcClientMock.snippets.create.mockResolvedValue({
+      snippet: {
+        id: "snippet-1",
+        text: "hello",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+      deduped: false,
     });
+    rpcClientMock.snippets.delete.mockResolvedValue(undefined);
+    rpcClientMock.codexImport.listSessions.mockResolvedValue([]);
+    rpcClientMock.codexImport.peekSession.mockResolvedValue({
+      sessionId: "session-1",
+      title: "Session",
+      cwd: "/tmp/project",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      model: "gpt-5-codex",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      kind: "direct",
+      transcriptAvailable: true,
+      transcriptError: null,
+      alreadyImported: false,
+      importedThreadId: null,
+      messages: [],
+    });
+    rpcClientMock.codexImport.importSessions.mockResolvedValue({ results: [] });
     const { createWsNativeApi } = await import("./wsNativeApi");
 
     const api = createWsNativeApi();
@@ -464,59 +385,77 @@ describe("wsNativeApi", () => {
       codexHomePath: "/Users/me/.codex",
       extraRoots: ["/tmp/custom-skills"],
     });
+    await api.snippets.list();
+    await api.snippets.create({ text: "hello" });
+    await api.snippets.delete({ snippetId: SnippetId.makeUnsafe("snippet-1") });
+    await api.codexImport.listSessions({ kind: "direct", days: 30, limit: 50 });
+    await api.codexImport.peekSession({ sessionId: "session-1", messageCount: 10 });
+    await api.codexImport.importSessions({ sessionIds: ["session-1"] });
 
-    expect(requestMock).toHaveBeenCalledWith(WS_METHODS.skillsSearch, {
+    expect(rpcClientMock.skills.search).toHaveBeenCalledWith({
       cwd: "/repo",
       query: "slack",
       limit: 10,
       codexHomePath: "/Users/me/.codex",
       extraRoots: ["/tmp/custom-skills"],
     });
+    expect(rpcClientMock.snippets.list).toHaveBeenCalledWith();
+    expect(rpcClientMock.snippets.create).toHaveBeenCalledWith({ text: "hello" });
+    expect(rpcClientMock.snippets.delete).toHaveBeenCalledWith({
+      snippetId: SnippetId.makeUnsafe("snippet-1"),
+    });
+    expect(rpcClientMock.codexImport.listSessions).toHaveBeenCalledWith({
+      kind: "direct",
+      days: 30,
+      limit: 50,
+    });
+    expect(rpcClientMock.codexImport.peekSession).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      messageCount: 10,
+    });
+    expect(rpcClientMock.codexImport.importSessions).toHaveBeenCalledWith({
+      sessionIds: ["session-1"],
+    });
   });
 
-  it("forwards context menu metadata to desktop bridge", async () => {
+  it("forwards server settings updates directly to the RPC client", async () => {
+    const nextSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      enableAssistantStreaming: true,
+    };
+    rpcClientMock.server.updateSettings.mockResolvedValue(nextSettings);
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+
+    await expect(api.server.updateSettings({ enableAssistantStreaming: true })).resolves.toEqual(
+      nextSettings,
+    );
+    expect(rpcClientMock.server.updateSettings).toHaveBeenCalledWith({
+      enableAssistantStreaming: true,
+    });
+  });
+
+  it("forwards context menu metadata to the desktop bridge", async () => {
     const showContextMenu = vi.fn().mockResolvedValue("delete");
-    Object.defineProperty(getWindowForTest(), "desktopBridge", {
-      configurable: true,
-      writable: true,
-      value: {
-        showContextMenu,
-      },
-    });
+    getWindowForTest().desktopBridge = makeDesktopBridge({ showContextMenu });
 
     const { createWsNativeApi } = await import("./wsNativeApi");
     const api = createWsNativeApi();
-    await api.contextMenu.show(
-      [
-        { id: "rename", label: "Rename thread" },
-        { id: "delete", label: "Delete", destructive: true },
-      ],
-      { x: 200, y: 300 },
-    );
+    const items = [{ id: "delete", label: "Delete" }] as const;
 
-    expect(showContextMenu).toHaveBeenCalledWith(
-      [
-        { id: "rename", label: "Rename thread" },
-        { id: "delete", label: "Delete", destructive: true },
-      ],
-      { x: 200, y: 300 },
-    );
+    await expect(api.contextMenu.show(items)).resolves.toBe("delete");
+    expect(showContextMenu).toHaveBeenCalledWith(items, undefined);
   });
 
-  it("uses fallback context menu when desktop bridge is unavailable", async () => {
-    showContextMenuFallbackMock.mockResolvedValue("delete");
-    Reflect.deleteProperty(getWindowForTest(), "desktopBridge");
-
+  it("falls back to the browser context menu helper when the desktop bridge is missing", async () => {
+    showContextMenuFallbackMock.mockResolvedValue("rename");
     const { createWsNativeApi } = await import("./wsNativeApi");
-    const api = createWsNativeApi();
-    await api.contextMenu.show([{ id: "delete", label: "Delete", destructive: true }], {
-      x: 20,
-      y: 30,
-    });
 
-    expect(showContextMenuFallbackMock).toHaveBeenCalledWith(
-      [{ id: "delete", label: "Delete", destructive: true }],
-      { x: 20, y: 30 },
-    );
+    const api = createWsNativeApi();
+    const items = [{ id: "rename", label: "Rename" }] as const;
+
+    await expect(api.contextMenu.show(items, { x: 4, y: 5 })).resolves.toBe("rename");
+    expect(showContextMenuFallbackMock).toHaveBeenCalledWith(items, { x: 4, y: 5 });
   });
 });

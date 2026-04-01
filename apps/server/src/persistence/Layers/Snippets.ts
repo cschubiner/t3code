@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 
-import { SnippetDeleteInput, SnippetId, type SnippetCreateResult } from "@t3tools/contracts";
-import { Effect, Layer, Schema } from "effect";
+import {
+  SnippetDeleteInput,
+  SnippetId,
+  type SnippetCreateResult,
+  type SnippetLibraryUpdatedPayload,
+} from "@t3tools/contracts";
+import { Effect, Layer, PubSub, Schema, Stream } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
@@ -21,6 +26,10 @@ const SnippetDbRow = Schema.Struct({
 
 const makeSnippetRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const changesPubSub = yield* Effect.acquireRelease(
+    PubSub.unbounded<SnippetLibraryUpdatedPayload>(),
+    PubSub.shutdown,
+  );
 
   const listSnippetRows = SqlSchema.findAll({
     Request: Schema.Void,
@@ -109,6 +118,12 @@ const makeSnippetRepository = Effect.gen(function* () {
         yield* updateSnippetTimestamp(nextSnippet).pipe(
           Effect.mapError(toPersistenceSqlError("SnippetRepository.updateTimestamp:query")),
         );
+        const updatePayload: SnippetLibraryUpdatedPayload = {
+          kind: "upsert",
+          snippetId: nextSnippet.id,
+          updatedAt: nextSnippet.updatedAt,
+        };
+        yield* PubSub.publish(changesPubSub, updatePayload);
         return {
           snippet: nextSnippet,
           deduped: true,
@@ -124,6 +139,12 @@ const makeSnippetRepository = Effect.gen(function* () {
       yield* insertSnippetRow(snippet).pipe(
         Effect.mapError(toPersistenceSqlError("SnippetRepository.insert:query")),
       );
+      const updatePayload: SnippetLibraryUpdatedPayload = {
+        kind: "upsert",
+        snippetId: snippet.id,
+        updatedAt: snippet.updatedAt,
+      };
+      yield* PubSub.publish(changesPubSub, updatePayload);
       return {
         snippet,
         deduped: false,
@@ -133,12 +154,23 @@ const makeSnippetRepository = Effect.gen(function* () {
   const deleteById: SnippetRepositoryShape["deleteById"] = (input) =>
     deleteSnippetRow(input).pipe(
       Effect.mapError(toPersistenceSqlError("SnippetRepository.deleteById:query")),
+      Effect.tap(() => {
+        const updatePayload: SnippetLibraryUpdatedPayload = {
+          kind: "delete",
+          snippetId: input.snippetId,
+          updatedAt: new Date().toISOString(),
+        };
+        return PubSub.publish(changesPubSub, updatePayload);
+      }),
     );
 
   return {
     listAll,
     upsertByExactText,
     deleteById,
+    get streamChanges() {
+      return Stream.fromPubSub(changesPubSub);
+    },
   } satisfies SnippetRepositoryShape;
 });
 

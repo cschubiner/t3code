@@ -10,15 +10,12 @@
  * store.
  */
 import { useCallback, useMemo } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ServerSettings,
   ServerSettingsPatch,
-  ServerConfig,
   ModelSelection,
   ThreadEnvMode,
 } from "@t3tools/contracts";
-import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import {
   type ClientSettings,
   ClientSettingsSchema,
@@ -30,13 +27,13 @@ import {
   TimestampFormat,
   UnifiedSettings,
 } from "@t3tools/contracts/settings";
-import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
 import { ensureNativeApi } from "~/nativeApi";
 import { useLocalStorage } from "./useLocalStorage";
 import { normalizeCustomModelSlugs } from "~/modelSelection";
 import { Predicate, Schema, Struct } from "effect";
 import { DeepMutable } from "effect/Types";
 import { deepMerge } from "@t3tools/shared/Struct";
+import { applySettingsUpdated, getServerConfig, useServerSettings } from "~/rpc/serverState";
 
 const CLIENT_SETTINGS_STORAGE_KEY = "t3code:client-settings:v1";
 const OLD_SETTINGS_KEY = "t3code:app-settings:v1";
@@ -144,7 +141,7 @@ function splitPatch(patch: Partial<CompatibilitySettings>): {
 export function useSettings<T extends CompatibilitySettings = CompatibilitySettings>(
   selector?: (s: CompatibilitySettings) => T,
 ): T {
-  const { data: serverConfig } = useQuery(serverConfigQueryOptions());
+  const serverSettings = useServerSettings();
   const [clientSettings] = useLocalStorage(
     CLIENT_SETTINGS_STORAGE_KEY,
     DEFAULT_CLIENT_SETTINGS,
@@ -152,7 +149,6 @@ export function useSettings<T extends CompatibilitySettings = CompatibilitySetti
   );
 
   const merged = useMemo<CompatibilitySettings>(() => {
-    const serverSettings = serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS;
     return {
       ...serverSettings,
       ...clientSettings,
@@ -162,7 +158,7 @@ export function useSettings<T extends CompatibilitySettings = CompatibilitySetti
       claudeBinaryPath: serverSettings.providers.claudeAgent.binaryPath,
       customClaudeModels: serverSettings.providers.claudeAgent.customModels,
     };
-  }, [serverConfig?.settings, clientSettings]);
+  }, [clientSettings, serverSettings]);
 
   return useMemo(() => (selector ? selector(merged) : (merged as T)), [merged, selector]);
 }
@@ -170,11 +166,10 @@ export function useSettings<T extends CompatibilitySettings = CompatibilitySetti
 /**
  * Returns an updater that routes each key to the correct backing store.
  *
- * Server keys are optimistically patched in the React Query cache, then
+ * Server keys are optimistically patched in atom-backed server state, then
  * persisted via RPC. Client keys go straight to localStorage.
  */
 export function useUpdateSettings() {
-  const queryClient = useQueryClient();
   const [, setClientSettings] = useLocalStorage(
     CLIENT_SETTINGS_STORAGE_KEY,
     DEFAULT_CLIENT_SETTINGS,
@@ -186,15 +181,10 @@ export function useUpdateSettings() {
       const { serverPatch, clientPatch } = splitPatch(patch);
 
       if (Object.keys(serverPatch).length > 0) {
-        // Optimistic update of the React Query cache
-        queryClient.setQueryData<ServerConfig>(serverQueryKeys.config(), (old) => {
-          if (!old) return old;
-          return {
-            ...old,
-            settings: deepMerge(old.settings, serverPatch),
-          };
-        });
-        // Fire-and-forget RPC — push will reconcile on success
+        const currentServerConfig = getServerConfig();
+        if (currentServerConfig) {
+          applySettingsUpdated(deepMerge(currentServerConfig.settings, serverPatch));
+        }
         void ensureNativeApi().server.updateSettings(serverPatch);
       }
 
@@ -202,7 +192,7 @@ export function useUpdateSettings() {
         setClientSettings((prev) => ({ ...prev, ...clientPatch }));
       }
     },
-    [queryClient, setClientSettings],
+    [setClientSettings],
   );
 
   const resetSettings = useCallback(() => {

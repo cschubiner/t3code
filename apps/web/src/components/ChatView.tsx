@@ -12,13 +12,11 @@ import {
   type ProviderApprovalDecision,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
-  type ResolvedKeybindingsConfig,
   type ServerProvider,
   type SkillSummary,
   type Snippet,
   type ThreadId,
   type TurnId,
-  type EditorId,
   type KeybindingCommand,
   OrchestrationThreadActivity,
   ProviderInteractionMode,
@@ -44,7 +42,6 @@ import {
   gitRemoveWorktreeMutationOptions,
 } from "~/lib/gitReactQuery";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
-import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
 import { skillSearchQueryOptions } from "~/lib/skillReactQuery";
 import { snippetListQueryOptions, snippetQueryKeys } from "~/lib/snippetReactQuery";
 import { isElectron } from "../env";
@@ -104,6 +101,11 @@ import { useTheme } from "../hooks/useTheme";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import BranchToolbar from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
+import {
+  useServerAvailableEditors,
+  useServerKeybindings,
+  useServerProviders,
+} from "../rpc/serverState";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import {
@@ -211,12 +213,9 @@ const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES 
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
-const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_SKILLS: SkillSummary[] = [];
 const EMPTY_SNIPPETS: Snippet[] = [];
-const EMPTY_AVAILABLE_EDITORS: EditorId[] = [];
-const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 const EMPTY_LOCAL_QUEUED_TURNS: QueuedComposerTurn[] = [];
 
@@ -837,8 +836,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const lockedProvider: ProviderKind | null = hasThreadStarted
     ? (sessionProvider ?? threadProvider ?? selectedProviderByThreadId ?? null)
     : null;
-  const serverConfigQuery = useQuery(serverConfigQueryOptions());
-  const providerStatuses = serverConfigQuery.data?.providers ?? EMPTY_PROVIDERS;
+  const providerStatuses = useServerProviders();
   const unlockedSelectedProvider = resolveSelectableProvider(
     providerStatuses,
     selectedProviderByThreadId ?? threadProvider ?? "codex",
@@ -1280,8 +1278,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const effectivePathQuery = pathTriggerQuery.length > 0 ? debouncedPathQuery : "";
   const effectiveSkillQuery = skillTriggerQuery.length > 0 ? debouncedSkillQuery : "";
   const branchesQuery = useQuery(gitBranchesQueryOptions(gitCwd));
-  const keybindings = serverConfigQuery.data?.keybindings ?? EMPTY_KEYBINDINGS;
-  const availableEditors = serverConfigQuery.data?.availableEditors ?? EMPTY_AVAILABLE_EDITORS;
+  const keybindings = useServerKeybindings();
+  const availableEditors = useServerAvailableEditors();
   const modelOptionsByProvider = useMemo(
     () => ({
       codex: providerStatuses.find((provider) => provider.provider === "codex")?.models ?? [],
@@ -1863,10 +1861,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
       if (isElectron && keybindingRule) {
         await api.server.upsertKeybinding(keybindingRule);
-        await queryClient.invalidateQueries({ queryKey: serverQueryKeys.all });
       }
     },
-    [queryClient],
+    [],
   );
   const saveProjectScript = useCallback(
     async (input: NewProjectScriptInput) => {

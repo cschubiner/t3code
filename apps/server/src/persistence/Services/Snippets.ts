@@ -4,8 +4,9 @@ import {
   SnippetCreateResult,
   SnippetDeleteInput,
   TrimmedNonEmptyString,
+  type SnippetLibraryUpdatedPayload,
 } from "@t3tools/contracts";
-import { Schema, ServiceMap } from "effect";
+import { Schema, ServiceMap, type Stream } from "effect";
 import type { Effect } from "effect";
 
 import type { ProjectionRepositoryError } from "../Errors.ts";
@@ -24,6 +25,7 @@ export interface SnippetRepositoryShape {
   readonly deleteById: (
     input: SnippetDeleteInput,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
+  readonly streamChanges: Stream.Stream<SnippetLibraryUpdatedPayload>;
 }
 
 export class SnippetRepository extends ServiceMap.Service<
