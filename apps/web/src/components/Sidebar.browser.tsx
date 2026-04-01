@@ -4,6 +4,7 @@ import {
   DEFAULT_UNIFIED_SETTINGS,
   type CodexImportPeekSessionResult,
   type CodexImportSessionSummary,
+  ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
   type OrchestrationReadModel,
   type ProjectId,
@@ -110,6 +111,8 @@ interface TestFixture {
 }
 
 let fixture: TestFixture;
+let wsPushSequence = 0;
+let domainEventSequence = 0;
 
 const wsLink = ws.link(/ws(s)?:\/\/.*/);
 
@@ -381,9 +384,65 @@ function buildCodexImportPreview(sessionId: string): CodexImportPeekSessionResul
   };
 }
 
-function resolveWsRpc(body: { _tag: string; [key: string]: unknown }): unknown {
+function sendPush(
+  client: { send: (message: string) => void },
+  channel: string,
+  data: unknown,
+): void {
+  wsPushSequence += 1;
+  client.send(
+    JSON.stringify({
+      type: "push",
+      sequence: wsPushSequence,
+      channel,
+      data,
+    }),
+  );
+}
+
+function resolveWsRpc(
+  client: { send: (message: string) => void },
+  body: { _tag: string; [key: string]: unknown },
+): unknown {
   if (body._tag === ORCHESTRATION_WS_METHODS.getSnapshot) {
     return fixture.snapshot;
+  }
+  if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+    const command = body.command as
+      | {
+          type?: string;
+          threadId?: ThreadId;
+          title?: string;
+        }
+      | undefined;
+    if (
+      command?.type === "thread.meta.update" &&
+      typeof command.threadId === "string" &&
+      typeof command.title === "string"
+    ) {
+      const nextTitle = command.title.trim();
+      domainEventSequence += 1;
+      const updatedAt = `2026-03-12T12:00:${String(domainEventSequence).padStart(2, "0")}.000Z`;
+      fixture.snapshot = {
+        ...fixture.snapshot,
+        snapshotSequence: fixture.snapshot.snapshotSequence + 1,
+        updatedAt,
+        threads: fixture.snapshot.threads.map((thread) =>
+          thread.id === command.threadId ? { ...thread, title: nextTitle, updatedAt } : thread,
+        ),
+      };
+      sendPush(client, ORCHESTRATION_WS_CHANNELS.domainEvent, {
+        sequence: domainEventSequence,
+        occurredAt: updatedAt,
+        type: "thread.meta-updated",
+        payload: {
+          threadId: command.threadId,
+          title: nextTitle,
+          updatedAt,
+        },
+      });
+    }
+    return {};
   }
   if (body._tag === WS_METHODS.serverGetConfig) {
     return fixture.serverConfig;
@@ -423,14 +482,7 @@ function resolveWsRpc(body: { _tag: string; [key: string]: unknown }): unknown {
 
 const worker = setupWorker(
   wsLink.addEventListener("connection", ({ client }) => {
-    client.send(
-      JSON.stringify({
-        type: "push",
-        sequence: 1,
-        channel: WS_CHANNELS.serverWelcome,
-        data: fixture.welcome,
-      }),
-    );
+    sendPush(client, WS_CHANNELS.serverWelcome, fixture.welcome);
     client.addEventListener("message", (event) => {
       if (typeof event.data !== "string") return;
       let request: { id: string; body: { _tag: string; [key: string]: unknown } };
@@ -444,7 +496,7 @@ const worker = setupWorker(
       client.send(
         JSON.stringify({
           id: request.id,
-          result: resolveWsRpc(request.body),
+          result: resolveWsRpc(client, request.body),
         }),
       );
     });
@@ -625,6 +677,8 @@ describe("Sidebar navigation keybindings", () => {
 
   beforeEach(async () => {
     fixture = buildFixture();
+    wsPushSequence = 0;
+    domainEventSequence = 0;
     await setViewport();
     localStorage.clear();
     resetPersistedRendererStateMemory();
@@ -976,6 +1030,47 @@ describe("Sidebar navigation keybindings", () => {
           expect(selectedRenameInput).toBeTruthy();
           expect(activeRenameInput).toBeFalsy();
           expect(document.activeElement).toBe(selectedRenameInput);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("saves the rename and exits edit mode when Enter is pressed", async () => {
+    const mounted = await mountApp(`/${THREAD_A5}`);
+
+    try {
+      dispatchSidebarShortcut({ key: "r", shiftKey: true, modKey: true });
+
+      let renameInput: HTMLInputElement | null = null;
+      await vi.waitFor(
+        () => {
+          renameInput = document.querySelector<HTMLInputElement>(
+            '[data-thread-item] input[value="Alpha 5"]',
+          );
+          expect(renameInput).toBeTruthy();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      renameInput!.focus();
+      renameInput!.value = "april fool";
+      renameInput!.dispatchEvent(new Event("input", { bubbles: true }));
+      renameInput!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(
+            document.querySelector('[data-thread-item] input[value="april fool"]'),
+          ).toBeFalsy();
+          const renamedRow = Array.from(
+            document.querySelectorAll<HTMLElement>("[data-thread-item]"),
+          ).find((node) => node.textContent?.includes("april fool"));
+          expect(renamedRow).toBeTruthy();
         },
         { timeout: 8_000, interval: 16 },
       );
