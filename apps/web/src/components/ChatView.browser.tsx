@@ -3011,6 +3011,76 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("buffers queued follow-ups locally while a prior queue enqueue is still pending", async () => {
+    const deferredQueueEnqueue = createDeferred<unknown>();
+    let pendingQueueEnqueueCount = 0;
+    wsRpcOverrides.set(ORCHESTRATION_WS_METHODS.dispatchCommand, (body) => {
+      const command =
+        typeof body.command === "object" && body.command !== null
+          ? (body.command as { type?: string })
+          : null;
+      if (command?.type === "thread.turn.queue.enqueue" && pendingQueueEnqueueCount === 0) {
+        pendingQueueEnqueueCount += 1;
+        return deferredQueueEnqueue.promise;
+      }
+      return {};
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshot(),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "First queued");
+      await waitForLayout();
+
+      findButtonByText(document, "Queue")?.click();
+
+      await vi.waitFor(
+        () => {
+          const queueRequest = listDispatchCommandsByType("thread.turn.queue.enqueue").at(-1);
+          expect(queueRequest?.command?.message?.text).toBe("First queued");
+          expect(findButtonByText(document, "Queueing...")).not.toBeNull();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Second queued");
+      await waitForLayout();
+
+      findButtonByText(document, "Queueing...")?.click();
+
+      await vi.waitFor(
+        () => {
+          const queuedTurns = useComposerDraftStore.getState().queuedTurnsByThreadId[THREAD_ID];
+          expect(queuedTurns).toHaveLength(1);
+          expect(queuedTurns?.[0]?.text).toBe("Second queued");
+          expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.prompt ?? "").toBe(
+            "",
+          );
+          expect(listDispatchCommandsByType("thread.turn.queue.enqueue")).toHaveLength(1);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      deferredQueueEnqueue.resolve({});
+
+      await vi.waitFor(
+        () => {
+          const queueRequests = listDispatchCommandsByType("thread.turn.queue.enqueue");
+          const queuedTexts = queueRequests.map((request) => request.command?.message?.text);
+          expect(queuedTexts).toEqual(["First queued", "Second queued"]);
+          expect(useComposerDraftStore.getState().queuedTurnsByThreadId[THREAD_ID]).toBeUndefined();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      deferredQueueEnqueue.resolve({});
+      await mounted.cleanup();
+    }
+  });
+
   it("queues additional messages while preparing a new worktree", async () => {
     const deferredWorktree = createDeferred<{
       worktree: { branch: string; path: string };
