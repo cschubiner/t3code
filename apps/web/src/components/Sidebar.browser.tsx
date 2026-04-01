@@ -8,10 +8,9 @@ import {
   type OrchestrationReadModel,
   type ProjectId,
   type ServerConfig,
+  type ServerLifecycleWelcomePayload,
   type ThreadId,
-  type WsWelcomePayload,
   WS_METHODS,
-  WS_CHANNELS,
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
@@ -28,6 +27,10 @@ import { getRouter } from "../router";
 import { resetPersistedRendererStateMemory, useStore } from "../store";
 import { useThreadNavigationHistoryStore } from "../threadNavigationHistoryStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
+
+const WS_CHANNELS = {
+  serverWelcome: "server.welcome",
+} as const;
 
 const NOW_ISO = "2026-03-12T12:00:00.000Z";
 const PROJECT_ALPHA_ID = "project-alpha" as ProjectId;
@@ -102,7 +105,7 @@ function installMatchMediaMock(): void {
 interface TestFixture {
   snapshot: OrchestrationReadModel;
   serverConfig: ServerConfig;
-  welcome: WsWelcomePayload;
+  welcome: ServerLifecycleWelcomePayload;
   codexImportSessions: ReadonlyArray<CodexImportSessionSummary>;
 }
 

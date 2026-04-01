@@ -12,10 +12,9 @@ import {
   type SnippetId,
   type SnippetListResult,
   type ServerConfig,
+  type ServerLifecycleWelcomePayload,
   type ThreadId,
   type TurnId,
-  type WsWelcomePayload,
-  WS_CHANNELS,
   WS_METHODS,
   OrchestrationSessionStatus,
   DEFAULT_SERVER_SETTINGS,
@@ -38,6 +37,11 @@ import { isMacPlatform } from "../lib/utils";
 import { getRouter } from "../router";
 import { useStore } from "../store";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
+
+const WS_CHANNELS = {
+  serverWelcome: "server.welcome",
+  snippetsUpdated: "snippets.updated",
+} as const;
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
 const THREAD_ID = "thread-browser-test" as ThreadId;
@@ -65,7 +69,7 @@ interface TestFixture {
   serverConfig: ServerConfig;
   skillSearchResult: SkillSearchResult;
   snippetListResult: SnippetListResult;
-  welcome: WsWelcomePayload;
+  welcome: ServerLifecycleWelcomePayload;
 }
 
 let fixture: TestFixture;
