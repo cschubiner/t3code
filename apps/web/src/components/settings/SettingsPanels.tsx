@@ -2,10 +2,13 @@ import {
   ArchiveIcon,
   ArchiveX,
   ChevronDownIcon,
+  CopyIcon,
+  ExternalLinkIcon,
   InfoIcon,
   LoaderIcon,
   PlusIcon,
   RefreshCwIcon,
+  ShieldIcon,
   Undo2Icon,
   XIcon,
 } from "lucide-react";
@@ -13,6 +16,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   PROVIDER_DISPLAY_NAMES,
+  type DesktopRemoteAccessStatus,
   type ProviderKind,
   type ServerProvider,
   type ServerProviderModel,
@@ -441,6 +445,23 @@ function AboutVersionSection() {
   );
 }
 
+function remoteAccessStateLabel(status: DesktopRemoteAccessStatus | null): string {
+  switch (status?.state) {
+    case "ready":
+      return "Ready";
+    case "starting":
+      return "Starting";
+    case "unavailable":
+      return "Unavailable";
+    case "error":
+      return "Error";
+    case "disabled":
+      return "Disabled";
+    default:
+      return "Checking";
+  }
+}
+
 export function useSettingsRestore(onRestored?: () => void) {
   const { theme, setTheme } = useTheme();
   const settings = useSettings();
@@ -518,6 +539,10 @@ export function GeneralSettingsPanel() {
   const { theme, setTheme } = useTheme();
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
+  const [remoteAccessStatus, setRemoteAccessStatus] = useState<DesktopRemoteAccessStatus | null>(
+    null,
+  );
+  const [isTogglingRemoteAccess, setIsTogglingRemoteAccess] = useState(false);
   const [isOpeningKeybindings, setIsOpeningKeybindings] = useState(false);
   const [openKeybindingsError, setOpenKeybindingsError] = useState<string | null>(null);
   const [openProviderDetails, setOpenProviderDetails] = useState<Record<ProviderKind, boolean>>({
@@ -735,8 +760,187 @@ export function GeneralSettingsPanel() {
           serverProviders[0]!.checkedAt,
         )
       : null;
+
+  useEffect(() => {
+    if (!window.desktopBridge) {
+      return;
+    }
+
+    let disposed = false;
+    void window.desktopBridge.getRemoteAccessStatus().then((status) => {
+      if (!disposed) {
+        setRemoteAccessStatus(status);
+      }
+    });
+
+    const unsubscribe = window.desktopBridge.onRemoteAccessStatus((status) => {
+      if (!disposed) {
+        setRemoteAccessStatus(status);
+      }
+    });
+
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, []);
+
+  const copyRemoteAccessUrl = useCallback(() => {
+    if (!remoteAccessStatus?.preferredUrl) {
+      return;
+    }
+
+    if (typeof navigator === "undefined" || navigator.clipboard?.writeText === undefined) {
+      toastManager.add({
+        type: "error",
+        title: "Clipboard unavailable",
+        description: "Copy the Tailscale URL manually from the field below.",
+      });
+      return;
+    }
+
+    void navigator.clipboard
+      .writeText(remoteAccessStatus.preferredUrl)
+      .then(() => {
+        toastManager.add({
+          type: "success",
+          title: "Remote URL copied",
+          description: "Open it on a phone connected to the same tailnet.",
+        });
+      })
+      .catch((error) => {
+        toastManager.add({
+          type: "error",
+          title: "Unable to copy remote URL",
+          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+        });
+      });
+  }, [remoteAccessStatus]);
+
+  const openRemoteAccessUrl = useCallback(() => {
+    if (!remoteAccessStatus?.preferredUrl) {
+      return;
+    }
+
+    const api = ensureNativeApi();
+    void api.shell.openExternal(remoteAccessStatus.preferredUrl).catch((error) => {
+      toastManager.add({
+        type: "error",
+        title: "Unable to open remote URL",
+        description: error instanceof Error ? error.message : "An unexpected error occurred.",
+      });
+    });
+  }, [remoteAccessStatus]);
+
+  const toggleRemoteAccess = useCallback((enabled: boolean) => {
+    if (!window.desktopBridge) {
+      return;
+    }
+
+    setIsTogglingRemoteAccess(true);
+    void window.desktopBridge
+      .setRemoteAccessEnabled(enabled)
+      .then((status) => {
+        setRemoteAccessStatus(status);
+      })
+      .catch((error) => {
+        toastManager.add({
+          type: "error",
+          title: "Unable to update remote access",
+          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+        });
+      })
+      .finally(() => {
+        setIsTogglingRemoteAccess(false);
+      });
+  }, []);
+
   return (
     <SettingsPageContainer>
+      {isElectron ? (
+        <SettingsSection title="Remote Access" icon={<ShieldIcon className="size-3.5" />}>
+          <SettingsRow
+            title={
+              <span className="inline-flex items-center gap-2">
+                <ShieldIcon className="size-4 text-sky-600" />
+                <span>Private Remote Access</span>
+              </span>
+            }
+            description="Expose the live desktop app privately over Tailscale so another device on your tailnet can use the same session."
+            status={
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-full border border-border px-2 py-0.5 text-[11px] font-medium text-foreground">
+                    {remoteAccessStateLabel(remoteAccessStatus)}
+                  </span>
+                  <span>Tailscale only. Devices must be on the same tailnet.</span>
+                </div>
+                {remoteAccessStatus?.message ? (
+                  <div className="text-amber-700 dark:text-amber-400">
+                    {remoteAccessStatus.message}
+                  </div>
+                ) : remoteAccessStatus?.preferredUrl ? (
+                  <div>Open the preferred URL on a phone over Wi-Fi or cellular.</div>
+                ) : null}
+              </div>
+            }
+            control={
+              <Switch
+                checked={remoteAccessStatus?.enabled === true}
+                disabled={isTogglingRemoteAccess}
+                onCheckedChange={toggleRemoteAccess}
+                aria-label="Toggle private remote access"
+              />
+            }
+          >
+            <div className="mt-4 space-y-3 rounded-xl border bg-background px-4 py-3 text-xs text-muted-foreground">
+              <div>
+                <div className="font-medium text-foreground">Preferred URL</div>
+                <div className="mt-1 break-all">
+                  {remoteAccessStatus?.preferredUrl ?? "Enable remote access to generate a URL."}
+                </div>
+              </div>
+
+              {remoteAccessStatus && remoteAccessStatus.urls.length > 1 ? (
+                <div>
+                  <div className="font-medium text-foreground">Also available on</div>
+                  <div className="mt-1 space-y-1">
+                    {remoteAccessStatus.urls
+                      .filter((url) => url !== remoteAccessStatus.preferredUrl)
+                      .map((url) => (
+                        <div key={url} className="break-all">
+                          {url}
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="flex flex-wrap gap-2 pt-1">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={copyRemoteAccessUrl}
+                  disabled={!remoteAccessStatus?.preferredUrl}
+                >
+                  <CopyIcon className="size-4" />
+                  Copy URL
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={openRemoteAccessUrl}
+                  disabled={!remoteAccessStatus?.preferredUrl}
+                >
+                  <ExternalLinkIcon className="size-4" />
+                  Open URL
+                </Button>
+              </div>
+            </div>
+          </SettingsRow>
+        </SettingsSection>
+      ) : null}
+
       <SettingsSection title="General">
         <SettingsRow
           title="Theme"
