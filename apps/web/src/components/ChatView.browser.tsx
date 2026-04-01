@@ -33,6 +33,7 @@ import { isMacPlatform } from "../lib/utils";
 import { __resetNativeApiForTests } from "../nativeApi";
 import { getRouter } from "../router";
 import { useStore } from "../store";
+import { useChatToolbarFocusStore } from "../chatToolbarFocusStore";
 import { BrowserWsRpcHarness, type NormalizedWsRpcRequestBody } from "../../test/wsRpcHarness";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
@@ -1137,6 +1138,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
       projects: [],
       threads: [],
       bootstrapComplete: false,
+    });
+    useChatToolbarFocusStore.setState({
+      branchSelectorFocusRequest: null,
     });
   });
 
@@ -2707,6 +2711,95 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
     } finally {
       await mounted.cleanup();
+    }
+  });
+
+  it("does not reopen the branch selector from a stale focus request after remounting", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+        },
+      },
+      queuedTurnsByThreadId: {},
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+
+    const configureFixture = (nextFixture: TestFixture) => {
+      nextFixture.serverConfig = {
+        ...nextFixture.serverConfig,
+        keybindings: [
+          createResolvedKeybinding("e", "chat.branchSelector.focus", {
+            shiftKey: true,
+            whenAst: whenNot(whenIdentifier("terminalFocus")),
+          }),
+        ],
+      };
+    };
+
+    const firstMount = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture,
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "e",
+          bubbles: true,
+          cancelable: true,
+          ...modShiftShortcutModifiers(),
+        }),
+      );
+
+      const branchSearchInput = await waitForElement(
+        () =>
+          document.querySelector(
+            'input[placeholder="Search branches..."]',
+          ) as HTMLInputElement | null,
+        "Unable to find branch search input.",
+      );
+
+      branchSearchInput.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Escape",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(document.querySelector('input[placeholder="Search branches..."]')).toBeNull();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await firstMount.cleanup();
+    }
+
+    const secondMount = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture,
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await waitForLayout();
+      expect(document.querySelector('input[placeholder="Search branches..."]')).toBeNull();
+    } finally {
+      await secondMount.cleanup();
     }
   });
 
