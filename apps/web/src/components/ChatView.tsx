@@ -191,6 +191,7 @@ import {
   buildLocalDraftThread,
   buildTemporaryWorktreeBranchName,
   cloneComposerImageForRetry,
+  composerShowsActiveTurnActions,
   collectUserMessageBlobPreviewUrls,
   deriveComposerSendState,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
@@ -905,6 +906,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const isSendBusy = sendPhase !== "idle";
   const isPreparingWorktree = sendPhase === "preparing-worktree";
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  const composerShowsRunningTurnActions = composerShowsActiveTurnActions(phase, sendPhase);
   const nowIso = new Date(nowTick).toISOString();
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
@@ -2559,14 +2561,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
       : "local";
 
   useEffect(() => {
-    if (phase !== "running") return;
+    if (!isWorking) return;
     const timer = window.setInterval(() => {
       setNowTick(Date.now());
     }, 1000);
     return () => {
       window.clearInterval(timer);
     };
-  }, [phase]);
+  }, [isWorking]);
 
   const beginSendPhase = useCallback((nextPhase: Exclude<SendPhase, "idle">) => {
     setSendStartedAt((current) => current ?? new Date().toISOString());
@@ -2612,7 +2614,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       text: string;
       interactionMode: ProviderInteractionMode;
       terminalContexts?: TerminalContextDraft[];
-      prepend?: boolean;
+      disposition?: ComposerSubmissionDisposition;
     }) => {
       if (!activeThread) {
         return false;
@@ -2625,11 +2627,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return false;
       }
       const threadIdForQueue = activeThread.id;
-      const queueLocalTurn = input?.prepend ? prependLocalQueuedTurn : enqueueLocalQueuedTurn;
+      const disposition = input?.disposition ?? "queue";
+      const queueLocalTurn =
+        disposition === "queue-front" || disposition === "steer"
+          ? prependLocalQueuedTurn
+          : enqueueLocalQueuedTurn;
       queueLocalTurn(threadIdForQueue, {
         id: newMessageId(),
         queuedAt: new Date().toISOString(),
         text: trimmed,
+        disposition,
         images: queuedImages,
         terminalContexts: queuedTerminalContexts,
         provider: selectedProvider,
@@ -2870,6 +2877,32 @@ export default function ChatView({ threadId }: ChatViewProps) {
             interactionMode: queuedTurn.interactionMode,
             createdAt: queuedTurn.queuedAt,
           });
+
+          const currentQueuedHeadMessageId =
+            useStore.getState().threads.find((thread) => thread.id === targetThreadId)
+              ?.queuedTurns[0]?.messageId ?? null;
+
+          if (queuedTurn.disposition === "steer") {
+            await api.orchestration.dispatchCommand({
+              type: "thread.turn.queue.send-now",
+              commandId: newCommandId(),
+              threadId: targetThreadId,
+              messageId: queuedMessageId,
+              createdAt: new Date().toISOString(),
+            });
+          } else if (
+            queuedTurn.disposition === "queue-front" &&
+            currentQueuedHeadMessageId !== null
+          ) {
+            await api.orchestration.dispatchCommand({
+              type: "thread.turn.queue.move",
+              commandId: newCommandId(),
+              threadId: targetThreadId,
+              messageId: queuedMessageId,
+              targetMessageId: currentQueuedHeadMessageId,
+              createdAt: new Date().toISOString(),
+            });
+          }
 
           consumeLocalQueuedTurn(targetThreadId, queuedTurn.id);
         } finally {
@@ -3418,6 +3451,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   ) => {
     e?.preventDefault();
     const api = readNativeApi();
+    const canFollowUpWhileTurnDispatchPending = sendPhase === "sending-turn";
     const canQueueWhilePreparingWorktree =
       (disposition === "queue" || disposition === "queue-front") &&
       sendPhase === "preparing-worktree";
@@ -3425,8 +3459,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
       !api ||
       !activeThread ||
       isConnecting ||
-      (isSendBusy && !canQueueWhilePreparingWorktree) ||
-      (sendInFlightRef.current && !canQueueWhilePreparingWorktree)
+      (isSendBusy && !canQueueWhilePreparingWorktree && !canFollowUpWhileTurnDispatchPending) ||
+      (sendInFlightRef.current &&
+        !canQueueWhilePreparingWorktree &&
+        !canFollowUpWhileTurnDispatchPending)
     ) {
       return;
     }
@@ -3461,7 +3497,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         text: trimmed,
         interactionMode,
         terminalContexts: sendableComposerTerminalContexts,
-        prepend: disposition === "queue-front",
+        disposition,
       });
       return;
     }
@@ -3470,18 +3506,32 @@ export default function ChatView({ threadId }: ChatViewProps) {
         draftText: trimmed,
         planMarkdown: activeProposedPlan.planMarkdown,
       });
-      if (phase === "running" && disposition !== "steer") {
-        await queueComposerTurn({
+      if (composerShowsRunningTurnActions && disposition !== "steer") {
+        const queued = await queueComposerTurn({
           ...followUp,
           ...(disposition === "queue-front" ? { promoteToFront: true } : {}),
         });
+        if (!queued) {
+          queueComposerTurnLocally({
+            text: followUp.text,
+            interactionMode: followUp.interactionMode,
+            disposition,
+          });
+        }
         return;
       }
-      if (phase === "running" && disposition === "steer") {
-        await queueComposerTurn({
+      if (composerShowsRunningTurnActions && disposition === "steer") {
+        const queued = await queueComposerTurn({
           ...followUp,
           sendNow: true,
         });
+        if (!queued) {
+          queueComposerTurnLocally({
+            text: followUp.text,
+            interactionMode: followUp.interactionMode,
+            disposition: "steer",
+          });
+        }
         return;
       }
       promptRef.current = "";
@@ -3533,7 +3583,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       return;
     }
-    if (phase === "running" && disposition === "queue") {
+    if (composerShowsRunningTurnActions && disposition === "queue") {
       if (expiredTerminalContextCount > 0) {
         const toastCopy = buildExpiredTerminalContextToastCopy(
           expiredTerminalContextCount,
@@ -3550,16 +3600,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
         interactionMode,
         terminalContexts: sendableComposerTerminalContexts,
       });
-      if (!queued && pendingQueuedTurnMessageId !== null) {
+      if (!queued) {
         queueComposerTurnLocally({
           text: trimmed,
           interactionMode,
           terminalContexts: sendableComposerTerminalContexts,
+          disposition: "queue",
         });
       }
       return;
     }
-    if (phase === "running" && disposition === "queue-front") {
+    if (composerShowsRunningTurnActions && disposition === "queue-front") {
       if (expiredTerminalContextCount > 0) {
         const toastCopy = buildExpiredTerminalContextToastCopy(
           expiredTerminalContextCount,
@@ -3571,15 +3622,23 @@ export default function ChatView({ threadId }: ChatViewProps) {
           description: toastCopy.description,
         });
       }
-      await queueComposerTurn({
+      const queued = await queueComposerTurn({
         text: trimmed,
         interactionMode,
         terminalContexts: sendableComposerTerminalContexts,
         promoteToFront: true,
       });
+      if (!queued) {
+        queueComposerTurnLocally({
+          text: trimmed,
+          interactionMode,
+          terminalContexts: sendableComposerTerminalContexts,
+          disposition: "queue-front",
+        });
+      }
       return;
     }
-    if (phase === "running" && disposition === "steer") {
+    if (composerShowsRunningTurnActions && disposition === "steer") {
       if (expiredTerminalContextCount > 0) {
         const toastCopy = buildExpiredTerminalContextToastCopy(
           expiredTerminalContextCount,
@@ -3591,12 +3650,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
           description: toastCopy.description,
         });
       }
-      await queueComposerTurn({
+      const queued = await queueComposerTurn({
         text: trimmed,
         interactionMode,
         terminalContexts: sendableComposerTerminalContexts,
         sendNow: true,
       });
+      if (!queued) {
+        queueComposerTurnLocally({
+          text: trimmed,
+          interactionMode,
+          terminalContexts: sendableComposerTerminalContexts,
+          disposition: "steer",
+        });
+      }
       return;
     }
     if (!activeProject) return;
@@ -4682,7 +4749,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
     if (
       key === "Enter" &&
-      phase === "running" &&
+      composerShowsRunningTurnActions &&
       composerHasContent &&
       !event.shiftKey &&
       !event.altKey &&
@@ -4694,7 +4761,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
     if (
       key === "Enter" &&
-      (phase === "running" || isPreparingWorktree) &&
+      (composerShowsRunningTurnActions || isPreparingWorktree) &&
       composerHasContent &&
       event.shiftKey &&
       !event.altKey &&
@@ -4738,7 +4805,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (
       key === "Tab" &&
       !event.shiftKey &&
-      (phase === "running" || isPreparingWorktree) &&
+      (composerShowsRunningTurnActions || isPreparingWorktree) &&
       composerHasContent
     ) {
       void onSend(undefined, "queue");
@@ -5360,7 +5427,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                     : "Next question"}
                               </Button>
                             </div>
-                          ) : phase === "running" ? (
+                          ) : composerShowsRunningTurnActions ? (
                             <div className="flex items-center gap-2">
                               {composerHasContent ? (
                                 <>
@@ -5368,7 +5435,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                     type="button"
                                     size="sm"
                                     className="h-9 rounded-full px-4 sm:h-8"
-                                    disabled={isSendBusy || isConnecting}
+                                    disabled={isConnecting}
                                     onClick={() => void onSend(undefined, "steer")}
                                   >
                                     Steer
@@ -5378,29 +5445,31 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                     size="sm"
                                     variant="outline"
                                     className="h-9 rounded-full px-4 sm:h-8"
-                                    disabled={isSendBusy || isConnecting}
+                                    disabled={isConnecting}
                                     onClick={() => void onSend(undefined, "queue")}
                                   >
                                     {pendingQueuedTurnMessageId !== null ? "Queueing..." : "Queue"}
                                   </Button>
                                 </>
                               ) : null}
-                              <button
-                                type="button"
-                                className="flex size-8 cursor-pointer items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105 sm:h-8 sm:w-8"
-                                onClick={() => void onInterrupt()}
-                                aria-label="Stop generation"
-                              >
-                                <svg
-                                  width="12"
-                                  height="12"
-                                  viewBox="0 0 12 12"
-                                  fill="currentColor"
-                                  aria-hidden="true"
+                              {phase === "running" ? (
+                                <button
+                                  type="button"
+                                  className="flex size-8 cursor-pointer items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105 sm:h-8 sm:w-8"
+                                  onClick={() => void onInterrupt()}
+                                  aria-label="Stop generation"
                                 >
-                                  <rect x="2" y="2" width="8" height="8" rx="1.5" />
-                                </svg>
-                              </button>
+                                  <svg
+                                    width="12"
+                                    height="12"
+                                    viewBox="0 0 12 12"
+                                    fill="currentColor"
+                                    aria-hidden="true"
+                                  >
+                                    <rect x="2" y="2" width="8" height="8" rx="1.5" />
+                                  </svg>
+                                </button>
+                              ) : null}
                             </div>
                           ) : isPreparingWorktree ? null : pendingUserInputs.length === 0 ? (
                             showPlanFollowUpPrompt ? (

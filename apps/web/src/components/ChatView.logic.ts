@@ -18,6 +18,10 @@ export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by
 const WORKTREE_BRANCH_PREFIX = "t3code";
 export type SendPhase = "idle" | "preparing-worktree" | "sending-turn";
 
+export function composerShowsActiveTurnActions(phase: SessionPhase, sendPhase: SendPhase): boolean {
+  return phase === "running" || sendPhase === "sending-turn";
+}
+
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
 export function buildLocalDraftThread(

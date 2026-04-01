@@ -80,6 +80,7 @@ export interface QueuedComposerTurn {
   id: string;
   queuedAt: string;
   text: string;
+  disposition?: "queue" | "queue-front" | "steer";
   images: ComposerImageAttachment[];
   terminalContexts: TerminalContextDraft[];
   provider: ProviderKind;

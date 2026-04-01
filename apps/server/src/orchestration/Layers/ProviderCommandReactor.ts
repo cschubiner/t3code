@@ -400,13 +400,40 @@ const make = Effect.gen(function* () {
           : requestedModelSelection
         : input.modelSelection;
 
-    yield* providerService.sendTurn({
+    const turn = yield* providerService.sendTurn({
       threadId: input.threadId,
       ...(normalizedInput ? { input: normalizedInput } : {}),
       ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
       ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
     });
+
+    const refreshedThread = yield* resolveThread(input.threadId);
+    const providerName =
+      refreshedThread?.session?.providerName ??
+      activeSession?.provider ??
+      thread.session?.providerName;
+    const runtimeMode =
+      refreshedThread?.session?.runtimeMode ?? activeSession?.runtimeMode ?? thread.runtimeMode;
+
+    if (providerName) {
+      // The provider layer already returned a concrete turn id here, so surface
+      // that running state immediately instead of waiting for a later runtime
+      // notification like turn.started.
+      yield* setThreadSession({
+        threadId: input.threadId,
+        session: {
+          threadId: input.threadId,
+          status: "running",
+          providerName,
+          runtimeMode,
+          activeTurnId: turn.turnId,
+          lastError: null,
+          updatedAt: new Date().toISOString(),
+        },
+        createdAt: input.createdAt,
+      });
+    }
   });
 
   const maybeGenerateAndRenameWorktreeBranchForFirstTurn = Effect.fnUntraced(function* (input: {
