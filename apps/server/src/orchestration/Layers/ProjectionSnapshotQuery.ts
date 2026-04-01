@@ -79,7 +79,11 @@ const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
     sequence: Schema.NullOr(NonNegativeInt),
   }),
 );
-const ProjectionThreadSessionDbRowSchema = ProjectionThreadSession;
+const ProjectionThreadSessionDbRowSchema = ProjectionThreadSession.mapFields(
+  Struct.assign({
+    activeTurnState: Schema.NullOr(Schema.String),
+  }),
+);
 const ProviderSessionRuntimeDbRowSchema = ProviderSessionRuntime.mapFields(
   Struct.assign({
     resumeCursor: Schema.NullOr(Schema.fromJsonString(Schema.Unknown)),
@@ -156,6 +160,25 @@ function toOrchestrationSessionFromRuntime(
     activeTurnId,
     lastError: readRuntimePayloadLastError(row.runtimePayload),
     updatedAt: row.lastSeenAt,
+  };
+}
+
+function toOrchestrationSessionFromProjection(
+  row: Schema.Schema.Type<typeof ProjectionThreadSessionDbRowSchema>,
+): OrchestrationSession {
+  const activeTurnId =
+    row.status === "running" && row.activeTurnId !== null && row.activeTurnState !== "completed"
+      ? row.activeTurnId
+      : null;
+
+  return {
+    threadId: row.threadId,
+    status: row.status === "running" ? (activeTurnId === null ? "ready" : "running") : row.status,
+    providerName: row.providerName,
+    runtimeMode: row.runtimeMode,
+    activeTurnId,
+    lastError: row.lastError,
+    updatedAt: row.updatedAt,
   };
 }
 
@@ -331,17 +354,21 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     execute: () =>
       sql`
         SELECT
-          thread_id AS "threadId",
-          status,
-          provider_name AS "providerName",
-          provider_session_id AS "providerSessionId",
-          provider_thread_id AS "providerThreadId",
-          runtime_mode AS "runtimeMode",
-          active_turn_id AS "activeTurnId",
-          last_error AS "lastError",
-          updated_at AS "updatedAt"
+          projection_thread_sessions.thread_id AS "threadId",
+          projection_thread_sessions.status,
+          projection_thread_sessions.provider_name AS "providerName",
+          projection_thread_sessions.provider_session_id AS "providerSessionId",
+          projection_thread_sessions.provider_thread_id AS "providerThreadId",
+          projection_thread_sessions.runtime_mode AS "runtimeMode",
+          projection_thread_sessions.active_turn_id AS "activeTurnId",
+          projection_thread_sessions.last_error AS "lastError",
+          projection_thread_sessions.updated_at AS "updatedAt",
+          projection_turns.state AS "activeTurnState"
         FROM projection_thread_sessions
-        ORDER BY thread_id ASC
+        LEFT JOIN projection_turns
+          ON projection_turns.thread_id = projection_thread_sessions.thread_id
+         AND projection_turns.turn_id = projection_thread_sessions.active_turn_id
+        ORDER BY projection_thread_sessions.thread_id ASC
       `,
   });
 
@@ -668,15 +695,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
 
           for (const row of sessionRows) {
             updatedAt = maxIso(updatedAt, row.updatedAt);
-            sessionsByThread.set(row.threadId, {
-              threadId: row.threadId,
-              status: row.status,
-              providerName: row.providerName,
-              runtimeMode: row.runtimeMode,
-              activeTurnId: row.activeTurnId,
-              lastError: row.lastError,
-              updatedAt: row.updatedAt,
-            });
+            sessionsByThread.set(row.threadId, toOrchestrationSessionFromProjection(row));
           }
 
           for (const row of runtimeRows) {

@@ -1162,18 +1162,17 @@ describe("deriveActiveWorkStartedAt", () => {
 });
 
 describe("derivePhase", () => {
-  it("treats an errored session with an active turn as running", () => {
+  it("ignores a stale active turn when orchestration is not running", () => {
     expect(
       derivePhase({
         provider: "codex",
-        status: "error",
-        orchestrationStatus: "error",
+        status: "ready",
+        orchestrationStatus: "ready",
         activeTurnId: TurnId.makeUnsafe("turn-1"),
         createdAt: "2026-02-27T21:10:00.000Z",
         updatedAt: "2026-02-27T21:10:01.000Z",
-        lastError: "exec command failed",
       }),
-    ).toBe("running");
+    ).toBe("ready");
   });
 
   it("treats an errored idle session as ready", () => {
