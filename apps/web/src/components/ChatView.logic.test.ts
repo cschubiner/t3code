@@ -4,6 +4,7 @@ import { useStore } from "../store";
 
 import {
   buildExpiredTerminalContextToastCopy,
+  composerShowsActiveTurnActions,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   hasServerAcknowledgedLocalDispatch,
@@ -72,6 +73,20 @@ describe("buildExpiredTerminalContextToastCopy", () => {
       title: "Expired terminal contexts omitted from message",
       description: "Re-add it if you want that terminal output included.",
     });
+  });
+});
+
+describe("composerShowsActiveTurnActions", () => {
+  it("stays in active-turn mode while the first turn is still being sent", () => {
+    expect(composerShowsActiveTurnActions("ready", "sending-turn")).toBe(true);
+  });
+
+  it("uses active-turn mode for fully running turns", () => {
+    expect(composerShowsActiveTurnActions("running", "idle")).toBe(true);
+  });
+
+  it("does not show active-turn actions for idle ready sessions", () => {
+    expect(composerShowsActiveTurnActions("ready", "idle")).toBe(false);
   });
 });
 

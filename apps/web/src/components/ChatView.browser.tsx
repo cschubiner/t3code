@@ -3247,6 +3247,94 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("keeps the working timer and follow-up actions alive while turn start is still pending", async () => {
+    const deferredTurnStart = createDeferred<unknown>();
+    let interceptedTurnStart = false;
+    wsRpcOverrides.set(ORCHESTRATION_WS_METHODS.dispatchCommand, (body) => {
+      const command =
+        typeof body.command === "object" && body.command !== null
+          ? (body.command as { type?: string })
+          : null;
+      if (command?.type === "thread.turn.start" && !interceptedTurnStart) {
+        interceptedTurnStart = true;
+        return deferredTurnStart.promise;
+      }
+      return {};
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-transient-target" as MessageId,
+        targetText: "transient send thread",
+      }),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Kick off the next turn");
+      await waitForLayout();
+
+      const sendButton = await waitForSendButton();
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          const turnStart = listDispatchCommandsByType("thread.turn.start").at(-1);
+          expect(turnStart?.command?.message?.text).toBe("Kick off the next turn");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Steer during the handoff");
+      await waitForLayout();
+
+      await vi.waitFor(
+        () => {
+          expect(findButtonByText(document, "Steer")).not.toBeNull();
+          expect(findButtonByText(document, "Queue")).not.toBeNull();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await new Promise((resolve) => window.setTimeout(resolve, 1_250));
+      await waitForLayout();
+
+      expect(document.body.textContent).toMatch(/Working for [1-9][0-9]*s/);
+
+      findButtonByText(document, "Steer")?.click();
+
+      await vi.waitFor(
+        () => {
+          const queuedTurns = useComposerDraftStore.getState().queuedTurnsByThreadId[THREAD_ID];
+          expect(queuedTurns).toHaveLength(1);
+          expect(queuedTurns?.[0]?.text).toBe("Steer during the handoff");
+          expect(queuedTurns?.[0]?.disposition).toBe("steer");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      deferredTurnStart.resolve({});
+
+      await vi.waitFor(
+        () => {
+          const enqueueRequest = listDispatchCommandsByType("thread.turn.queue.enqueue").at(-1);
+          const sendNowRequest = listDispatchCommandsByType("thread.turn.queue.send-now").at(-1);
+          const enqueueCommand = enqueueRequest?.command as
+            | { message?: { text?: string; messageId?: string } }
+            | undefined;
+          const sendNowCommand = sendNowRequest?.command as { messageId?: string } | undefined;
+          expect(enqueueCommand?.message?.text).toBe("Steer during the handoff");
+          expect(sendNowCommand?.messageId).toBe(enqueueCommand?.message?.messageId);
+          expect(useComposerDraftStore.getState().queuedTurnsByThreadId[THREAD_ID]).toBeUndefined();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      deferredTurnStart.resolve({});
+      await mounted.cleanup();
+    }
+  });
+
   it("steers immediately with mod+enter during a running turn", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,

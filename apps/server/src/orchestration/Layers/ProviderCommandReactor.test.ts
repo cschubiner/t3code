@@ -305,7 +305,9 @@ describe("ProviderCommandReactor", () => {
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
     expect(thread?.session?.threadId).toBe("thread-1");
+    expect(thread?.session?.status).toBe("running");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+    expect(thread?.session?.activeTurnId).toBe(asTurnId("turn-1"));
   });
 
   it("sends queued follow-ups immediately when queue.send-now is dispatched on a running thread", async () => {
