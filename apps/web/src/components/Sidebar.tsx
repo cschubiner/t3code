@@ -481,6 +481,9 @@ export default function Sidebar() {
   const addProjectInputRef = useRef<HTMLInputElement | null>(null);
   const [renamingThreadId, setRenamingThreadId] = useState<ThreadId | null>(null);
   const [renamingTitle, setRenamingTitle] = useState("");
+  const [optimisticThreadTitles, setOptimisticThreadTitles] = useState<
+    ReadonlyMap<ThreadId, string>
+  >(() => new Map());
   const [expandedThreadListsByProject, setExpandedThreadListsByProject] = useState<
     ReadonlySet<ProjectId>
   >(() => new Set());
@@ -849,45 +852,81 @@ export default function Sidebar() {
     setAddingProject((prev) => !prev);
   };
 
-  const cancelRename = useCallback(() => {
-    setRenamingThreadId(null);
-    renamingInputRef.current = null;
+  const finishRename = useCallback((threadId?: ThreadId | null) => {
+    setRenamingThreadId((current) => {
+      if (threadId != null && current !== threadId) return current;
+      renamingInputRef.current = null;
+      return null;
+    });
   }, []);
 
-  const startRenameThread = useCallback((threadId: ThreadId) => {
-    const thread = threadsRef.current.find((entry) => entry.id === threadId);
-    if (!thread) return false;
-    setRenamingThreadId(threadId);
-    setRenamingTitle(thread.title);
-    renamingCommittedRef.current = false;
-    return true;
+  const cancelRename = useCallback(() => {
+    finishRename();
+  }, [finishRename]);
+
+  const setOptimisticThreadTitle = useCallback((threadId: ThreadId, title: string | null) => {
+    setOptimisticThreadTitles((current) => {
+      const next = new Map(current);
+      if (title === null) {
+        if (!next.delete(threadId)) return current;
+        return next;
+      }
+      if (next.get(threadId) === title) return current;
+      next.set(threadId, title);
+      return next;
+    });
   }, []);
+
+  useEffect(() => {
+    if (optimisticThreadTitles.size === 0) return;
+    const threadTitlesById = new Map(threads.map((thread) => [thread.id, thread.title] as const));
+    setOptimisticThreadTitles((current) => {
+      if (current.size === 0) return current;
+      let next: Map<ThreadId, string> | null = null;
+      for (const [threadId, optimisticTitle] of current) {
+        const persistedTitle = threadTitlesById.get(threadId);
+        if (persistedTitle === undefined || persistedTitle === optimisticTitle) {
+          next ??= new Map(current);
+          next.delete(threadId);
+        }
+      }
+      return next ?? current;
+    });
+  }, [optimisticThreadTitles.size, threads]);
+
+  const startRenameThread = useCallback(
+    (threadId: ThreadId) => {
+      const thread = threadsRef.current.find((entry) => entry.id === threadId);
+      if (!thread) return false;
+      const resolvedTitle = optimisticThreadTitles.get(threadId) ?? thread.title;
+      setRenamingThreadId(threadId);
+      setRenamingTitle(resolvedTitle);
+      renamingCommittedRef.current = false;
+      return true;
+    },
+    [optimisticThreadTitles],
+  );
 
   const commitRename = useCallback(
     async (threadId: ThreadId, newTitle: string, originalTitle: string) => {
-      const finishRename = () => {
-        setRenamingThreadId((current) => {
-          if (current !== threadId) return current;
-          renamingInputRef.current = null;
-          return null;
-        });
-      };
-
       const trimmed = newTitle.trim();
       if (trimmed.length === 0) {
         toastManager.add({ type: "warning", title: "Thread title cannot be empty" });
-        finishRename();
+        finishRename(threadId);
         return;
       }
       if (trimmed === originalTitle) {
-        finishRename();
+        setOptimisticThreadTitle(threadId, null);
+        finishRename(threadId);
         return;
       }
       const api = readNativeApi();
       if (!api) {
-        finishRename();
+        setOptimisticThreadTitle(threadId, null);
+        finishRename(threadId);
         return;
       }
+      setOptimisticThreadTitle(threadId, trimmed);
       try {
         await api.orchestration.dispatchCommand({
           type: "thread.meta.update",
@@ -901,10 +940,11 @@ export default function Sidebar() {
           title: "Failed to rename thread",
           description: error instanceof Error ? error.message : "An error occurred.",
         });
+        setOptimisticThreadTitle(threadId, null);
       }
-      finishRename();
+      finishRename(threadId);
     },
-    [],
+    [finishRename, setOptimisticThreadTitle],
   );
 
   const triggerRename = useCallback(() => {
@@ -1855,6 +1895,7 @@ export default function Sidebar() {
       const projectName = options?.showProjectName
         ? deriveSidebarThreadProjectName({ thread, projects })
         : null;
+      const displayedThreadTitle = optimisticThreadTitles.get(thread.id) ?? thread.title;
 
       return (
         <SidebarMenuSubItem key={thread.id} className="w-full" data-thread-item>
@@ -1950,22 +1991,26 @@ export default function Sidebar() {
                       if (e.key === "Enter") {
                         e.preventDefault();
                         renamingCommittedRef.current = true;
-                        void commitRename(thread.id, renamingTitle, thread.title);
+                        finishRename(thread.id);
+                        void commitRename(thread.id, e.currentTarget.value, displayedThreadTitle);
                       } else if (e.key === "Escape") {
                         e.preventDefault();
                         renamingCommittedRef.current = true;
                         cancelRename();
                       }
                     }}
-                    onBlur={() => {
+                    onBlur={(e) => {
                       if (!renamingCommittedRef.current) {
-                        void commitRename(thread.id, renamingTitle, thread.title);
+                        renamingCommittedRef.current = true;
+                        finishRename(thread.id);
+                        void commitRename(thread.id, e.currentTarget.value, displayedThreadTitle);
                       }
                     }}
+                    onMouseDown={(e) => e.stopPropagation()}
                     onClick={(e) => e.stopPropagation()}
                   />
                 ) : (
-                  <span className="min-w-0 flex-1 truncate text-xs">{thread.title}</span>
+                  <span className="min-w-0 flex-1 truncate text-xs">{displayedThreadTitle}</span>
                 )}
               </div>
               {(projectName || referencedPrStates.length > 0) && (
@@ -2031,11 +2076,13 @@ export default function Sidebar() {
       cancelRename,
       clearSelection,
       commitRename,
+      finishRename,
       handleMultiSelectContextMenu,
       handleThreadClick,
       handleThreadContextMenu,
       navigate,
       openPrLink,
+      optimisticThreadTitles,
       prByThreadId,
       projects,
       referencedPrStateByUrl,
