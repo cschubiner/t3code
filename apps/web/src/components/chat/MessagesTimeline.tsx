@@ -82,13 +82,24 @@ interface MessagesTimelineProps {
   resolvedTheme: "light" | "dark";
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
-  threadSearchQuery: string;
-  threadSearchOccurrencesBySourceId: Map<
+  onVirtualizerSnapshot?: (snapshot: {
+    totalSize: number;
+    measurements: ReadonlyArray<{
+      id: string;
+      kind: TimelineRow["kind"];
+      index: number;
+      size: number;
+      start: number;
+      end: number;
+    }>;
+  }) => void;
+  threadSearchQuery?: string;
+  threadSearchOccurrencesBySourceId?: Map<
     string,
     Array<{ start: number; end: number; occurrenceIndexInSource: number }>
   >;
-  activeThreadSearchSourceId: string | null;
-  activeThreadSearchOccurrenceIndex: number | null;
+  activeThreadSearchSourceId?: string | null;
+  activeThreadSearchOccurrenceIndex?: number | null;
 }
 
 export const MessagesTimeline = memo(function MessagesTimeline({
@@ -113,10 +124,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   resolvedTheme,
   timestampFormat,
   workspaceRoot,
-  threadSearchQuery,
-  threadSearchOccurrencesBySourceId,
-  activeThreadSearchSourceId,
-  activeThreadSearchOccurrenceIndex,
+  onVirtualizerSnapshot,
+  threadSearchQuery = "",
+  threadSearchOccurrencesBySourceId = new Map(),
+  activeThreadSearchSourceId = null,
+  activeThreadSearchOccurrenceIndex = null,
 }: MessagesTimelineProps) {
   const timelineRootRef = useRef<HTMLDivElement | null>(null);
   const [timelineWidthPx, setTimelineWidthPx] = useState<number | null>(null);
@@ -307,6 +319,32 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       }
     };
   }, []);
+  useLayoutEffect(() => {
+    if (!onVirtualizerSnapshot) {
+      return;
+    }
+    onVirtualizerSnapshot({
+      totalSize: rowVirtualizer.getTotalSize(),
+      measurements: rowVirtualizer.measurementsCache
+        .slice(0, virtualizedRowCount)
+        .flatMap((measurement) => {
+          const row = rows[measurement.index];
+          if (!row) {
+            return [];
+          }
+          return [
+            {
+              id: row.id,
+              kind: row.kind,
+              index: measurement.index,
+              size: measurement.size,
+              start: measurement.start,
+              end: measurement.end,
+            },
+          ];
+        }),
+    });
+  }, [onVirtualizerSnapshot, rowVirtualizer, rows, virtualizedRowCount]);
 
   const virtualRows = rowVirtualizer.getVirtualItems();
   const nonVirtualizedRows = rows.slice(virtualizedRowCount);
@@ -383,6 +421,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           rowHasSearchMatch && "mx-[-0.5rem] rounded-xl bg-amber-400/6 px-2 py-1",
           rowHasActiveSearchMatch && "ring-1 ring-amber-400/35 bg-amber-400/10",
         )}
+        data-timeline-row-id={row.id}
         data-timeline-row-kind={row.kind}
         data-message-id={row.kind === "message" ? row.message.id : undefined}
         data-message-role={row.kind === "message" ? row.message.role : undefined}
@@ -673,6 +712,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               <div
                 key={`virtual-row:${row.id}`}
                 data-index={virtualRow.index}
+                data-virtual-row-id={row.id}
+                data-virtual-row-size={virtualRow.size}
                 ref={rowVirtualizer.measureElement}
                 className="absolute left-0 top-0 w-full"
                 style={{ transform: `translateY(${virtualRow.start}px)` }}

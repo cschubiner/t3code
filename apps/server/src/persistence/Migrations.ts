@@ -35,6 +35,7 @@ import Migration0019 from "./Migrations/019_LegacyProjectionSchemaRepair.ts";
 import Migration0020 from "./Migrations/016_CanonicalizeModelSelections.ts";
 import Migration0021 from "./Migrations/017_ProjectionThreadsArchivedAt.ts";
 import Migration0022 from "./Migrations/018_ProjectionThreadsArchivedAtIndex.ts";
+import Migration0023 from "./Migrations/019_ProjectionSnapshotLookupIndexes.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -69,6 +70,7 @@ export const migrationEntries = [
   [20, "CanonicalizeModelSelections", Migration0020],
   [21, "ProjectionThreadsArchivedAt", Migration0021],
   [22, "ProjectionThreadsArchivedAtIndex", Migration0022],
+  [23, "ProjectionSnapshotLookupIndexes", Migration0023],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>
