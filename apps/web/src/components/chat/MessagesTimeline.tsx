@@ -327,11 +327,92 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           const groupLabel = onlyToolEntries ? "Tool calls" : "Work log";
 
           return (
+<<<<<<< HEAD
             <div className="rounded-xl border border-border/45 bg-card/25 px-2 py-1.5">
               {showHeader && (
                 <div className="mb-1.5 flex items-center justify-between gap-2 px-0.5">
                   <p className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground/55">
                     {groupLabel} ({groupedEntries.length})
+=======
+            <span key={`thread-search-user-segment:${messageId}:${segment.key}`}>
+              {segment.text}
+            </span>
+          );
+        }
+
+        const occurrence = occurrences[occurrenceIndex];
+        occurrenceIndex += 1;
+        return (
+          <mark
+            key={`thread-search-user-highlight:${messageId}:${segment.key}`}
+            data-thread-search-occurrence-index={occurrence?.occurrenceIndexInSource}
+            className={cn(
+              "rounded bg-amber-400/40 px-0.5 text-foreground",
+              occurrence?.occurrenceIndexInSource === activeThreadSearchOccurrenceIndex &&
+                rowHasActiveMatch &&
+                "bg-amber-300/70 ring-1 ring-amber-500/45",
+            )}
+          >
+            {segment.text}
+          </mark>
+        );
+      });
+    },
+    [activeThreadSearchOccurrenceIndex],
+  );
+
+  const renderRowContent = (row: TimelineRow) => {
+    const sourceId =
+      row.kind === "message"
+        ? row.message.id
+        : row.kind === "proposed-plan"
+          ? row.proposedPlan.id
+          : null;
+    const sourceMatches = sourceId ? (threadSearchOccurrencesBySourceId.get(sourceId) ?? []) : [];
+    const rowHasSearchMatch = sourceMatches.length > 0;
+    const rowHasActiveSearchMatch =
+      rowHasSearchMatch && sourceId !== null && sourceId === activeThreadSearchSourceId;
+
+    return (
+      <div
+        className={cn(
+          row.kind === "working" ? "pb-1.5" : "pb-4",
+          rowHasSearchMatch && "mx-[-0.5rem] rounded-xl bg-amber-400/6 px-2 py-1",
+          rowHasActiveSearchMatch && "ring-1 ring-amber-400/35 bg-amber-400/10",
+        )}
+        data-timeline-row-id={row.id}
+        data-timeline-row-kind={row.kind}
+        data-message-id={row.kind === "message" ? row.message.id : undefined}
+        data-message-role={row.kind === "message" ? row.message.role : undefined}
+        data-thread-search-source-id={sourceId ?? undefined}
+        data-thread-search-active={rowHasActiveSearchMatch ? "true" : undefined}
+      >
+        {row.kind === "work" &&
+          (() => {
+            const groupId = row.id;
+            const groupedEntries = row.groupedEntries;
+            const isExpanded = expandedWorkGroups[groupId] ?? false;
+            const hasOverflow = groupedEntries.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
+            const visibleEntries =
+              hasOverflow && !isExpanded
+                ? groupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES)
+                : groupedEntries;
+            const hiddenCount = groupedEntries.length - visibleEntries.length;
+            const onlyToolEntries = groupedEntries.every((entry) => entry.tone === "tool");
+            const groupLabel = onlyToolEntries
+              ? groupedEntries.length === 1
+                ? "Tool call"
+                : `Tool calls (${groupedEntries.length})`
+              : groupedEntries.length === 1
+                ? "Work event"
+                : `Work log (${groupedEntries.length})`;
+
+            return (
+              <div className="rounded-lg border border-border/80 bg-card/45 px-3 py-2">
+                <div className="mb-1.5 flex items-center justify-between gap-3">
+                  <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
+                    {groupLabel}
+>>>>>>> 4b33147d (Restore MessagesTimeline virtualization row markers)
                   </p>
                   {hasOverflow && (
                     <button
