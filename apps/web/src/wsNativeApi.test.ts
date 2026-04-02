@@ -135,6 +135,23 @@ function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridg
       throw new Error("installUpdate not implemented in test");
     },
     onUpdateState: () => () => undefined,
+    getRemoteAccessStatus: async () => ({
+      enabled: false,
+      state: "disabled",
+      provider: "tailscale",
+      preferredUrl: null,
+      urls: [],
+      message: null,
+    }),
+    setRemoteAccessEnabled: async () => ({
+      enabled: false,
+      state: "disabled",
+      provider: "tailscale",
+      preferredUrl: null,
+      urls: [],
+      message: null,
+    }),
+    onRemoteAccessStatus: () => () => undefined,
     ...overrides,
   };
 }

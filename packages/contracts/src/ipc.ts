@@ -103,12 +103,7 @@ export interface DesktopUpdateCheckResult {
   state: DesktopUpdateState;
 }
 
-export type DesktopRemoteAccessState =
-  | "disabled"
-  | "starting"
-  | "ready"
-  | "unavailable"
-  | "error";
+export type DesktopRemoteAccessState = "disabled" | "starting" | "ready" | "unavailable" | "error";
 
 export interface DesktopRemoteAccessStatus {
   enabled: boolean;

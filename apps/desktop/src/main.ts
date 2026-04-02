@@ -69,7 +69,6 @@ const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 const GET_WS_URL_CHANNEL = "desktop:get-ws-url";
 const BASE_DIR = process.env.T3CODE_HOME?.trim() || Path.join(OS.homedir(), ".t3");
-const STATE_DIR = Path.join(BASE_DIR, "userdata");
 const REMOTE_ACCESS_STATUS_CHANNEL = "desktop:remote-access-status";
 const REMOTE_ACCESS_GET_STATUS_CHANNEL = "desktop:remote-access-get-status";
 const REMOTE_ACCESS_SET_ENABLED_CHANNEL = "desktop:remote-access-set-enabled";
@@ -158,17 +157,6 @@ function logScope(scope: string): string {
 
 function sanitizeLogValue(value: string): string {
   return value.replace(/\s+/g, " ").trim();
-}
-
-function backendChildEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
-  delete env.T3CODE_PORT;
-  delete env.T3CODE_AUTH_TOKEN;
-  delete env.T3CODE_MODE;
-  delete env.T3CODE_NO_BROWSER;
-  delete env.T3CODE_HOST;
-  delete env.T3CODE_DESKTOP_WS_URL;
-  return env;
 }
 
 function writeDesktopLogHeader(message: string): void {
@@ -1170,15 +1158,13 @@ function startBackend(): void {
 }
 
 function scheduleRemoteGatewayRestart(reason: string): void {
-  if (
-    isQuitting ||
-    remoteGatewayRestartTimer ||
-    !desktopPreferences.remoteAccess.enabled
-  ) {
+  if (isQuitting || remoteGatewayRestartTimer || !desktopPreferences.remoteAccess.enabled) {
     return;
   }
 
-  writeDesktopLogHeader(`remote access gateway exited unexpectedly reason=${sanitizeLogValue(reason)}`);
+  writeDesktopLogHeader(
+    `remote access gateway exited unexpectedly reason=${sanitizeLogValue(reason)}`,
+  );
   setRemoteAccessStatus({
     enabled: true,
     state: "starting",
@@ -1218,8 +1204,7 @@ function startRemoteGateway(): void {
     `remote access gateway start requested pid=${child.pid ?? "unknown"} port=${remoteGatewayPort}`,
   );
 
-  child.once("spawn", () => {
-  });
+  child.once("spawn", () => {});
 
   child.on("error", (error) => {
     if (remoteGatewayProcess === child) {
