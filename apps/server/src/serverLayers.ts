@@ -112,25 +112,29 @@ export function makeServerRuntimeServicesLayer() {
     Layer.provide(OrchestrationCommandReceiptRepositoryLive),
   );
 
-  const checkpointDiffQueryLayer = CheckpointDiffQueryLive.pipe(
-    Layer.provideMerge(OrchestrationProjectionSnapshotQueryLive),
-    Layer.provideMerge(checkpointStoreLayer),
-  );
-
-  const coreRuntimeServicesLayer = Layer.mergeAll(
+  const coreRuntimeDependencyLayer = Layer.mergeAll(
     orchestrationLayer,
-    OrchestrationProjectionSnapshotQueryLive,
     checkpointStoreLayer,
     ProjectionTurnRepositoryLive,
-    checkpointDiffQueryLayer,
     RuntimeReceiptBusLive,
     SnippetRepositoryLive,
+  );
+  const projectionSnapshotQueryLayer = OrchestrationProjectionSnapshotQueryLive.pipe(
+    Layer.provideMerge(coreRuntimeDependencyLayer),
+  );
+  const checkpointDiffQueryLayer = CheckpointDiffQueryLive.pipe(
+    Layer.provideMerge(projectionSnapshotQueryLayer),
+    Layer.provideMerge(checkpointStoreLayer),
+  );
+  const coreRuntimeServicesLayer = Layer.merge(
+    Layer.merge(coreRuntimeDependencyLayer, projectionSnapshotQueryLayer),
+    checkpointDiffQueryLayer,
   );
   const runtimeServicesLayer = Layer.merge(
     coreRuntimeServicesLayer,
     CodexImportLive.pipe(
       Layer.provideMerge(coreRuntimeServicesLayer),
-      Layer.provideMerge(GitCoreLive),
+      Layer.provideMerge(gitCoreLayer),
     ),
   );
   const runtimeIngestionLayer = ProviderRuntimeIngestionLive.pipe(

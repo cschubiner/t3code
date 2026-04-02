@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { ServerConfig } from "../../config.ts";
 import { makeServerProviderLayer, makeServerRuntimeServicesLayer } from "../../serverLayers.ts";
+import { OrchestrationProjectionSnapshotQueryLive } from "../../orchestration/Layers/ProjectionSnapshotQuery.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
@@ -178,9 +179,17 @@ async function createCodexImportSystem(serverCwd = makeTempDir("t3code-server-cw
   const persistenceLayer = SqlitePersistenceMemory;
   const providerLayer = makeServerProviderLayer();
   const infrastructureLayer = providerLayer.pipe(Layer.provideMerge(persistenceLayer));
-  const runtimeLayer = Layer.merge(
-    makeServerRuntimeServicesLayer().pipe(Layer.provide(infrastructureLayer)),
+  const projectionSnapshotLayer = OrchestrationProjectionSnapshotQueryLive.pipe(
+    Layer.provideMerge(infrastructureLayer),
+  );
+  const runtimeServicesLayer = makeServerRuntimeServicesLayer().pipe(
+    Layer.provideMerge(projectionSnapshotLayer),
+    Layer.provideMerge(infrastructureLayer),
+  );
+  const runtimeLayer = Layer.mergeAll(
     infrastructureLayer,
+    projectionSnapshotLayer,
+    runtimeServicesLayer,
   );
   const fullLayer = Layer.empty.pipe(
     Layer.provideMerge(runtimeLayer),

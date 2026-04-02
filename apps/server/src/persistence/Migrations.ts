@@ -28,13 +28,10 @@ import Migration0012 from "./Migrations/012_ProjectionThreadsInteractionMode.ts"
 import Migration0013 from "./Migrations/013_ProjectionThreadProposedPlans.ts";
 import Migration0014 from "./Migrations/014_ProjectionThreadProposedPlanImplementation.ts";
 import Migration0015 from "./Migrations/015_ProjectionTurnsSourceProposedPlan.ts";
-import Migration0016 from "./Migrations/016_ProjectionThreadQueuedTurns.ts";
-import Migration0017 from "./Migrations/017_ProjectionThreadQueuedTurnSortOrder.ts";
-import Migration0018 from "./Migrations/018_Snippets.ts";
-import Migration0019 from "./Migrations/019_LegacyProjectionSchemaRepair.ts";
-import Migration0020 from "./Migrations/016_CanonicalizeModelSelections.ts";
-import Migration0021 from "./Migrations/017_ProjectionThreadsArchivedAt.ts";
-import Migration0022 from "./Migrations/018_ProjectionThreadsArchivedAtIndex.ts";
+import Migration0016 from "./Migrations/016_CanonicalizeModelSelections.ts";
+import Migration0017 from "./Migrations/017_ProjectionThreadsArchivedAt.ts";
+import Migration0018 from "./Migrations/018_ProjectionThreadsArchivedAtIndex.ts";
+import Migration0019 from "./Migrations/019_ProjectionSnapshotLookupIndexes.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -62,13 +59,10 @@ export const migrationEntries = [
   [13, "ProjectionThreadProposedPlans", Migration0013],
   [14, "ProjectionThreadProposedPlanImplementation", Migration0014],
   [15, "ProjectionTurnsSourceProposedPlan", Migration0015],
-  [16, "ProjectionThreadQueuedTurns", Migration0016],
-  [17, "ProjectionThreadQueuedTurnSortOrder", Migration0017],
-  [18, "Snippets", Migration0018],
-  [19, "LegacyProjectionSchemaRepair", Migration0019],
-  [20, "CanonicalizeModelSelections", Migration0020],
-  [21, "ProjectionThreadsArchivedAt", Migration0021],
-  [22, "ProjectionThreadsArchivedAtIndex", Migration0022],
+  [16, "CanonicalizeModelSelections", Migration0016],
+  [17, "ProjectionThreadsArchivedAt", Migration0017],
+  [18, "ProjectionThreadsArchivedAtIndex", Migration0018],
+  [19, "ProjectionSnapshotLookupIndexes", Migration0019],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>
