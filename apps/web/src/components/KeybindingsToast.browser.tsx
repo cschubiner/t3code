@@ -285,6 +285,7 @@ describe("Keybindings update toast", () => {
   });
 
   beforeEach(async () => {
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
     await rpcHarness.reset({
       resolveUnary: (request) => resolveWsRpc(request._tag),
       getInitialStreamValues: (request) => {
@@ -323,9 +324,11 @@ describe("Keybindings update toast", () => {
       threads: [],
       bootstrapComplete: false,
     });
+    window.dispatchEvent(new Event("focus"));
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     document.body.innerHTML = "";
   });
 
