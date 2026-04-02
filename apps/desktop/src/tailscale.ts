@@ -11,6 +11,8 @@ interface TailscaleStatusResponse {
   readonly BackendState?: string;
   readonly Self?: {
     readonly DNSName?: string;
+    readonly Online?: boolean;
+    readonly TailscaleIPs?: readonly string[];
   };
 }
 
@@ -38,6 +40,18 @@ function normalizeDnsName(value: string | undefined): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function isConnectedToTailnet(status: TailscaleStatusResponse): boolean {
+  if (status.BackendState === "Running") {
+    return true;
+  }
+
+  return (
+    status.Self?.Online === true &&
+    Array.isArray(status.Self.TailscaleIPs) &&
+    status.Self.TailscaleIPs.length > 0
+  );
+}
+
 async function runTailscale(args: readonly string[]): Promise<string> {
   const { stdout } = await execFileAsync(TAILSCALE_COMMAND, [...args], {
     timeout: 10_000,
@@ -61,7 +75,7 @@ export function createTailscaleRemoteAccessHelpers(
       };
     }
 
-    if (status.BackendState !== "Running") {
+    if (!isConnectedToTailnet(status)) {
       return {
         kind: "unavailable",
         message: "Tailscale is installed but not connected.",

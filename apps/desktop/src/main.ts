@@ -112,6 +112,7 @@ let backendWsUrl = "";
 let restartAttempt = 0;
 let restartTimer: ReturnType<typeof setTimeout> | null = null;
 let remoteGatewayRestartTimer: ReturnType<typeof setTimeout> | null = null;
+let remoteAccessRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let isQuitting = false;
 let desktopProtocolRegistered = false;
 let aboutCommitHashCache: string | null | undefined;
@@ -800,6 +801,15 @@ function emitRemoteAccessStatus(): void {
   }
 }
 
+function clearRemoteAccessRetryTimer(): void {
+  if (!remoteAccessRetryTimer) {
+    return;
+  }
+
+  clearTimeout(remoteAccessRetryTimer);
+  remoteAccessRetryTimer = null;
+}
+
 function setRemoteAccessStatus(
   patch: Partial<DesktopRemoteAccessStatus>,
 ): DesktopRemoteAccessStatus {
@@ -807,6 +817,9 @@ function setRemoteAccessStatus(
     ...remoteAccessStatus,
     ...patch,
   };
+  if (remoteAccessStatus.state !== "unavailable") {
+    clearRemoteAccessRetryTimer();
+  }
   emitRemoteAccessStatus();
   return remoteAccessStatus;
 }
@@ -854,6 +867,18 @@ function clearRemoteGatewayRestartTimer(): void {
     clearTimeout(remoteGatewayRestartTimer);
     remoteGatewayRestartTimer = null;
   }
+}
+
+function scheduleRemoteAccessRetry(): void {
+  if (isQuitting || remoteAccessRetryTimer || !desktopPreferences.remoteAccess.enabled) {
+    return;
+  }
+
+  remoteAccessRetryTimer = setTimeout(() => {
+    remoteAccessRetryTimer = null;
+    void syncRemoteAccessFromPreference();
+  }, REMOTE_ACCESS_RETRY_DELAY_MS);
+  remoteAccessRetryTimer.unref();
 }
 
 function enqueueRemoteAccessOperation(
@@ -1347,6 +1372,8 @@ async function stopRemoteGatewayAndWaitForExit(timeoutMs = 5_000): Promise<void>
 }
 
 async function applyRemoteAccessEnabled(enabled: boolean, persistPreference = true) {
+  clearRemoteAccessRetryTimer();
+
   if (persistPreference) {
     persistRemoteAccessEnabled(enabled);
   }
@@ -1384,13 +1411,15 @@ async function applyRemoteAccessEnabled(enabled: boolean, persistPreference = tr
     const tailscaleResult = await setupPrivateTailscaleServe(remoteGatewayPort);
     if (tailscaleResult.kind === "unavailable") {
       await stopRemoteGatewayAndWaitForExit();
-      return setRemoteAccessStatus({
+      const status = setRemoteAccessStatus({
         enabled: true,
         state: "unavailable",
         message: tailscaleResult.message,
         preferredUrl: null,
         urls: [],
       });
+      scheduleRemoteAccessRetry();
+      return status;
     }
 
     writeDesktopLogHeader(
@@ -1712,6 +1741,7 @@ app.on("before-quit", () => {
   isQuitting = true;
   writeDesktopLogHeader("before-quit received");
   clearUpdatePollTimer();
+  clearRemoteAccessRetryTimer();
   stopRemoteGateway();
   stopBackend();
   void clearPrivateTailscaleServe();
