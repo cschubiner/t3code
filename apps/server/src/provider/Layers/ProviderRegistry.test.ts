@@ -457,6 +457,39 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
         ),
       );
 
+      it.effect(
+        "returns unauthenticated when the app-server account probe reports an invalid token",
+        () =>
+          Effect.gen(function* () {
+            yield* withTempCodexHome();
+            const status = yield* checkCodexProviderStatus(() =>
+              Effect.fail(
+                new Error(
+                  'worker quit with fatal: Transport channel closed, when AuthRequired(AuthRequiredError { www_authenticate_header: "Bearer realm=\\"OpenAI API\\"" }) invalid_token Missing or invalid access token',
+                ),
+              ),
+            );
+            assert.strictEqual(status.provider, "codex");
+            assert.strictEqual(status.status, "error");
+            assert.strictEqual(status.installed, true);
+            assert.strictEqual(status.auth.status, "unauthenticated");
+            assert.strictEqual(
+              status.message,
+              "Codex CLI is not authenticated. Run `codex login` and try again.",
+            );
+          }).pipe(
+            Effect.provide(
+              mockSpawnerLayer((args) => {
+                const joined = args.join(" ");
+                if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
+                if (joined === "login status")
+                  return { stdout: "Logged in\n", stderr: "", code: 0 };
+                throw new Error(`Unexpected args: ${joined}`);
+              }),
+            ),
+          ),
+      );
+
       it.effect("returns warning when login status command is unsupported", () =>
         Effect.gen(function* () {
           yield* withTempCodexHome();

@@ -24,6 +24,7 @@ import {
 } from "@t3tools/contracts";
 import { truncate } from "@t3tools/shared/String";
 import { applyClaudePromptEffortPrefix, normalizeModelSlug } from "@t3tools/shared/model";
+import { isCodexAuthErrorMessage } from "@t3tools/shared/providerAuth";
 import {
   useCallback,
   useDeferredValue,
@@ -1459,6 +1460,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
     () => providerStatuses.find((status) => status.provider === selectedProvider) ?? null,
     [selectedProvider, providerStatuses],
   );
+  const hasActiveCodexAuthFailure =
+    selectedProvider === "codex" &&
+    isCodexAuthErrorMessage(activeThread?.session?.lastError ?? null);
+  const isProviderBlockedForSend =
+    activeProviderStatus?.status === "error" || hasActiveCodexAuthFailure;
   const activeProjectCwd = activeProject?.cwd ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const threadTerminalRuntimeEnv = useMemo(() => {
@@ -3424,10 +3430,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (
       !api ||
       !activeThread ||
+      isProviderBlockedForSend ||
       isConnecting ||
       (isSendBusy && !canQueueWhilePreparingWorktree) ||
       (sendInFlightRef.current && !canQueueWhilePreparingWorktree)
     ) {
+      if (api && activeThread && isProviderBlockedForSend) {
+        setThreadError(
+          activeThread.id,
+          activeProviderStatus?.message ??
+            activeThread.session?.lastError ??
+            `${selectedProvider} is unavailable right now.`,
+        );
+      }
       return;
     }
     if (activePendingProgress) {
@@ -3744,8 +3759,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
         ...(selectedModelSelection.options ? { options: selectedModelSelection.options } : {}),
       };
 
+      let threadCreateReceiptPromise: Promise<unknown> | null = null;
       if (isLocalDraftThread) {
-        await api.orchestration.dispatchCommand({
+        createdServerThreadForLocalDraft = true;
+        threadCreateReceiptPromise = api.orchestration.dispatchCommand({
           type: "thread.create",
           commandId: newCommandId(),
           threadId: threadIdForSend,
@@ -3758,7 +3775,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           worktreePath: nextThreadWorktreePath,
           createdAt: activeThread.createdAt,
         });
-        createdServerThreadForLocalDraft = true;
+        void threadCreateReceiptPromise.catch(() => undefined);
       }
 
       let setupScript: ProjectScript | null = null;
@@ -5453,6 +5470,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                 type="submit"
                                 className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/90 text-primary-foreground transition-all duration-150 hover:bg-primary hover:scale-105 disabled:opacity-30 disabled:hover:scale-100 sm:h-8 sm:w-8"
                                 disabled={
+                                  isProviderBlockedForSend ||
                                   isSendBusy ||
                                   isConnecting ||
                                   !composerSendState.hasSendableContent
