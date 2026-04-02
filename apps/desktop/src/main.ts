@@ -24,7 +24,7 @@ import type {
   DesktopUpdateActionResult,
   DesktopUpdateState,
 } from "@t3tools/contracts";
-import electronUpdater from "electron-updater";
+import { autoUpdater } from "electron-updater";
 
 import type { ContextMenuItem } from "@t3tools/contracts";
 import { NetService } from "@t3tools/shared/Net";
@@ -52,7 +52,6 @@ import {
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch";
 import { clearPrivateTailscaleServe, setupPrivateTailscaleServe } from "./tailscale";
 
-const { autoUpdater } = electronUpdater;
 const CURRENT_DIR = Path.dirname(fileURLToPath(import.meta.url));
 
 fixPath();
