@@ -18,6 +18,7 @@ import { render } from "vitest-browser-react";
 
 import { useComposerDraftStore } from "../composerDraftStore";
 import { __resetNativeApiForTests } from "../nativeApi";
+import { applyServerConfigEvent, getServerConfig } from "../rpc/serverState";
 import { getRouter } from "../router";
 import { useStore } from "../store";
 import { BrowserWsRpcHarness } from "../../test/wsRpcHarness";
@@ -192,7 +193,7 @@ const worker = setupWorker(
 );
 
 function sendServerConfigUpdatedPush(issues: ServerConfig["issues"]) {
-  rpcHarness.emitStreamValue(WS_METHODS.subscribeServerConfig, {
+  applyServerConfigEvent({
     version: 1,
     type: "keybindingsUpdated",
     payload: { issues },
@@ -224,6 +225,30 @@ async function waitForComposerEditor(): Promise<HTMLElement> {
   return waitForElement(
     () => document.querySelector<HTMLElement>('[data-testid="composer-editor"]'),
     "App should render composer editor",
+  );
+}
+
+async function waitForServerConfigSnapshot(): Promise<void> {
+  await vi.waitFor(
+    () => {
+      expect(
+        getServerConfig(),
+        "Server config snapshot should be loaded before test pushes",
+      ).toBeTruthy();
+    },
+    { timeout: 8_000, interval: 16 },
+  );
+}
+
+async function waitForServerConfigSubscription(): Promise<void> {
+  await vi.waitFor(
+    () => {
+      expect(
+        rpcHarness.requests.some((request) => request._tag === WS_METHODS.subscribeServerConfig),
+        "Server config stream should be subscribed before test pushes",
+      ).toBe(true);
+    },
+    { timeout: 8_000, interval: 16 },
   );
 }
 
@@ -260,6 +285,8 @@ async function mountApp(): Promise<{ cleanup: () => Promise<void> }> {
 
   const screen = await render(<RouterProvider router={router} />, { container: host });
   await waitForComposerEditor();
+  await waitForServerConfigSnapshot();
+  await waitForServerConfigSubscription();
 
   return {
     cleanup: async () => {

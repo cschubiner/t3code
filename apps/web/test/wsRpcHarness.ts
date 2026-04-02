@@ -25,10 +25,10 @@ interface BrowserWsRpcHarnessOptions {
 const STREAM_METHODS = new Set<string>([
   WS_METHODS.gitRunStackedAction,
   WS_METHODS.subscribeOrchestrationDomainEvents,
+  WS_METHODS.subscribeSnippetsUpdated,
   WS_METHODS.subscribeTerminalEvents,
   WS_METHODS.subscribeServerConfig,
   WS_METHODS.subscribeServerLifecycle,
-  WS_METHODS.subscribeSnippetsUpdated,
 ]);
 
 const ALL_RPC_METHODS = Array.from(WsRpcGroup.requests.keys());
@@ -107,9 +107,6 @@ export class BrowserWsRpcHarness {
   }
 
   async onMessage(rawData: string): Promise<void> {
-    if (!this.serverReady) {
-      return;
-    }
     const server = await this.serverReady;
     if (!server) {
       return;

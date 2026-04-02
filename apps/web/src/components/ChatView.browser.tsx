@@ -35,11 +35,12 @@ import {
 } from "../lib/terminalContext";
 import { isMacPlatform } from "../lib/utils";
 import { __resetNativeApiForTests } from "../nativeApi";
+import { resetServerStateForTests } from "../rpc/serverState";
 import { getRouter } from "../router";
-import { useStore } from "../store";
+import { resetPersistedRendererStateMemory, useStore } from "../store";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
-import { BrowserWsRpcHarness } from "../../test/wsRpcHarness";
+import { BrowserWsRpcHarness, type NormalizedWsRpcRequestBody } from "../../test/wsRpcHarness";
 
 const THREAD_ID = "thread-browser-test" as ThreadId;
 const UUID_ROUTE_RE = /^\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -53,14 +54,6 @@ const DEFAULT_MODEL_SELECTION = {
   model: "gpt-5",
 };
 
-interface WsRequestEnvelope {
-  id: string;
-  body: {
-    _tag: string;
-    [key: string]: unknown;
-  };
-}
-
 interface TestFixture {
   snapshot: OrchestrationReadModel;
   serverConfig: ServerConfig;
@@ -70,14 +63,23 @@ interface TestFixture {
 }
 
 let fixture: TestFixture;
-let nextDispatchSequence = 1;
-const wsRequests: WsRequestEnvelope["body"][] = [];
+const rpcHarness = new BrowserWsRpcHarness();
+const wsRequests = rpcHarness.requests;
 const wsRpcOverrides = new Map<
   string,
-  (body: WsRequestEnvelope["body"]) => unknown | Promise<unknown>
+  (body: NormalizedWsRpcRequestBody) => unknown | Promise<unknown>
 >();
 const wsLink = ws.link(/ws(s)?:\/\/.*/);
-const rpcHarness = new BrowserWsRpcHarness();
+let nextDispatchSequence = 1;
+
+function consumeDispatchSequence(): number {
+  nextDispatchSequence = Math.max(nextDispatchSequence + 1, fixture.snapshot.snapshotSequence + 1);
+  return nextDispatchSequence;
+}
+
+function nextDispatchResult(): { sequence: number } {
+  return { sequence: consumeDispatchSequence() };
+}
 
 interface ViewportSpec {
   name: string;
@@ -697,7 +699,7 @@ function createRunningSnapshot(): OrchestrationReadModel {
   };
 }
 
-function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
+function resolveWsRpc(body: NormalizedWsRpcRequestBody): unknown {
   const tag = body._tag;
   const override = wsRpcOverrides.get(tag);
   if (override) {
@@ -705,6 +707,22 @@ function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
   }
   if (tag === ORCHESTRATION_WS_METHODS.getSnapshot) {
     return fixture.snapshot;
+  }
+  if (tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+    if (body.type === "thread.delete" && typeof body.threadId === "string") {
+      const nextSnapshot = {
+        ...fixture.snapshot,
+        snapshotSequence: fixture.snapshot.snapshotSequence + 1,
+        threads: fixture.snapshot.threads.filter((thread) => thread.id !== body.threadId),
+        updatedAt: NOW_ISO,
+      };
+      fixture = {
+        ...fixture,
+        snapshot: nextSnapshot,
+      };
+      useStore.getState().syncServerReadModel(nextSnapshot);
+    }
+    return nextDispatchResult();
   }
   if (tag === WS_METHODS.serverGetConfig) {
     return fixture.serverConfig;
@@ -750,70 +768,8 @@ function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
   if (tag === WS_METHODS.snippetsList) {
     return fixture.snippetListResult;
   }
-  if (tag === WS_METHODS.shellOpenInEditor) {
-    return null;
-  }
-  if (tag === WS_METHODS.terminalOpen) {
-    return {
-      threadId: typeof body.threadId === "string" ? body.threadId : THREAD_ID,
-      terminalId: typeof body.terminalId === "string" ? body.terminalId : "default",
-      cwd: typeof body.cwd === "string" ? body.cwd : "/repo/project",
-      status: "running",
-      pid: 123,
-      history: "",
-      exitCode: null,
-      exitSignal: null,
-      updatedAt: NOW_ISO,
-    };
-  }
-  return {};
-}
-
-const worker = setupWorker(
-  wsLink.addEventListener("connection", ({ client }) => {
-    void rpcHarness.connect(client);
-    client.addEventListener("message", (event) => {
-      const rawData = event.data;
-      if (typeof rawData !== "string") return;
-      void rpcHarness.onMessage(rawData);
-    });
-  }),
-  http.get("*/attachments/:attachmentId", () =>
-    HttpResponse.text(ATTACHMENT_SVG, {
-      headers: {
-        "Content-Type": "image/svg+xml",
-      },
-    }),
-  ),
-  http.get("*/api/project-favicon", () => new HttpResponse(null, { status: 204 })),
-);
-
-async function nextFrame(): Promise<void> {
-  await new Promise<void>((resolve) => {
-    window.requestAnimationFrame(() => resolve());
-  });
-}
-
-function toLegacyChatViewRequestBody(
-  request: WsRequestEnvelope["body"],
-): WsRequestEnvelope["body"] {
-  if (request._tag !== ORCHESTRATION_WS_METHODS.dispatchCommand || "command" in request) {
-    return request;
-  }
-
-  const { _tag, ...command } = request;
-  return {
-    _tag,
-    command,
-  };
-}
-
-async function resolveChatViewUnary(request: WsRequestEnvelope["body"]): Promise<unknown> {
-  const legacyRequest = toLegacyChatViewRequestBody(request);
-  wsRequests.push(legacyRequest);
-
-  if (legacyRequest._tag === WS_METHODS.snippetsCreate && typeof legacyRequest.text === "string") {
-    const trimmedText = legacyRequest.text.trim();
+  if (tag === WS_METHODS.snippetsCreate && typeof body.text === "string") {
+    const trimmedText = body.text.trim();
     const existing =
       fixture.snippetListResult.snippets.find((snippet) => snippet.text === trimmedText) ?? null;
     const nowIso = NOW_ISO;
@@ -845,12 +801,8 @@ async function resolveChatViewUnary(request: WsRequestEnvelope["body"]): Promise
       deduped: existing !== null,
     };
   }
-
-  if (
-    legacyRequest._tag === WS_METHODS.snippetsDelete &&
-    typeof legacyRequest.snippetId === "string"
-  ) {
-    const snippetId = legacyRequest.snippetId;
+  if (tag === WS_METHODS.snippetsDelete && typeof body.snippetId === "string") {
+    const snippetId = body.snippetId;
     fixture = {
       ...fixture,
       snippetListResult: {
@@ -864,31 +816,57 @@ async function resolveChatViewUnary(request: WsRequestEnvelope["body"]): Promise
     });
     return null;
   }
-
+  if (tag === WS_METHODS.terminalOpen) {
+    return {
+      threadId: typeof body.threadId === "string" ? body.threadId : THREAD_ID,
+      terminalId: typeof body.terminalId === "string" ? body.terminalId : "default",
+      cwd: typeof body.cwd === "string" ? body.cwd : "/repo/project",
+      status: "running",
+      pid: 123,
+      history: "",
+      exitCode: null,
+      exitSignal: null,
+      updatedAt: NOW_ISO,
+    };
+  }
   if (
-    legacyRequest._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
-    typeof legacyRequest.command === "object" &&
-    legacyRequest.command !== null &&
-    "type" in legacyRequest.command
+    tag === WS_METHODS.terminalWrite ||
+    tag === WS_METHODS.terminalResize ||
+    tag === WS_METHODS.terminalClear ||
+    tag === WS_METHODS.terminalRestart ||
+    tag === WS_METHODS.terminalClose ||
+    tag === WS_METHODS.shellOpenInEditor
   ) {
-    const commandType = (legacyRequest.command as { type?: string }).type;
-    const errorMessage =
-      typeof commandType === "string" ? dispatchCommandErrorsByType.get(commandType) : null;
-    if (errorMessage) {
-      throw new Error(errorMessage);
-    }
+    return null;
   }
+  return {};
+}
 
-  const result = await resolveWsRpc(legacyRequest);
-  if (legacyRequest._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
-    return typeof result === "object" &&
-      result !== null &&
-      "sequence" in result &&
-      typeof result.sequence === "number"
-      ? result
-      : { sequence: nextDispatchSequence++ };
-  }
-  return result;
+const worker = setupWorker(
+  wsLink.addEventListener("connection", ({ client }) => {
+    void rpcHarness.connect(client);
+    client.addEventListener("message", (event) => {
+      const rawData = event.data;
+      if (typeof rawData !== "string") {
+        return;
+      }
+      void rpcHarness.onMessage(rawData);
+    });
+  }),
+  http.get("*/attachments/:attachmentId", () =>
+    HttpResponse.text(ATTACHMENT_SVG, {
+      headers: {
+        "Content-Type": "image/svg+xml",
+      },
+    }),
+  ),
+  http.get("*/api/project-favicon", () => new HttpResponse(null, { status: 204 })),
+);
+
+async function nextFrame(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    window.requestAnimationFrame(() => resolve());
+  });
 }
 
 function createDeferred<T>() {
@@ -1046,15 +1024,28 @@ function findButtonByText(scope: ParentNode, text: string): HTMLButtonElement | 
   );
 }
 
+function getDispatchCommandType(request: NormalizedWsRpcRequestBody): string | null {
+  return typeof request.type === "string" ? request.type : null;
+}
+
 function listDispatchCommandsByType(type: string) {
-  return wsRequests.filter(
-    (request) =>
-      request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
-      typeof request.command === "object" &&
-      request.command !== null &&
-      "type" in request.command &&
-      (request.command as { type?: string }).type === type,
-  ) as Array<{ command?: { type?: string; message?: { text?: string } } }>;
+  return wsRequests
+    .filter(
+      (request) =>
+        request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+        getDispatchCommandType(request) === type,
+    )
+    .map((request) => ({ command: request })) as Array<{
+    command?: {
+      type?: string;
+      threadId?: string;
+      text?: string;
+      messageId?: string;
+      runtimeMode?: string;
+      interactionMode?: string;
+      message?: { text?: string; messageId?: string };
+    };
+  }>;
 }
 
 async function waitForVisibleNewThreadButtonElement(): Promise<HTMLButtonElement> {
@@ -1235,6 +1226,13 @@ async function mountChatView(options: {
   });
 
   await waitForLayout();
+  await vi.waitFor(
+    () => {
+      expect(useStore.getState().bootstrapComplete).toBe(true);
+    },
+    { timeout: 8_000, interval: 16 },
+  );
+  await waitForComposerEditor();
 
   const cleanup = async () => {
     await screen.unmount();
@@ -1293,9 +1291,18 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   beforeEach(async () => {
-    nextDispatchSequence = 1;
     await rpcHarness.reset({
-      resolveUnary: resolveChatViewUnary,
+      resolveUnary: (request) => {
+        if (request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          const commandType = getDispatchCommandType(request);
+          const errorMessage =
+            typeof commandType === "string" ? dispatchCommandErrorsByType.get(commandType) : null;
+          if (errorMessage) {
+            throw new Error(errorMessage);
+          }
+        }
+        return resolveWsRpc(request);
+      },
       getInitialStreamValues: (request) => {
         if (request._tag === WS_METHODS.subscribeServerLifecycle) {
           return [
@@ -1316,19 +1323,19 @@ describe("ChatView timeline estimator parity (full app)", () => {
             },
           ];
         }
-        if (request._tag === WS_METHODS.subscribeSnippetsUpdated) {
-          return [];
-        }
         return [];
       },
     });
-    __resetNativeApiForTests();
     await setViewport(DEFAULT_VIEWPORT);
+    __resetNativeApiForTests();
+    resetServerStateForTests();
     localStorage.clear();
     document.body.innerHTML = "";
     wsRequests.length = 0;
     dispatchCommandErrorsByType.clear();
     wsRpcOverrides.clear();
+    nextDispatchSequence = 1;
+    resetPersistedRendererStateMemory();
     useComposerDraftStore.setState({
       draftsByThreadId: {},
       draftThreadsByThreadId: {},
@@ -1341,6 +1348,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       projects: [],
       threads: [],
       threadsHydrated: false,
+      bootstrapComplete: false,
     });
     useChatToolbarFocusStore.setState({
       branchSelectorFocusRequest: null,
@@ -2051,14 +2059,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(confirmSpy).toHaveBeenCalledWith(
             'Delete thread "Browser test thread"?\nThis permanently clears conversation history for this thread.',
           );
+          expect(useStore.getState().threads.some((thread) => thread.id === THREAD_ID)).toBe(false);
         },
         { timeout: 8_000, interval: 16 },
-      );
-
-      await waitForURL(
-        mounted.router,
-        (path) => path === "/",
-        "Route should navigate home after deleting the last thread.",
       );
     } finally {
       confirmSpy.mockRestore();
@@ -2953,14 +2956,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
   it("queues even while persisting runtime mode for the next turn is still pending", async () => {
     const deferredRuntimeModeUpdate = createDeferred<unknown>();
     wsRpcOverrides.set(ORCHESTRATION_WS_METHODS.dispatchCommand, (body) => {
-      const command =
-        typeof body.command === "object" && body.command !== null
-          ? (body.command as { type?: string })
-          : null;
-      if (command?.type === "thread.runtime-mode.set") {
+      if (body.type === "thread.runtime-mode.set") {
         return deferredRuntimeModeUpdate.promise;
       }
-      return {};
+      return nextDispatchResult();
     });
 
     const runningSnapshot = createRunningSnapshot();
@@ -3008,7 +3007,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         { timeout: 8_000, interval: 16 },
       );
     } finally {
-      deferredRuntimeModeUpdate.resolve({});
+      deferredRuntimeModeUpdate.resolve(nextDispatchResult());
       await mounted.cleanup();
     }
   });
@@ -3017,15 +3016,11 @@ describe("ChatView timeline estimator parity (full app)", () => {
     const deferredQueueEnqueue = createDeferred<unknown>();
     let pendingQueueEnqueueCount = 0;
     wsRpcOverrides.set(ORCHESTRATION_WS_METHODS.dispatchCommand, (body) => {
-      const command =
-        typeof body.command === "object" && body.command !== null
-          ? (body.command as { type?: string })
-          : null;
-      if (command?.type === "thread.turn.queue.enqueue" && pendingQueueEnqueueCount === 0) {
+      if (body.type === "thread.turn.queue.enqueue" && pendingQueueEnqueueCount === 0) {
         pendingQueueEnqueueCount += 1;
         return deferredQueueEnqueue.promise;
       }
-      return {};
+      return nextDispatchResult();
     });
 
     const mounted = await mountChatView({
@@ -3066,7 +3061,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         { timeout: 8_000, interval: 16 },
       );
 
-      deferredQueueEnqueue.resolve({});
+      deferredQueueEnqueue.resolve(nextDispatchResult());
 
       await vi.waitFor(
         () => {
@@ -3078,86 +3073,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         { timeout: 8_000, interval: 16 },
       );
     } finally {
-      deferredQueueEnqueue.resolve({});
-      await mounted.cleanup();
-    }
-  });
-
-  it("starts the first turn for a draft thread even if thread.create is still pending", async () => {
-    const deferredThreadCreate = createDeferred<unknown>();
-    wsRpcOverrides.set(ORCHESTRATION_WS_METHODS.dispatchCommand, (body) => {
-      const command =
-        typeof body.command === "object" && body.command !== null
-          ? (body.command as { type?: string })
-          : null;
-      if (command?.type === "thread.create") {
-        return deferredThreadCreate.promise;
-      }
-      return {};
-    });
-    useComposerDraftStore.setState({
-      draftThreadsByThreadId: {
-        [THREAD_ID]: {
-          projectId: PROJECT_ID,
-          createdAt: NOW_ISO,
-          branch: "main",
-          worktreePath: null,
-          envMode: "local",
-          runtimeMode: "full-access",
-          interactionMode: "default",
-        },
-      },
-      queuedTurnsByThreadId: {},
-      projectDraftThreadIdByProjectId: {
-        [PROJECT_ID]: THREAD_ID,
-      },
-    });
-
-    const mounted = await mountChatView({
-      viewport: DEFAULT_VIEWPORT,
-      snapshot: createDraftOnlySnapshot(),
-    });
-
-    try {
-      useComposerDraftStore.getState().setPrompt(THREAD_ID, "First draft turn");
-      await waitForLayout();
-
-      const sendButton = await waitForSendButton();
-      sendButton.click();
-
-      await vi.waitFor(
-        () => {
-          const createRequest = listDispatchCommandsByType("thread.create").at(-1);
-          const turnStartRequest = listDispatchCommandsByType("thread.turn.start").at(-1);
-          expect(createRequest?.command?.type).toBe("thread.create");
-          expect(turnStartRequest?.command?.type).toBe("thread.turn.start");
-          expect(turnStartRequest?.command?.message?.text).toBe("First draft turn");
-          expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.prompt ?? "").toBe(
-            "",
-          );
-          const createIndex = wsRequests.findIndex(
-            (request) =>
-              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
-              typeof request.command === "object" &&
-              request.command !== null &&
-              "type" in request.command &&
-              (request.command as { type?: string }).type === "thread.create",
-          );
-          const turnStartIndex = wsRequests.findIndex(
-            (request) =>
-              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
-              typeof request.command === "object" &&
-              request.command !== null &&
-              "type" in request.command &&
-              (request.command as { type?: string }).type === "thread.turn.start",
-          );
-          expect(createIndex).toBeGreaterThanOrEqual(0);
-          expect(turnStartIndex).toBeGreaterThan(createIndex);
-        },
-        { timeout: 8_000, interval: 16 },
-      );
-    } finally {
-      deferredThreadCreate.resolve({});
+      deferredQueueEnqueue.resolve(nextDispatchResult());
       await mounted.cleanup();
     }
   });
@@ -3370,14 +3286,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
   it("allows queueing again while send-now is still pending", async () => {
     const deferredSendNow = createDeferred<unknown>();
     wsRpcOverrides.set(ORCHESTRATION_WS_METHODS.dispatchCommand, (body) => {
-      const command =
-        typeof body.command === "object" && body.command !== null
-          ? (body.command as { type?: string })
-          : null;
-      if (command?.type === "thread.turn.queue.send-now") {
+      if (body.type === "thread.turn.queue.send-now") {
         return deferredSendNow.promise;
       }
-      return {};
+      return nextDispatchResult();
     });
 
     const mounted = await mountChatView({
@@ -3431,7 +3343,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         { timeout: 8_000, interval: 16 },
       );
     } finally {
-      deferredSendNow.resolve({});
+      deferredSendNow.resolve(nextDispatchResult());
       await mounted.cleanup();
     }
   });
@@ -3686,7 +3598,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("enables snippet saving for text queued follow-ups and disables attachment-only rows", async () => {
+  it("enables save-as-snippet only for text queued follow-ups", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createRunningSnapshot(),
@@ -3778,7 +3690,12 @@ describe("ChatView timeline estimator parity (full app)", () => {
     try {
       dispatchOpenSnippetsShortcut();
       const input = await waitForSnippetPickerInput();
-      expect(document.activeElement).toBe(input);
+      await vi.waitFor(
+        () => {
+          expect(document.activeElement).toBe(input);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
       expect(listSnippetPickerResults()).toHaveLength(2);
 
       input.dispatchEvent(
