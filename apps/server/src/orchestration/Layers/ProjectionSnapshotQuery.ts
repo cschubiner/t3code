@@ -199,6 +199,46 @@ function toOrchestrationSessionFromProjection(
   };
 }
 
+function normalizeLatestTurnForSession(
+  latestTurn: OrchestrationLatestTurn | null,
+  session: OrchestrationSession | null | undefined,
+): OrchestrationLatestTurn | null {
+  if (
+    latestTurn === null ||
+    latestTurn.state !== "running" ||
+    session === null ||
+    session === undefined
+  ) {
+    return latestTurn;
+  }
+  if (session.status !== "error") {
+    return latestTurn;
+  }
+  return {
+    ...latestTurn,
+    state: "error",
+    completedAt: latestTurn.completedAt ?? session.updatedAt,
+  };
+}
+
+function shouldRuntimeSessionOverrideProjectedSession(
+  projectedSession: OrchestrationSession | undefined,
+  runtimeSession: OrchestrationSession,
+): boolean {
+  if (projectedSession === undefined) {
+    return true;
+  }
+  if (
+    projectedSession.status === "error" &&
+    projectedSession.lastError !== null &&
+    runtimeSession.status === "stopped" &&
+    runtimeSession.lastError === null
+  ) {
+    return false;
+  }
+  return projectedSession.updatedAt <= runtimeSession.updatedAt;
+}
+
 function computeSnapshotSequence(
   stateRows: ReadonlyArray<Schema.Schema.Type<typeof ProjectionStateDbRowSchema>>,
 ): number {
@@ -723,10 +763,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             updatedAt = maxIso(updatedAt, row.lastSeenAt);
             const runtimeSession = toOrchestrationSessionFromRuntime(row);
             const projectedSession = sessionsByThread.get(row.threadId);
-            if (
-              projectedSession === undefined ||
-              projectedSession.updatedAt <= runtimeSession.updatedAt
-            ) {
+            if (shouldRuntimeSessionOverrideProjectedSession(projectedSession, runtimeSession)) {
               sessionsByThread.set(row.threadId, runtimeSession);
             }
           }
@@ -742,27 +779,33 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             deletedAt: row.deletedAt,
           }));
 
-          const threads: ReadonlyArray<OrchestrationThread> = threadRows.map((row) => ({
-            id: row.threadId,
-            projectId: row.projectId,
-            title: row.title,
-            modelSelection: row.modelSelection,
-            runtimeMode: row.runtimeMode,
-            interactionMode: row.interactionMode,
-            branch: row.branch,
-            worktreePath: row.worktreePath,
-            latestTurn: latestTurnByThread.get(row.threadId) ?? null,
-            createdAt: row.createdAt,
-            updatedAt: row.updatedAt,
-            archivedAt: row.archivedAt,
-            deletedAt: row.deletedAt,
-            messages: messagesByThread.get(row.threadId) ?? [],
-            queuedTurns: queuedTurnsByThread.get(row.threadId) ?? [],
-            proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
-            activities: activitiesByThread.get(row.threadId) ?? [],
-            checkpoints: checkpointsByThread.get(row.threadId) ?? [],
-            session: sessionsByThread.get(row.threadId) ?? null,
-          }));
+          const threads: ReadonlyArray<OrchestrationThread> = threadRows.map((row) => {
+            const session = sessionsByThread.get(row.threadId) ?? null;
+            return {
+              id: row.threadId,
+              projectId: row.projectId,
+              title: row.title,
+              modelSelection: row.modelSelection,
+              runtimeMode: row.runtimeMode,
+              interactionMode: row.interactionMode,
+              branch: row.branch,
+              worktreePath: row.worktreePath,
+              latestTurn: normalizeLatestTurnForSession(
+                latestTurnByThread.get(row.threadId) ?? null,
+                session,
+              ),
+              createdAt: row.createdAt,
+              updatedAt: row.updatedAt,
+              archivedAt: row.archivedAt,
+              deletedAt: row.deletedAt,
+              messages: messagesByThread.get(row.threadId) ?? [],
+              queuedTurns: queuedTurnsByThread.get(row.threadId) ?? [],
+              proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
+              activities: activitiesByThread.get(row.threadId) ?? [],
+              checkpoints: checkpointsByThread.get(row.threadId) ?? [],
+              session,
+            };
+          });
 
           const snapshot = {
             snapshotSequence: computeSnapshotSequence(stateRows),

@@ -3083,6 +3083,85 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("starts the first turn for a draft thread even if thread.create is still pending", async () => {
+    const deferredThreadCreate = createDeferred<unknown>();
+    wsRpcOverrides.set(ORCHESTRATION_WS_METHODS.dispatchCommand, (body) => {
+      const command =
+        typeof body.command === "object" && body.command !== null
+          ? (body.command as { type?: string })
+          : null;
+      if (command?.type === "thread.create") {
+        return deferredThreadCreate.promise;
+      }
+      return {};
+    });
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          branch: "main",
+          worktreePath: null,
+          envMode: "local",
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        },
+      },
+      queuedTurnsByThreadId: {},
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "First draft turn");
+      await waitForLayout();
+
+      const sendButton = await waitForSendButton();
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          const createRequest = listDispatchCommandsByType("thread.create").at(-1);
+          const turnStartRequest = listDispatchCommandsByType("thread.turn.start").at(-1);
+          expect(createRequest?.command?.type).toBe("thread.create");
+          expect(turnStartRequest?.command?.type).toBe("thread.turn.start");
+          expect(turnStartRequest?.command?.message?.text).toBe("First draft turn");
+          expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.prompt ?? "").toBe(
+            "",
+          );
+          const createIndex = wsRequests.findIndex(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              typeof request.command === "object" &&
+              request.command !== null &&
+              "type" in request.command &&
+              (request.command as { type?: string }).type === "thread.create",
+          );
+          const turnStartIndex = wsRequests.findIndex(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              typeof request.command === "object" &&
+              request.command !== null &&
+              "type" in request.command &&
+              (request.command as { type?: string }).type === "thread.turn.start",
+          );
+          expect(createIndex).toBeGreaterThanOrEqual(0);
+          expect(turnStartIndex).toBeGreaterThan(createIndex);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      deferredThreadCreate.resolve({});
+      await mounted.cleanup();
+    }
+  });
+
   it("queues additional messages while preparing a new worktree", async () => {
     const deferredWorktree = createDeferred<{
       worktree: { branch: string; path: string };

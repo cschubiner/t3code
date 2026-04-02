@@ -152,6 +152,10 @@ function runtimeErrorMessageFromEvent(event: ProviderRuntimeEvent): string | und
   return payloadMessage;
 }
 
+function runtimeErrorClassFromEvent(event: ProviderRuntimeEvent): string | undefined {
+  return asString(runtimePayloadRecord(event)?.class);
+}
+
 function orchestrationSessionStatusFromRuntimeState(
   state: "starting" | "running" | "waiting" | "ready" | "interrupted" | "stopped" | "error",
 ): "starting" | "running" | "ready" | "interrupted" | "stopped" | "error" {
@@ -1195,8 +1199,11 @@ const make = Effect.gen(function* () {
 
       if (event.type === "runtime.error") {
         const runtimeErrorMessage = runtimeErrorMessageFromEvent(event) ?? "Provider runtime error";
+        const fatalProviderRuntimeError = runtimeErrorClassFromEvent(event) === "provider_error";
         const preservesActiveTurn =
-          activeTurnId !== null && (eventTurnId === undefined || sameId(activeTurnId, eventTurnId));
+          !fatalProviderRuntimeError &&
+          activeTurnId !== null &&
+          (eventTurnId === undefined || sameId(activeTurnId, eventTurnId));
 
         const shouldApplyRuntimeError = !STRICT_PROVIDER_LIFECYCLE_GUARD
           ? true
@@ -1212,7 +1219,11 @@ const make = Effect.gen(function* () {
               status: preservesActiveTurn ? "running" : "error",
               providerName: event.provider,
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
-              activeTurnId: preservesActiveTurn ? activeTurnId : (eventTurnId ?? null),
+              activeTurnId: preservesActiveTurn
+                ? activeTurnId
+                : fatalProviderRuntimeError
+                  ? null
+                  : (eventTurnId ?? null),
               lastError: runtimeErrorMessage,
               updatedAt: now,
             },

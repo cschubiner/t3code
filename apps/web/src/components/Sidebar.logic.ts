@@ -546,10 +546,16 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
+  const hasStaleRunningLatestTurn =
+    thread.latestTurn?.state === "running" &&
+    thread.session?.status !== "error" &&
+    thread.session?.status !== "closed" &&
+    thread.session?.orchestrationStatus !== "stopped";
+
   const hasActiveRunningTurn =
     thread.session?.status === "running" ||
     thread.session?.orchestrationStatus === "running" ||
-    thread.latestTurn?.state === "running";
+    hasStaleRunningLatestTurn;
 
   if (hasTransientWork || hasActiveRunningTurn) {
     return {

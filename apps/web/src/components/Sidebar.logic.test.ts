@@ -760,6 +760,44 @@ describe("resolveThreadStatusPill", () => {
     ).toMatchObject({ label: "Working", pulse: true });
   });
 
+  it("does not show working when a stale running latest turn belongs to an errored session", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          latestTurn: makeLatestTurn({ completedAt: null, state: "running" }),
+          session: {
+            ...baseThread.session,
+            status: "error",
+            orchestrationStatus: "error",
+          },
+        },
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+        hasTransientWork: false,
+      }),
+    ).toMatchObject({ label: "Completed", pulse: false });
+  });
+
+  it("does not show working when a stale running latest turn belongs to a stopped session", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          latestTurn: makeLatestTurn({ completedAt: null, state: "running" }),
+          session: {
+            ...baseThread.session,
+            status: "closed",
+            orchestrationStatus: "stopped",
+          },
+        },
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+        hasTransientWork: false,
+      }),
+    ).toMatchObject({ label: "Completed", pulse: false });
+  });
+
   it("shows working while local send state is active before the session flips to running", () => {
     expect(
       resolveThreadStatusPill({

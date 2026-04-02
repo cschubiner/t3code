@@ -1819,6 +1819,45 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBe("runtime exploded");
   });
 
+  it("marks the session errored when a provider_error runtime.error arrives for the active turn", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-provider-runtime-error-turn-started"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-4"),
+      payload: {},
+    });
+
+    harness.emit({
+      type: "runtime.error",
+      eventId: asEventId("evt-provider-runtime-error-active-turn"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-4"),
+      payload: {
+        message: "provider auth expired",
+        class: "provider_error",
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.session?.status === "error" &&
+        entry.session?.activeTurnId === null &&
+        entry.session?.lastError === "provider auth expired",
+    );
+    expect(thread.session?.status).toBe("error");
+    expect(thread.session?.activeTurnId).toBeNull();
+    expect(thread.session?.lastError).toBe("provider auth expired");
+  });
+
   it("records runtime.error activities from the typed payload message", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();

@@ -3,6 +3,7 @@ import {
   ThreadId,
   type ServerLifecycleWelcomePayload,
 } from "@t3tools/contracts";
+import { isCodexAuthErrorMessage } from "@t3tools/shared/providerAuth";
 import {
   Outlet,
   createRootRouteWithContext,
@@ -269,6 +270,7 @@ function EventRouter() {
     disposedRef.current = false;
     const recovery = createOrchestrationRecoveryCoordinator();
     let needsProviderInvalidation = false;
+    let lastProviderAuthRefreshAt = 0;
 
     const reconcileSnapshotDerivedState = () => {
       const threads = useStore.getState().threads;
@@ -408,6 +410,18 @@ function EventRouter() {
       await runSnapshotRecovery("replay-failed");
     };
     const unsubDomainEvent = api.orchestration.onDomainEvent((event) => {
+      if (
+        event.type === "thread.session-set" &&
+        event.payload.session.providerName === "codex" &&
+        isCodexAuthErrorMessage(event.payload.session.lastError ?? null)
+      ) {
+        const now = Date.now();
+        if (now - lastProviderAuthRefreshAt >= 3_000) {
+          lastProviderAuthRefreshAt = now;
+          void api.server.refreshProviders().catch(() => undefined);
+        }
+      }
+
       const action = recovery.classifyDomainEvent(event.sequence);
       if (action === "apply") {
         applyEventBatch([event]);
