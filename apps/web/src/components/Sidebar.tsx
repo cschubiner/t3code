@@ -281,7 +281,7 @@ function ClayCodeMark() {
  * sources WsTransport uses, converting ws(s) to http(s).
  */
 function getServerHttpOrigin(): string {
-  const bridgeUrl = window.desktopBridge?.getWsUrl();
+  const bridgeUrl = window.desktopBridge?.getWsUrl?.();
   const envUrl = import.meta.env.VITE_WS_URL as string | undefined;
   const wsUrl =
     bridgeUrl && bridgeUrl.length > 0

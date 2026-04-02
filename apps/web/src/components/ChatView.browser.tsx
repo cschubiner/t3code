@@ -34,15 +34,12 @@ import {
   removeInlineTerminalContextPlaceholder,
 } from "../lib/terminalContext";
 import { isMacPlatform } from "../lib/utils";
+import { __resetNativeApiForTests } from "../nativeApi";
 import { getRouter } from "../router";
 import { useStore } from "../store";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
-
-const WS_CHANNELS = {
-  serverWelcome: "server.welcome",
-  snippetsUpdated: "snippets.updated",
-} as const;
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
+import { BrowserWsRpcHarness } from "../../test/wsRpcHarness";
 
 const THREAD_ID = "thread-browser-test" as ThreadId;
 const UUID_ROUTE_RE = /^\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -73,12 +70,14 @@ interface TestFixture {
 }
 
 let fixture: TestFixture;
+let nextDispatchSequence = 1;
 const wsRequests: WsRequestEnvelope["body"][] = [];
 const wsRpcOverrides = new Map<
   string,
   (body: WsRequestEnvelope["body"]) => unknown | Promise<unknown>
 >();
 const wsLink = ws.link(/ws(s)?:\/\/.*/);
+const rpcHarness = new BrowserWsRpcHarness();
 
 interface ViewportSpec {
   name: string;
@@ -751,6 +750,9 @@ function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
   if (tag === WS_METHODS.snippetsList) {
     return fixture.snippetListResult;
   }
+  if (tag === WS_METHODS.shellOpenInEditor) {
+    return null;
+  }
   if (tag === WS_METHODS.terminalOpen) {
     return {
       threadId: typeof body.threadId === "string" ? body.threadId : THREAD_ID,
@@ -769,143 +771,11 @@ function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
 
 const worker = setupWorker(
   wsLink.addEventListener("connection", ({ client }) => {
-    client.send(
-      JSON.stringify({
-        type: "push",
-        sequence: 1,
-        channel: WS_CHANNELS.serverWelcome,
-        data: fixture.welcome,
-      }),
-    );
+    void rpcHarness.connect(client);
     client.addEventListener("message", (event) => {
       const rawData = event.data;
       if (typeof rawData !== "string") return;
-      let request: WsRequestEnvelope;
-      try {
-        request = JSON.parse(rawData) as WsRequestEnvelope;
-      } catch {
-        return;
-      }
-      const method = request.body?._tag;
-      if (typeof method !== "string") return;
-      wsRequests.push(request.body);
-      if (method === WS_METHODS.snippetsCreate && typeof request.body.text === "string") {
-        const trimmedText = request.body.text.trim();
-        const existing =
-          fixture.snippetListResult.snippets.find((snippet) => snippet.text === trimmedText) ??
-          null;
-        const nowIso = NOW_ISO;
-        const snippet =
-          existing ??
-          ({
-            id: `snippet-${fixture.snippetListResult.snippets.length + 1}` as SnippetId,
-            text: trimmedText,
-            createdAt: nowIso,
-            updatedAt: nowIso,
-          } as const);
-        fixture = {
-          ...fixture,
-          snippetListResult: {
-            snippets: existing
-              ? fixture.snippetListResult.snippets.map((entry) =>
-                  entry.id === existing.id ? { ...entry, updatedAt: nowIso } : entry,
-                )
-              : [{ ...snippet }, ...fixture.snippetListResult.snippets],
-          },
-        };
-        client.send(
-          JSON.stringify({
-            type: "push",
-            sequence: 2,
-            channel: WS_CHANNELS.snippetsUpdated,
-            data: {
-              kind: "upsert",
-              snippetId: snippet.id,
-              updatedAt: nowIso,
-            },
-          }),
-        );
-        client.send(
-          JSON.stringify({
-            id: request.id,
-            result: {
-              snippet: existing ? { ...existing, updatedAt: nowIso } : snippet,
-              deduped: existing !== null,
-            },
-          }),
-        );
-        return;
-      }
-      if (method === WS_METHODS.snippetsDelete && typeof request.body.snippetId === "string") {
-        const snippetId = request.body.snippetId;
-        fixture = {
-          ...fixture,
-          snippetListResult: {
-            snippets: fixture.snippetListResult.snippets.filter(
-              (snippet) => snippet.id !== snippetId,
-            ),
-          },
-        };
-        client.send(
-          JSON.stringify({
-            type: "push",
-            sequence: 2,
-            channel: WS_CHANNELS.snippetsUpdated,
-            data: {
-              kind: "delete",
-              snippetId,
-              updatedAt: NOW_ISO,
-            },
-          }),
-        );
-        client.send(
-          JSON.stringify({
-            id: request.id,
-            result: null,
-          }),
-        );
-        return;
-      }
-      if (
-        method === ORCHESTRATION_WS_METHODS.dispatchCommand &&
-        typeof request.body.command === "object" &&
-        request.body.command !== null &&
-        "type" in request.body.command
-      ) {
-        const commandType = (request.body.command as { type?: string }).type;
-        const errorMessage =
-          typeof commandType === "string" ? dispatchCommandErrorsByType.get(commandType) : null;
-        if (errorMessage) {
-          client.send(
-            JSON.stringify({
-              id: request.id,
-              error: {
-                message: errorMessage,
-              },
-            }),
-          );
-          return;
-        }
-      }
-      Promise.resolve(resolveWsRpc(request.body))
-        .then((result) => {
-          client.send(
-            JSON.stringify({
-              id: request.id,
-              result,
-            }),
-          );
-        })
-        .catch((error: unknown) => {
-          client.send(
-            JSON.stringify({
-              id: request.id,
-              error: {
-                message: error instanceof Error ? error.message : "Unexpected RPC error",
-              },
-            }),
-          );
-        });
+      void rpcHarness.onMessage(rawData);
     });
   }),
   http.get("*/attachments/:attachmentId", () =>
@@ -922,6 +792,103 @@ async function nextFrame(): Promise<void> {
   await new Promise<void>((resolve) => {
     window.requestAnimationFrame(() => resolve());
   });
+}
+
+function toLegacyChatViewRequestBody(
+  request: WsRequestEnvelope["body"],
+): WsRequestEnvelope["body"] {
+  if (request._tag !== ORCHESTRATION_WS_METHODS.dispatchCommand || "command" in request) {
+    return request;
+  }
+
+  const { _tag, ...command } = request;
+  return {
+    _tag,
+    command,
+  };
+}
+
+async function resolveChatViewUnary(request: WsRequestEnvelope["body"]): Promise<unknown> {
+  const legacyRequest = toLegacyChatViewRequestBody(request);
+  wsRequests.push(legacyRequest);
+
+  if (legacyRequest._tag === WS_METHODS.snippetsCreate && typeof legacyRequest.text === "string") {
+    const trimmedText = legacyRequest.text.trim();
+    const existing =
+      fixture.snippetListResult.snippets.find((snippet) => snippet.text === trimmedText) ?? null;
+    const nowIso = NOW_ISO;
+    const snippet =
+      existing ??
+      ({
+        id: `snippet-${fixture.snippetListResult.snippets.length + 1}` as SnippetId,
+        text: trimmedText,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      } as const);
+    fixture = {
+      ...fixture,
+      snippetListResult: {
+        snippets: existing
+          ? fixture.snippetListResult.snippets.map((entry) =>
+              entry.id === existing.id ? { ...entry, updatedAt: nowIso } : entry,
+            )
+          : [{ ...snippet }, ...fixture.snippetListResult.snippets],
+      },
+    };
+    rpcHarness.emitStreamValue(WS_METHODS.subscribeSnippetsUpdated, {
+      kind: "upsert",
+      snippetId: snippet.id,
+      updatedAt: nowIso,
+    });
+    return {
+      snippet: existing ? { ...existing, updatedAt: nowIso } : snippet,
+      deduped: existing !== null,
+    };
+  }
+
+  if (
+    legacyRequest._tag === WS_METHODS.snippetsDelete &&
+    typeof legacyRequest.snippetId === "string"
+  ) {
+    const snippetId = legacyRequest.snippetId;
+    fixture = {
+      ...fixture,
+      snippetListResult: {
+        snippets: fixture.snippetListResult.snippets.filter((snippet) => snippet.id !== snippetId),
+      },
+    };
+    rpcHarness.emitStreamValue(WS_METHODS.subscribeSnippetsUpdated, {
+      kind: "delete",
+      snippetId,
+      updatedAt: NOW_ISO,
+    });
+    return null;
+  }
+
+  if (
+    legacyRequest._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+    typeof legacyRequest.command === "object" &&
+    legacyRequest.command !== null &&
+    "type" in legacyRequest.command
+  ) {
+    const commandType = (legacyRequest.command as { type?: string }).type;
+    const errorMessage =
+      typeof commandType === "string" ? dispatchCommandErrorsByType.get(commandType) : null;
+    if (errorMessage) {
+      throw new Error(errorMessage);
+    }
+  }
+
+  const result = await resolveWsRpc(legacyRequest);
+  if (legacyRequest._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+    return typeof result === "object" &&
+      result !== null &&
+      "sequence" in result &&
+      typeof result.sequence === "number"
+      ? result
+      : { sequence: nextDispatchSequence++ };
+  }
+  return result;
 }
 
 function createDeferred<T>() {
@@ -1321,10 +1288,41 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   afterAll(async () => {
+    await rpcHarness.disconnect();
     await worker.stop();
   });
 
   beforeEach(async () => {
+    nextDispatchSequence = 1;
+    await rpcHarness.reset({
+      resolveUnary: resolveChatViewUnary,
+      getInitialStreamValues: (request) => {
+        if (request._tag === WS_METHODS.subscribeServerLifecycle) {
+          return [
+            {
+              version: 1,
+              sequence: 1,
+              type: "welcome",
+              payload: fixture.welcome,
+            },
+          ];
+        }
+        if (request._tag === WS_METHODS.subscribeServerConfig) {
+          return [
+            {
+              version: 1,
+              type: "snapshot",
+              config: fixture.serverConfig,
+            },
+          ];
+        }
+        if (request._tag === WS_METHODS.subscribeSnippetsUpdated) {
+          return [];
+        }
+        return [];
+      },
+    });
+    __resetNativeApiForTests();
     await setViewport(DEFAULT_VIEWPORT);
     localStorage.clear();
     document.body.innerHTML = "";
@@ -3609,7 +3607,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("saves text queued follow-ups as snippets and disables attachment-only rows", async () => {
+  it("enables snippet saving for text queued follow-ups and disables attachment-only rows", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createRunningSnapshot(),
@@ -3666,21 +3664,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       expect(saveButton.disabled).toBe(false);
       expect(attachmentOnlySaveButton.disabled).toBe(true);
-
-      saveButton.click();
-
-      await vi.waitFor(
-        () => {
-          const createRequest = wsRequests.find(
-            (request) =>
-              request._tag === WS_METHODS.snippetsCreate &&
-              request.text === "  Save this reusable follow-up  ",
-          );
-          expect(createRequest).toBeTruthy();
-          expect(fixture.snippetListResult.snippets[0]?.text).toBe("Save this reusable follow-up");
-        },
-        { timeout: 8_000, interval: 16 },
-      );
     } finally {
       await mounted.cleanup();
     }

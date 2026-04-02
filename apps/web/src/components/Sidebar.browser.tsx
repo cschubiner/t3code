@@ -23,14 +23,12 @@ import { render } from "vitest-browser-react";
 import { useChatToolbarFocusStore } from "../chatToolbarFocusStore";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { isMacPlatform } from "../lib/utils";
+import { __resetNativeApiForTests } from "../nativeApi";
 import { getRouter } from "../router";
 import { resetPersistedRendererStateMemory, useStore } from "../store";
 import { useThreadNavigationHistoryStore } from "../threadNavigationHistoryStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
-
-const WS_CHANNELS = {
-  serverWelcome: "server.welcome",
-} as const;
+import { BrowserWsRpcHarness } from "../../test/wsRpcHarness";
 
 const NOW_ISO = "2026-03-12T12:00:00.000Z";
 const PROJECT_ALPHA_ID = "project-alpha" as ProjectId;
@@ -110,8 +108,10 @@ interface TestFixture {
 }
 
 let fixture: TestFixture;
+let nextDispatchSequence = 1;
 
 const wsLink = ws.link(/ws(s)?:\/\/.*/);
+const rpcHarness = new BrowserWsRpcHarness();
 
 function createResolvedKeybinding(
   key: string,
@@ -385,6 +385,9 @@ function resolveWsRpc(body: { _tag: string; [key: string]: unknown }): unknown {
   if (body._tag === ORCHESTRATION_WS_METHODS.getSnapshot) {
     return fixture.snapshot;
   }
+  if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+    return { sequence: nextDispatchSequence++ };
+  }
   if (body._tag === WS_METHODS.serverGetConfig) {
     return fixture.serverConfig;
   }
@@ -423,30 +426,11 @@ function resolveWsRpc(body: { _tag: string; [key: string]: unknown }): unknown {
 
 const worker = setupWorker(
   wsLink.addEventListener("connection", ({ client }) => {
-    client.send(
-      JSON.stringify({
-        type: "push",
-        sequence: 1,
-        channel: WS_CHANNELS.serverWelcome,
-        data: fixture.welcome,
-      }),
-    );
+    void rpcHarness.connect(client);
     client.addEventListener("message", (event) => {
-      if (typeof event.data !== "string") return;
-      let request: { id: string; body: { _tag: string; [key: string]: unknown } };
-      try {
-        request = JSON.parse(event.data);
-      } catch {
-        return;
-      }
-      const method = request.body?._tag;
-      if (typeof method !== "string") return;
-      client.send(
-        JSON.stringify({
-          id: request.id,
-          result: resolveWsRpc(request.body),
-        }),
-      );
+      const rawData = event.data;
+      if (typeof rawData !== "string") return;
+      void rpcHarness.onMessage(rawData);
     });
   }),
   http.get("*/api/project-favicon", () => new HttpResponse(null, { status: 204 })),
@@ -608,23 +592,51 @@ async function mountApp(
   };
 }
 
+beforeAll(async () => {
+  fixture = buildFixture();
+  installMatchMediaMock();
+  await worker.start({
+    onUnhandledRequest: "bypass",
+    quiet: true,
+    serviceWorker: { url: "/mockServiceWorker.js" },
+  });
+});
+
+afterAll(async () => {
+  await rpcHarness.disconnect();
+  await worker.stop();
+});
+
 describe("Sidebar navigation keybindings", () => {
-  beforeAll(async () => {
-    fixture = buildFixture();
-    installMatchMediaMock();
-    await worker.start({
-      onUnhandledRequest: "bypass",
-      quiet: true,
-      serviceWorker: { url: "/mockServiceWorker.js" },
-    });
-  });
-
-  afterAll(async () => {
-    await worker.stop();
-  });
-
   beforeEach(async () => {
     fixture = buildFixture();
+    nextDispatchSequence = 1;
+    await rpcHarness.reset({
+      resolveUnary: resolveWsRpc,
+      getInitialStreamValues: (request) => {
+        if (request._tag === WS_METHODS.subscribeServerLifecycle) {
+          return [
+            {
+              version: 1,
+              sequence: 1,
+              type: "welcome",
+              payload: fixture.welcome,
+            },
+          ];
+        }
+        if (request._tag === WS_METHODS.subscribeServerConfig) {
+          return [
+            {
+              version: 1,
+              type: "snapshot",
+              config: fixture.serverConfig,
+            },
+          ];
+        }
+        return [];
+      },
+    });
+    __resetNativeApiForTests();
     await setViewport();
     localStorage.clear();
     resetPersistedRendererStateMemory();
@@ -1103,22 +1115,35 @@ describe("Sidebar navigation keybindings", () => {
 });
 
 describe("Import From Codex dialog", () => {
-  beforeAll(async () => {
-    fixture = buildFixture();
-    installMatchMediaMock();
-    await worker.start({
-      onUnhandledRequest: "bypass",
-      quiet: true,
-      serviceWorker: { url: "/mockServiceWorker.js" },
-    });
-  });
-
-  afterAll(async () => {
-    await worker.stop();
-  });
-
   beforeEach(async () => {
     fixture = buildFixture();
+    nextDispatchSequence = 1;
+    await rpcHarness.reset({
+      resolveUnary: resolveWsRpc,
+      getInitialStreamValues: (request) => {
+        if (request._tag === WS_METHODS.subscribeServerLifecycle) {
+          return [
+            {
+              version: 1,
+              sequence: 1,
+              type: "welcome",
+              payload: fixture.welcome,
+            },
+          ];
+        }
+        if (request._tag === WS_METHODS.subscribeServerConfig) {
+          return [
+            {
+              version: 1,
+              type: "snapshot",
+              config: fixture.serverConfig,
+            },
+          ];
+        }
+        return [];
+      },
+    });
+    __resetNativeApiForTests();
     await setViewport();
     localStorage.clear();
     document.body.innerHTML = "";

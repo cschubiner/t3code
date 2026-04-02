@@ -28,6 +28,7 @@ const STREAM_METHODS = new Set<string>([
   WS_METHODS.subscribeTerminalEvents,
   WS_METHODS.subscribeServerConfig,
   WS_METHODS.subscribeServerLifecycle,
+  WS_METHODS.subscribeSnippetsUpdated,
 ]);
 
 const ALL_RPC_METHODS = Array.from(WsRpcGroup.requests.keys());
@@ -106,9 +107,12 @@ export class BrowserWsRpcHarness {
   }
 
   async onMessage(rawData: string): Promise<void> {
+    if (!this.serverReady) {
+      return;
+    }
     const server = await this.serverReady;
     if (!server) {
-      throw new Error("RPC test server is not connected");
+      return;
     }
     const messages = this.parser.decode(rawData);
     for (const message of messages) {
