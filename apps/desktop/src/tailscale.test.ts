@@ -32,6 +32,46 @@ describe("tailscale remote access helpers", () => {
           BackendState: "Running",
           Self: {
             DNSName: "macbookpro.tail744884.ts.net.",
+            Online: true,
+            TailscaleIPs: ["100.82.48.77"],
+          },
+        });
+      }
+
+      return "";
+    });
+
+    await expect(setupPrivateTailscaleServe(3810)).resolves.toEqual({
+      kind: "ready",
+      preferredOrigin: "https://macbookpro.tail744884.ts.net:8444",
+      origins: [
+        "https://macbookpro.tail744884.ts.net:8443",
+        "https://macbookpro.tail744884.ts.net:8444",
+        "https://macbookpro.tail744884.ts.net:8445",
+        "https://macbookpro.tail744884.ts.net:8446",
+      ],
+    });
+
+    expect(calls).toEqual([
+      ["status", "--json"],
+      ["serve", "--bg", "--https=8443", "http://127.0.0.1:3810"],
+      ["serve", "--bg", "--https=8444", "http://127.0.0.1:3810"],
+      ["serve", "--bg", "--https=8445", "http://127.0.0.1:3810"],
+      ["serve", "--bg", "--https=8446", "http://127.0.0.1:3810"],
+    ]);
+  });
+
+  it("accepts an online node with tailnet IPs even if BackendState is not Running", async () => {
+    const calls: string[][] = [];
+    runCommand.mockImplementation(async (args) => {
+      calls.push([...args]);
+      if (args[0] === "status") {
+        return JSON.stringify({
+          BackendState: "Starting",
+          Self: {
+            DNSName: "macbookpro.tail744884.ts.net.",
+            Online: true,
+            TailscaleIPs: ["100.82.48.77"],
           },
         });
       }
