@@ -421,6 +421,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           rowHasSearchMatch && "mx-[-0.5rem] rounded-xl bg-amber-400/6 px-2 py-1",
           rowHasActiveSearchMatch && "ring-1 ring-amber-400/35 bg-amber-400/10",
         )}
+        data-timeline-row-id={row.id}
         data-timeline-row-kind={row.kind}
         data-message-id={row.kind === "message" ? row.message.id : undefined}
         data-message-role={row.kind === "message" ? row.message.role : undefined}
@@ -711,6 +712,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               <div
                 key={`virtual-row:${row.id}`}
                 data-index={virtualRow.index}
+                data-virtual-row-id={row.id}
+                data-virtual-row-size={virtualRow.size}
                 ref={rowVirtualizer.measureElement}
                 className="absolute left-0 top-0 w-full"
                 style={{ transform: `translateY(${virtualRow.start}px)` }}
