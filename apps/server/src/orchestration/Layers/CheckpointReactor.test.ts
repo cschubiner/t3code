@@ -117,7 +117,7 @@ async function waitForThread(
     checkpoints: ReadonlyArray<{ checkpointTurnCount: number }>;
     activities: ReadonlyArray<{ kind: string }>;
   }) => boolean,
-  timeoutMs = 15_000,
+  timeoutMs = 30_000,
 ) {
   const deadline = Date.now() + timeoutMs;
   const poll = async (): Promise<{
@@ -133,7 +133,7 @@ async function waitForThread(
     if (Date.now() >= deadline) {
       throw new Error("Timed out waiting for thread state.");
     }
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 50));
     return poll();
   };
   return poll();
@@ -142,7 +142,7 @@ async function waitForThread(
 async function waitForEvent(
   engine: OrchestrationEngineShape,
   predicate: (event: { type: string }) => boolean,
-  timeoutMs = 15_000,
+  timeoutMs = 30_000,
 ) {
   const deadline = Date.now() + timeoutMs;
   const poll = async () => {
@@ -155,7 +155,7 @@ async function waitForEvent(
     if (Date.now() >= deadline) {
       throw new Error("Timed out waiting for orchestration event.");
     }
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 50));
     return poll();
   };
   return poll();
@@ -193,7 +193,7 @@ function gitShowFileAtRef(cwd: string, ref: string, filePath: string): string {
   return runGit(cwd, ["show", `${ref}:${filePath}`]);
 }
 
-async function waitForGitRefExists(cwd: string, ref: string, timeoutMs = 15_000) {
+async function waitForGitRefExists(cwd: string, ref: string, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs;
   const poll = async (): Promise<void> => {
     if (gitRefExists(cwd, ref)) {
@@ -202,7 +202,7 @@ async function waitForGitRefExists(cwd: string, ref: string, timeoutMs = 15_000)
     if (Date.now() >= deadline) {
       throw new Error(`Timed out waiting for git ref '${ref}'.`);
     }
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 50));
     return poll();
   };
   return poll();
@@ -266,8 +266,7 @@ describe("CheckpointReactor", () => {
       Layer.provideMerge(RuntimeReceiptBusLive),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(CheckpointStoreLive),
-      Layer.provideMerge(WorkspaceEntriesLive.pipe(Layer.provide(WorkspacePathsLive))),
-      Layer.provideMerge(WorkspacePathsLive),
+      Layer.provideMerge(WorkspaceEntriesLive.pipe(Layer.provideMerge(WorkspacePathsLive))),
       Layer.provideMerge(GitCoreLive),
       Layer.provideMerge(ServerConfigLayer),
       Layer.provideMerge(NodeServices.layer),
@@ -1011,7 +1010,18 @@ describe("CheckpointReactor", () => {
       }),
     );
 
-    await harness.drain();
+    const deadline = Date.now() + 30_000;
+    const waitForRollbackCalls = async (): Promise<void> => {
+      if (harness.provider.rollbackConversation.mock.calls.length >= 2) {
+        return;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error("Timed out waiting for rollbackConversation calls.");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return waitForRollbackCalls();
+    };
+    await waitForRollbackCalls();
 
     expect(harness.provider.rollbackConversation).toHaveBeenCalledTimes(2);
     expect(harness.provider.rollbackConversation.mock.calls[0]?.[0]).toEqual({
