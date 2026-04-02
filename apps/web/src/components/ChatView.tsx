@@ -153,6 +153,7 @@ import {
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
+import QueuedFollowUpsPanel from "./QueuedFollowUpsPanel";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
 import { ContextWindowMeter } from "./chat/ContextWindowMeter";
@@ -193,6 +194,11 @@ import {
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import {
+  deriveQueuedTurnDispatchGate,
+  type QueuedTurnDraft,
+  useQueuedTurnStore,
+} from "../queuedTurnStore";
+import {
   useServerAvailableEditors,
   useServerConfig,
   useServerKeybindings,
@@ -206,6 +212,7 @@ const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+const EMPTY_QUEUED_TURN_DRAFTS: readonly QueuedTurnDraft[] = [];
 
 type ThreadPlanCatalogEntry = Pick<Thread, "id" | "proposedPlans">;
 
@@ -479,6 +486,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const draftThread = useComposerDraftStore(
     (store) => store.draftThreadsByThreadId[threadId] ?? null,
   );
+  const queuedThreadState = useQueuedTurnStore(
+    (store) => store.threadsByThreadId[threadId] ?? null,
+  );
+  const enqueueQueuedTurn = useQueuedTurnStore((store) => store.enqueueTurn);
+  const replaceQueuedTurn = useQueuedTurnStore((store) => store.replaceQueuedTurn);
+  const removeQueuedTurn = useQueuedTurnStore((store) => store.removeQueuedTurn);
+  const moveQueuedTurn = useQueuedTurnStore((store) => store.moveQueuedTurn);
+  const pauseThreadQueue = useQueuedTurnStore((store) => store.pauseThreadQueue);
+  const resumeThreadQueue = useQueuedTurnStore((store) => store.resumeThreadQueue);
+  const clearThreadQueue = useQueuedTurnStore((store) => store.clearThreadQueue);
   const promptRef = useRef(prompt);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
@@ -517,6 +534,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     useState<PullRequestDialogState | null>(null);
   const [pendingPullRequestSetupRequest, setPendingPullRequestSetupRequest] =
     useState<PendingPullRequestSetupRequest | null>(null);
+  const [busyQueuedTurnId, setBusyQueuedTurnId] = useState<string | null>(null);
   const [attachmentPreviewHandoffByMessageId, setAttachmentPreviewHandoffByMessageId] = useState<
     Record<string, string[]>
   >({});
@@ -558,6 +576,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewHandoffTimeoutByMessageIdRef = useRef<Record<string, number>>({});
   const sendInFlightRef = useRef(false);
+  const queuedDispatchInFlightRef = useRef(false);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
   const setMessagesScrollContainerRef = useCallback((element: HTMLDivElement | null) => {
@@ -926,6 +945,29 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activePendingUserInput: activePendingUserInput?.requestId ?? null,
     threadError: activeThread?.error,
   });
+  const queuedTurns = queuedThreadState?.items ?? EMPTY_QUEUED_TURN_DRAFTS;
+  const queuedTurnPauseReason = queuedThreadState?.pauseReason ?? null;
+  const queuedTurnDispatchGate = useMemo(
+    () =>
+      deriveQueuedTurnDispatchGate({
+        phase,
+        sessionOrchestrationStatus: activeThread?.session?.orchestrationStatus ?? null,
+        isLocalDispatchInFlight: isSendBusy,
+        hasPendingApproval: activePendingApproval !== null,
+        hasPendingUserInput: activePendingUserInput !== null,
+        threadError: activeThread?.error,
+      }),
+    [
+      activePendingApproval,
+      activePendingUserInput,
+      activeThread?.error,
+      activeThread?.session?.orchestrationStatus,
+      isSendBusy,
+      phase,
+    ],
+  );
+  const canResumeQueuedTurns =
+    queuedTurnPauseReason !== null && queuedTurnDispatchGate.pauseReason === null;
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
   const nowIso = new Date(nowTick).toISOString();
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
@@ -2628,10 +2670,253 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [activeThread, isConnecting, isRevertingCheckpoint, isSendBusy, phase, setThreadError],
   );
 
+  const enqueueCurrentComposerTurn = useCallback(
+    async (input: {
+      promptForSend: string;
+      sendableComposerTerminalContexts: TerminalContextDraft[];
+      expiredTerminalContextCount: number;
+      interactionMode: ProviderInteractionMode;
+    }) => {
+      if (!activeThread || !isServerThread) {
+        return false;
+      }
+
+      const composerImagesSnapshot = [...composerImages];
+      const messageTextForQueue = appendTerminalContextsToPrompt(
+        input.promptForSend,
+        input.sendableComposerTerminalContexts,
+      );
+      const outgoingQueuedText = formatOutgoingPrompt({
+        provider: selectedProvider,
+        model: selectedModel,
+        models: selectedProviderModels,
+        effort: selectedPromptEffort,
+        text: messageTextForQueue || IMAGE_ONLY_BOOTSTRAP_PROMPT,
+      });
+      if (!outgoingQueuedText.trim() && composerImagesSnapshot.length === 0) {
+        return false;
+      }
+
+      const createdAt = new Date().toISOString();
+      const queuedTurnId = newMessageId();
+      const attachments = await Promise.all(
+        composerImagesSnapshot.map(async (image) => ({
+          id: image.id,
+          name: image.name,
+          mimeType: image.mimeType,
+          sizeBytes: image.sizeBytes,
+          dataUrl: await readFileAsDataUrl(image.file),
+        })),
+      );
+
+      enqueueQueuedTurn(threadId, {
+        id: queuedTurnId,
+        text: outgoingQueuedText,
+        attachments,
+        terminalContexts: [],
+        modelSelection: selectedModelSelection,
+        runtimeMode,
+        interactionMode: input.interactionMode,
+        createdAt,
+        updatedAt: createdAt,
+      });
+
+      if (input.expiredTerminalContextCount > 0) {
+        const toastCopy = buildExpiredTerminalContextToastCopy(
+          input.expiredTerminalContextCount,
+          "omitted",
+        );
+        toastManager.add({
+          type: "warning",
+          title: toastCopy.title,
+          description: toastCopy.description,
+        });
+      }
+
+      promptRef.current = "";
+      clearComposerDraftContent(threadId);
+      setComposerHighlightedItemId(null);
+      setComposerCursor(0);
+      setComposerTrigger(null);
+      setThreadError(threadId, null);
+      return true;
+    },
+    [
+      activeThread,
+      clearComposerDraftContent,
+      composerImages,
+      enqueueQueuedTurn,
+      isServerThread,
+      runtimeMode,
+      selectedModel,
+      selectedModelSelection,
+      selectedPromptEffort,
+      selectedProvider,
+      selectedProviderModels,
+      setThreadError,
+      threadId,
+    ],
+  );
+
+  const dispatchQueuedTurn = useCallback(
+    async (queuedTurn: QueuedTurnDraft) => {
+      const api = readNativeApi();
+      if (!api || !activeThread || !isServerThread) {
+        return false;
+      }
+
+      const messageIdForSend = queuedTurn.id as MessageId;
+      const messageCreatedAt = new Date().toISOString();
+      const optimisticAttachments = queuedTurn.attachments.map((attachment) => ({
+        type: "image" as const,
+        id: attachment.id,
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        sizeBytes: attachment.sizeBytes,
+        previewUrl: attachment.dataUrl,
+      }));
+      const modelSelectionForSend =
+        queuedTurn.modelSelection ?? activeThread.modelSelection ?? selectedModelSelection;
+
+      sendInFlightRef.current = true;
+      beginLocalDispatch({ preparingWorktree: false });
+      setThreadError(activeThread.id, null);
+      setOptimisticUserMessages((existing) => [
+        ...existing,
+        {
+          id: messageIdForSend,
+          role: "user",
+          text: queuedTurn.text,
+          ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
+          createdAt: messageCreatedAt,
+          streaming: false,
+        },
+      ]);
+      shouldAutoScrollRef.current = true;
+      forceStickToBottom();
+
+      try {
+        await persistThreadSettingsForNextTurn({
+          threadId: activeThread.id,
+          createdAt: messageCreatedAt,
+          modelSelection: modelSelectionForSend,
+          runtimeMode: queuedTurn.runtimeMode,
+          interactionMode: queuedTurn.interactionMode,
+        });
+
+        await api.orchestration.dispatchCommand({
+          type: "thread.turn.start",
+          commandId: newCommandId(),
+          threadId: activeThread.id,
+          message: {
+            messageId: messageIdForSend,
+            role: "user",
+            text: queuedTurn.text,
+            attachments: queuedTurn.attachments.map((attachment) => ({
+              type: "image" as const,
+              name: attachment.name,
+              mimeType: attachment.mimeType,
+              sizeBytes: attachment.sizeBytes,
+              dataUrl: attachment.dataUrl,
+            })),
+          },
+          modelSelection: modelSelectionForSend,
+          titleSeed: activeThread.title,
+          runtimeMode: queuedTurn.runtimeMode,
+          interactionMode: queuedTurn.interactionMode,
+          createdAt: messageCreatedAt,
+        });
+        return true;
+      } catch (err) {
+        setOptimisticUserMessages((existing) =>
+          existing.filter((message) => message.id !== messageIdForSend),
+        );
+        setThreadError(
+          activeThread.id,
+          err instanceof Error ? err.message : "Failed to send queued follow-up.",
+        );
+        resetLocalDispatch();
+        return false;
+      } finally {
+        sendInFlightRef.current = false;
+      }
+    },
+    [
+      activeThread,
+      beginLocalDispatch,
+      forceStickToBottom,
+      isServerThread,
+      persistThreadSettingsForNextTurn,
+      resetLocalDispatch,
+      selectedModelSelection,
+      setThreadError,
+    ],
+  );
+
+  useEffect(() => {
+    if (
+      !isServerThread ||
+      queuedTurns.length === 0 ||
+      queuedTurnDispatchGate.pauseReason === null ||
+      queuedTurnPauseReason === queuedTurnDispatchGate.pauseReason
+    ) {
+      return;
+    }
+
+    pauseThreadQueue(threadId, queuedTurnDispatchGate.pauseReason, new Date().toISOString());
+  }, [
+    isServerThread,
+    pauseThreadQueue,
+    queuedTurnDispatchGate.pauseReason,
+    queuedTurnPauseReason,
+    queuedTurns.length,
+    threadId,
+  ]);
+
+  useEffect(() => {
+    if (
+      !activeThread ||
+      !isServerThread ||
+      queuedTurns.length === 0 ||
+      queuedTurnPauseReason !== null ||
+      !queuedTurnDispatchGate.canDispatch ||
+      queuedDispatchInFlightRef.current
+    ) {
+      return;
+    }
+
+    const nextQueuedTurn = queuedTurns[0];
+    if (!nextQueuedTurn) {
+      return;
+    }
+
+    queuedDispatchInFlightRef.current = true;
+    setBusyQueuedTurnId(nextQueuedTurn.id);
+    void dispatchQueuedTurn(nextQueuedTurn)
+      .then((didDispatch) => {
+        if (didDispatch) {
+          removeQueuedTurn(threadId, nextQueuedTurn.id);
+        }
+      })
+      .finally(() => {
+        queuedDispatchInFlightRef.current = false;
+        setBusyQueuedTurnId((current) => (current === nextQueuedTurn.id ? null : current));
+      });
+  }, [
+    activeThread,
+    dispatchQueuedTurn,
+    isServerThread,
+    queuedTurnDispatchGate.canDispatch,
+    queuedTurnPauseReason,
+    queuedTurns,
+    removeQueuedTurn,
+    threadId,
+  ]);
+
   const onSend = async (e?: { preventDefault: () => void }) => {
     e?.preventDefault();
     const api = readNativeApi();
-    if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
+    if (!api || !activeThread) return;
     if (activePendingProgress) {
       onAdvanceActivePendingUserInput();
       return;
@@ -2690,6 +2975,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       return;
     }
+    if (isServerThread && threadHasStarted(activeThread) && !queuedTurnDispatchGate.canDispatch) {
+      await enqueueCurrentComposerTurn({
+        promptForSend,
+        sendableComposerTerminalContexts,
+        expiredTerminalContextCount,
+        interactionMode,
+      });
+      return;
+    }
+    if (isSendBusy || isConnecting || sendInFlightRef.current) return;
     if (!activeProject) return;
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
@@ -3856,13 +4151,80 @@ export default function ChatView({ threadId }: ChatViewProps) {
           </div>
 
           {/* Input bar */}
-          <div className={cn("px-3 pt-1.5 sm:px-5 sm:pt-2", isGitRepo ? "pb-1" : "pb-3 sm:pb-4")}>
+          <div
+            className={cn(
+              "px-3 sm:px-5",
+              queuedTurns.length > 0 ? "pt-0.5 sm:pt-1" : "pt-1.5 sm:pt-2",
+              isGitRepo ? "pb-1" : "pb-3 sm:pb-4",
+            )}
+          >
             <form
               ref={composerFormRef}
               onSubmit={onSend}
               className="mx-auto w-full min-w-0 max-w-[52rem]"
               data-chat-composer-form="true"
             >
+              <QueuedFollowUpsPanel
+                queuedTurns={queuedTurns}
+                pauseReason={queuedTurnPauseReason}
+                blockReason={
+                  queuedTurnPauseReason === null ? queuedTurnDispatchGate.blockReason : null
+                }
+                busyQueuedTurnId={busyQueuedTurnId}
+                isQueueInteractionDisabled={isPreparingWorktree || isSendBusy}
+                canResume={canResumeQueuedTurns}
+                onResume={() => resumeThreadQueue(threadId, new Date().toISOString())}
+                onDelete={(queuedTurnId) => removeQueuedTurn(threadId, queuedTurnId)}
+                onClearAll={() => clearThreadQueue(threadId)}
+                onSaveEdit={(queuedTurnId, text) => {
+                  const queuedTurn = queuedTurns.find((entry) => entry.id === queuedTurnId);
+                  if (!queuedTurn) {
+                    return;
+                  }
+                  const nextText = text.trim();
+                  if (!nextText && queuedTurn.attachments.length === 0) {
+                    removeQueuedTurn(threadId, queuedTurnId);
+                    return;
+                  }
+                  replaceQueuedTurn(threadId, queuedTurnId, {
+                    ...queuedTurn,
+                    text: nextText,
+                    updatedAt: new Date().toISOString(),
+                  });
+                }}
+                onSendNow={(queuedTurnId) => {
+                  const queuedTurn = queuedTurns.find((entry) => entry.id === queuedTurnId);
+                  if (
+                    !queuedTurn ||
+                    queuedDispatchInFlightRef.current ||
+                    queuedTurnPauseReason !== null ||
+                    !queuedTurnDispatchGate.canDispatch
+                  ) {
+                    return;
+                  }
+                  queuedDispatchInFlightRef.current = true;
+                  setBusyQueuedTurnId(queuedTurnId);
+                  void dispatchQueuedTurn(queuedTurn)
+                    .then((didDispatch) => {
+                      if (didDispatch) {
+                        removeQueuedTurn(threadId, queuedTurnId);
+                      }
+                    })
+                    .finally(() => {
+                      queuedDispatchInFlightRef.current = false;
+                      setBusyQueuedTurnId((current) => (current === queuedTurnId ? null : current));
+                    });
+                }}
+                onReorder={(activeQueuedTurnId, targetQueuedTurnId) => {
+                  const targetIndex = queuedTurns.findIndex(
+                    (entry) => entry.id === targetQueuedTurnId,
+                  );
+                  if (targetIndex < 0) {
+                    return;
+                  }
+                  moveQueuedTurn(threadId, activeQueuedTurnId, targetIndex);
+                }}
+              />
               <div
                 className={cn(
                   "group rounded-[22px] p-px transition-colors duration-200",

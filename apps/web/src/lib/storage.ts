@@ -10,17 +10,31 @@ export interface DebouncedStorage<R = unknown> extends StateStorage<R> {
   flush: () => void;
 }
 
-export function createMemoryStorage(): StateStorage {
-  const store = new Map<string, string>();
+export interface SyncStorage {
+  getItem: (name: string) => string | null;
+  setItem: (name: string, value: string) => void;
+  removeItem: (name: string) => void;
+}
+
+const sharedMemoryStorage = new Map<string, string>();
+
+export function createMemoryStorage(): SyncStorage {
   return {
-    getItem: (name) => store.get(name) ?? null,
+    getItem: (name) => sharedMemoryStorage.get(name) ?? null,
     setItem: (name, value) => {
-      store.set(name, value);
+      sharedMemoryStorage.set(name, value);
     },
     removeItem: (name) => {
-      store.delete(name);
+      sharedMemoryStorage.delete(name);
     },
   };
+}
+
+export function getIsomorphicStorage(): SyncStorage | Storage {
+  if (typeof window !== "undefined") {
+    return window.localStorage;
+  }
+  return createMemoryStorage();
 }
 
 export function isStateStorage(
