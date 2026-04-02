@@ -24,6 +24,7 @@ import { useChatToolbarFocusStore } from "../chatToolbarFocusStore";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { isMacPlatform } from "../lib/utils";
 import { __resetNativeApiForTests } from "../nativeApi";
+import { resetServerStateForTests } from "../rpc/serverState";
 import { getRouter } from "../router";
 import { resetPersistedRendererStateMemory, useStore } from "../store";
 import { useThreadNavigationHistoryStore } from "../threadNavigationHistoryStore";
@@ -108,10 +109,15 @@ interface TestFixture {
 }
 
 let fixture: TestFixture;
+const rpcHarness = new BrowserWsRpcHarness();
 let nextDispatchSequence = 1;
 
+function consumeDispatchSequence(): number {
+  nextDispatchSequence = Math.max(nextDispatchSequence + 1, fixture.snapshot.snapshotSequence + 1);
+  return nextDispatchSequence;
+}
+
 const wsLink = ws.link(/ws(s)?:\/\/.*/);
-const rpcHarness = new BrowserWsRpcHarness();
 
 function createResolvedKeybinding(
   key: string,
@@ -382,11 +388,11 @@ function buildCodexImportPreview(sessionId: string): CodexImportPeekSessionResul
 }
 
 function resolveWsRpc(body: { _tag: string; [key: string]: unknown }): unknown {
+  if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+    return { sequence: consumeDispatchSequence() };
+  }
   if (body._tag === ORCHESTRATION_WS_METHODS.getSnapshot) {
     return fixture.snapshot;
-  }
-  if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
-    return { sequence: nextDispatchSequence++ };
   }
   if (body._tag === WS_METHODS.serverGetConfig) {
     return fixture.serverConfig;
@@ -534,6 +540,17 @@ async function waitForComposerEditor(): Promise<HTMLElement> {
   return element!;
 }
 
+async function waitForBootstrapComplete(): Promise<void> {
+  await vi.waitFor(
+    () => {
+      expect(useStore.getState().bootstrapComplete, "Expected app bootstrap to complete").toBe(
+        true,
+      );
+    },
+    { timeout: 8_000, interval: 16 },
+  );
+}
+
 async function mountApp(
   initialEntry: string,
   options?: { waitForSidebarThreadTitle?: string | null },
@@ -572,6 +589,7 @@ async function mountApp(
   const router = getRouter(createMemoryHistory({ initialEntries: [initialEntry] }));
   const screen = await render(<RouterProvider router={router} />, { container: host });
   await waitForLayout();
+  await waitForBootstrapComplete();
   if (initialEntry.startsWith("/thread-")) {
     await router.navigate({
       to: "/$threadId",
@@ -612,9 +630,8 @@ afterAll(async () => {
 describe("Sidebar navigation keybindings", () => {
   beforeEach(async () => {
     fixture = buildFixture();
-    nextDispatchSequence = 1;
     await rpcHarness.reset({
-      resolveUnary: resolveWsRpc,
+      resolveUnary: (request) => resolveWsRpc(request),
       getInitialStreamValues: (request) => {
         if (request._tag === WS_METHODS.subscribeServerLifecycle) {
           return [
@@ -638,8 +655,10 @@ describe("Sidebar navigation keybindings", () => {
         return [];
       },
     });
-    __resetNativeApiForTests();
+    nextDispatchSequence = 1;
     await setViewport();
+    __resetNativeApiForTests();
+    resetServerStateForTests();
     localStorage.clear();
     resetPersistedRendererStateMemory();
     localStorage.setItem(
@@ -661,6 +680,7 @@ describe("Sidebar navigation keybindings", () => {
       projects: [],
       threads: [],
       threadsHydrated: false,
+      bootstrapComplete: false,
       sidebarThreadListMode: "grouped",
     });
     useChatToolbarFocusStore.setState({
@@ -691,6 +711,7 @@ describe("Sidebar navigation keybindings", () => {
     Object.defineProperty(window, "desktopBridge", {
       configurable: true,
       value: {
+        getWsUrl: vi.fn().mockReturnValue("ws://127.0.0.1:3000"),
         showContextMenu,
         confirm,
         setTheme: vi.fn().mockResolvedValue(undefined),
@@ -1119,9 +1140,8 @@ describe("Sidebar navigation keybindings", () => {
 describe("Import From Codex dialog", () => {
   beforeEach(async () => {
     fixture = buildFixture();
-    nextDispatchSequence = 1;
     await rpcHarness.reset({
-      resolveUnary: resolveWsRpc,
+      resolveUnary: (request) => resolveWsRpc(request),
       getInitialStreamValues: (request) => {
         if (request._tag === WS_METHODS.subscribeServerLifecycle) {
           return [
@@ -1145,8 +1165,10 @@ describe("Import From Codex dialog", () => {
         return [];
       },
     });
-    __resetNativeApiForTests();
+    nextDispatchSequence = 1;
     await setViewport();
+    __resetNativeApiForTests();
+    resetServerStateForTests();
     localStorage.clear();
     document.body.innerHTML = "";
     useComposerDraftStore.setState({
@@ -1159,6 +1181,7 @@ describe("Import From Codex dialog", () => {
       projects: [],
       threads: [],
       threadsHydrated: false,
+      bootstrapComplete: false,
     });
     useChatToolbarFocusStore.setState({
       branchSelectorFocusRequest: null,
