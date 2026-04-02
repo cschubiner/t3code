@@ -429,7 +429,9 @@ const worker = setupWorker(
     void rpcHarness.connect(client);
     client.addEventListener("message", (event) => {
       const rawData = event.data;
-      if (typeof rawData !== "string") return;
+      if (typeof rawData !== "string") {
+        return;
+      }
       void rpcHarness.onMessage(rawData);
     });
   }),
