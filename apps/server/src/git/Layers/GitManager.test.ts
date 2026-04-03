@@ -246,7 +246,7 @@ function configureRemote(
 function configureMirroredGitHubRemote(
   cwd: string,
   input: { remoteName: string; localMirrorPath: string; githubUrl: string },
-): Effect.Effect<{ readonly githubUrl: string }, GitCommandError, GitService> {
+): Effect.Effect<{ readonly githubUrl: string }, GitCommandError, GitCore> {
   const mirrorPrefix = `url.${input.localMirrorPath}.insteadOf`;
   return Effect.gen(function* () {
     // Keep the remote looking like GitHub for selector logic while rewriting

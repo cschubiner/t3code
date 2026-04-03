@@ -66,7 +66,6 @@ import { useStore } from "../store";
 import { useProjectById, useThreadById } from "../storeSelectors";
 import { useUiStateStore } from "../uiStateStore";
 import { useChatToolbarFocusStore } from "../chatToolbarFocusStore";
-import { useThreadActivityStore } from "../threadActivityStore";
 import {
   buildPlanImplementationThreadTitle,
   buildPlanImplementationPrompt,
@@ -434,7 +433,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const { resolvedTheme } = useTheme();
   const queryClient = useQueryClient();
   const createWorktreeMutation = useMutation(gitCreateWorktreeMutationOptions({ queryClient }));
-  const removeWorktreeMutation = useMutation(gitRemoveWorktreeMutationOptions({ queryClient }));
   const branchSelectorFocusRequest = useChatToolbarFocusStore(
     (state) => state.branchSelectorFocusRequest,
   );

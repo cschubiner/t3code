@@ -886,6 +886,18 @@ function dispatchChatNewShortcut(): void {
   );
 }
 
+async function triggerBranchSelectorFocusUntilOpen(errorMessage: string): Promise<void> {
+  const deadline = Date.now() + 8_000;
+  while (Date.now() < deadline) {
+    useChatToolbarFocusStore.getState().requestBranchSelectorFocus(THREAD_ID);
+    await waitForLayout();
+    if (document.querySelector('input[placeholder="Search branches..."]')) {
+      return;
+    }
+  }
+  throw new Error(errorMessage);
+}
+
 async function triggerChatNewShortcutUntilPath(
   router: ReturnType<typeof getRouter>,
   predicate: (pathname: string) => boolean,
@@ -2667,7 +2679,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("opens and focuses the branch/worktree selector with Mod+Shift+E", async () => {
+  it("opens and focuses the branch/worktree selector from a focus request", async () => {
+    setDraftThreadWithoutWorktree();
+
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createDraftOnlySnapshot(),
@@ -2675,10 +2689,21 @@ describe("ChatView timeline estimator parity (full app)", () => {
         nextFixture.serverConfig = {
           ...nextFixture.serverConfig,
           keybindings: [
-            createResolvedKeybinding("e", "chat.branchSelector.focus", {
-              shiftKey: true,
-              whenAst: whenNot(whenIdentifier("terminalFocus")),
-            }),
+            {
+              command: "chat.branchSelector.focus",
+              shortcut: {
+                key: "e",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: true,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
           ],
         };
       },
@@ -2686,22 +2711,15 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
     try {
       await waitForServerConfigToApply();
-      window.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "e",
-          bubbles: true,
-          cancelable: true,
-          ...modShiftShortcutModifiers(),
-        }),
-      );
+      await triggerBranchSelectorFocusUntilOpen("Unable to find branch search input.");
 
-      const branchSearchInput = await waitForElement(
-        () =>
-          document.querySelector(
-            'input[placeholder="Search branches..."]',
-          ) as HTMLInputElement | null,
-        "Unable to find branch search input.",
-      );
+      const branchSearchInput = document.querySelector(
+        'input[placeholder="Search branches..."]',
+      ) as HTMLInputElement | null;
+      expect(branchSearchInput).toBeTruthy();
+      if (!branchSearchInput) {
+        throw new Error("Unable to find branch search input.");
+      }
 
       await vi.waitFor(
         () => {
@@ -2715,60 +2733,46 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("does not reopen the branch selector from a stale focus request after remounting", async () => {
-    useComposerDraftStore.setState({
-      draftThreadsByThreadId: {
-        [THREAD_ID]: {
-          projectId: PROJECT_ID,
-          createdAt: NOW_ISO,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: null,
-          envMode: "local",
-        },
-      },
-      queuedTurnsByThreadId: {},
-      projectDraftThreadIdByProjectId: {
-        [PROJECT_ID]: THREAD_ID,
-      },
-    });
-
-    const configureFixture = (nextFixture: TestFixture) => {
-      nextFixture.serverConfig = {
-        ...nextFixture.serverConfig,
-        keybindings: [
-          createResolvedKeybinding("e", "chat.branchSelector.focus", {
-            shiftKey: true,
-            whenAst: whenNot(whenIdentifier("terminalFocus")),
-          }),
-        ],
-      };
-    };
+    setDraftThreadWithoutWorktree();
 
     const firstMount = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createDraftOnlySnapshot(),
-      configureFixture,
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "chat.branchSelector.focus",
+              shortcut: {
+                key: "e",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: true,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
     });
 
     try {
       await waitForServerConfigToApply();
-      window.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "e",
-          bubbles: true,
-          cancelable: true,
-          ...modShiftShortcutModifiers(),
-        }),
-      );
+      await triggerBranchSelectorFocusUntilOpen("Unable to find branch search input.");
 
-      const branchSearchInput = await waitForElement(
-        () =>
-          document.querySelector(
-            'input[placeholder="Search branches..."]',
-          ) as HTMLInputElement | null,
-        "Unable to find branch search input.",
-      );
+      const branchSearchInput = document.querySelector(
+        'input[placeholder="Search branches..."]',
+      ) as HTMLInputElement | null;
+      expect(branchSearchInput).toBeTruthy();
+      if (!branchSearchInput) {
+        throw new Error("Unable to find branch search input.");
+      }
 
       branchSearchInput.dispatchEvent(
         new KeyboardEvent("keydown", {
@@ -2791,7 +2795,28 @@ describe("ChatView timeline estimator parity (full app)", () => {
     const secondMount = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createDraftOnlySnapshot(),
-      configureFixture,
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "chat.branchSelector.focus",
+              shortcut: {
+                key: "e",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: true,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
     });
 
     try {
