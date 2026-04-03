@@ -93,6 +93,7 @@ import { Button } from "./ui/button";
 import { Menu, MenuGroup, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { GlobalThreadSearchDialog } from "./GlobalThreadSearchDialog";
+import { ProjectFolderSearchDialog } from "./ProjectFolderSearchDialog";
 import {
   SidebarContent,
   SidebarFooter,
@@ -741,6 +742,8 @@ export default function Sidebar() {
   const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
   const [isGlobalThreadSearchOpen, setIsGlobalThreadSearchOpen] = useState(false);
   const [globalThreadSearchFocusRequestId, setGlobalThreadSearchFocusRequestId] = useState(0);
+  const [isProjectFolderSearchOpen, setIsProjectFolderSearchOpen] = useState(false);
+  const [projectFolderSearchFocusRequestId, setProjectFolderSearchFocusRequestId] = useState(0);
   const selectedThreadIds = useThreadSelectionStore((s) => s.selectedThreadIds);
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
   const rangeSelectTo = useThreadSelectionStore((s) => s.rangeSelectTo);
@@ -1533,6 +1536,19 @@ export default function Sidebar() {
         platform,
         context: getShortcutContext(),
       });
+      if (command === "projects.search") {
+        if (
+          document.querySelector("[data-slot='dialog-popup']") !== null ||
+          document.querySelector("[data-slot='command-dialog-popup']") !== null
+        ) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        setIsProjectFolderSearchOpen(true);
+        setProjectFolderSearchFocusRequestId((current) => current + 1);
+        return;
+      }
       if (command === "threads.search") {
         if (
           document.querySelector("[data-slot='dialog-popup']") !== null ||
@@ -1918,6 +1934,16 @@ export default function Sidebar() {
   const newThreadShortcutLabel =
     shortcutLabelForCommand(keybindings, "chat.newLocal", sidebarShortcutLabelOptions) ??
     shortcutLabelForCommand(keybindings, "chat.new", sidebarShortcutLabelOptions);
+  const handleProjectFolderSearchSelect = useCallback(
+    async (projectId: ProjectId) => {
+      await handleNewThread(projectId, {
+        envMode: resolveSidebarNewThreadEnvMode({
+          defaultEnvMode: appSettings.defaultThreadEnvMode,
+        }),
+      });
+    },
+    [appSettings.defaultThreadEnvMode, handleNewThread],
+  );
 
   const handleDesktopUpdateButtonClick = useCallback(() => {
     const bridge = window.desktopBridge;
@@ -2207,6 +2233,13 @@ export default function Sidebar() {
             onOpenChange={setIsGlobalThreadSearchOpen}
             activeThreadId={routeThreadId}
             focusRequestId={globalThreadSearchFocusRequestId}
+          />
+          <ProjectFolderSearchDialog
+            open={isProjectFolderSearchOpen}
+            onOpenChange={setIsProjectFolderSearchOpen}
+            projects={projects}
+            focusRequestId={projectFolderSearchFocusRequestId}
+            onSelectProject={handleProjectFolderSearchSelect}
           />
           <SidebarFooter className="p-2">
             <SidebarUpdatePill />

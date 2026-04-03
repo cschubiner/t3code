@@ -120,6 +120,11 @@ const DEFAULT_BINDINGS = compile([
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
   {
+    shortcut: modShortcut("k", { shiftKey: true }),
+    command: "projects.search",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
     shortcut: modShortcut("e", { shiftKey: true }),
     command: "chat.branchSelector.focus",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
@@ -310,6 +315,10 @@ describe("shortcutLabelForCommand", () => {
     assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "threads.search", "MacIntel"),
       "⇧⌘F",
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "projects.search", "Linux"),
+      "Ctrl+Shift+K",
     );
     assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "sidebar.history.next", "Linux"),
@@ -513,6 +522,22 @@ describe("chat/editor shortcuts", () => {
     );
   });
 
+  it("matches the project folder search shortcut outside terminal focus", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "k", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+      "projects.search",
+    );
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "k", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: true },
+      }),
+    );
+  });
+
   it("matches sidebar thread and project navigation shortcuts", () => {
     assert.isTrue(
       isSidebarThreadPreviousShortcut(event({ key: "ArrowUp", altKey: true }), DEFAULT_BINDINGS, {
@@ -660,6 +685,13 @@ describe("resolveShortcutCommand", () => {
         context: { terminalFocus: false },
       }),
       "threads.search",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "k", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+      "projects.search",
     );
   });
 });

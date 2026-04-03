@@ -43,6 +43,10 @@
     "./String": {
       "types": "./src/String.ts",
       "import": "./src/String.ts"
+    },
+    "./fuzzySearch": {
+      "types": "./src/fuzzySearch.ts",
+      "import": "./src/fuzzySearch.ts"
     }
   },
   "scripts": {
