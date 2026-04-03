@@ -11,8 +11,7 @@ const projectA: Project = {
   id: ProjectId.makeUnsafe("project-a"),
   name: "Alpha",
   cwd: "/repo/a",
-  model: "gpt-5",
-  expanded: true,
+  defaultModelSelection: null,
   scripts: [],
 };
 
@@ -20,8 +19,7 @@ const projectB: Project = {
   id: ProjectId.makeUnsafe("project-b"),
   name: "Beta",
   cwd: "/repo/b",
-  model: "gpt-5",
-  expanded: true,
+  defaultModelSelection: null,
   scripts: [],
 };
 
@@ -47,17 +45,19 @@ function makeThread(
     codexThreadId: null,
     projectId: overrides.projectId,
     title: overrides.title,
-    model: "gpt-5",
+    modelSelection: {
+      provider: "codex",
+      model: "gpt-5",
+    },
     runtimeMode: "full-access",
     interactionMode: "default",
     session: overrides.session ?? null,
     messages: overrides.messages ?? [],
-    queuedTurns: [],
     proposedPlans: overrides.proposedPlans ?? [],
     error: null,
     createdAt: overrides.createdAt ?? "2026-03-01T00:00:00.000Z",
+    archivedAt: null,
     latestTurn: overrides.latestTurn ?? null,
-    lastVisitedAt: undefined,
     branch: null,
     worktreePath: null,
     turnDiffSummaries: [],

@@ -86,13 +86,13 @@ interface MessagesTimelineProps {
   resolvedTheme: "light" | "dark";
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
-  threadSearchQuery: string;
-  threadSearchOccurrencesBySourceId: Map<
+  threadSearchQuery?: string;
+  threadSearchOccurrencesBySourceId?: Map<
     string,
     Array<{ start: number; end: number; occurrenceIndexInSource: number }>
   >;
-  activeThreadSearchSourceId: string | null;
-  activeThreadSearchOccurrenceIndex: number | null;
+  activeThreadSearchSourceId?: string | null;
+  activeThreadSearchOccurrenceIndex?: number | null;
   onVirtualizerSnapshot?: (snapshot: {
     totalSize: number;
     measurements: ReadonlyArray<{
@@ -128,10 +128,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   resolvedTheme,
   timestampFormat,
   workspaceRoot,
-  threadSearchQuery,
-  threadSearchOccurrencesBySourceId,
-  activeThreadSearchSourceId,
-  activeThreadSearchOccurrenceIndex,
+  threadSearchQuery = "",
+  threadSearchOccurrencesBySourceId = new Map(),
+  activeThreadSearchSourceId = null,
+  activeThreadSearchOccurrenceIndex = null,
   onVirtualizerSnapshot,
 }: MessagesTimelineProps) {
   const timelineRootRef = useRef<HTMLDivElement | null>(null);
@@ -390,254 +390,255 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         data-thread-search-source-id={sourceId ?? undefined}
         data-thread-search-active={rowHasActiveSearchMatch ? "true" : undefined}
       >
-      {row.kind === "work" &&
-        (() => {
-          const groupId = row.id;
-          const groupedEntries = row.groupedEntries;
-          const isExpanded = expandedWorkGroups[groupId] ?? false;
-          const hasOverflow = groupedEntries.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
-          const visibleEntries =
-            hasOverflow && !isExpanded
-              ? groupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES)
-              : groupedEntries;
-          const hiddenCount = groupedEntries.length - visibleEntries.length;
-          const onlyToolEntries = groupedEntries.every((entry) => entry.tone === "tool");
-          const groupLabel = onlyToolEntries ? "Tool calls" : "Work log";
+        {row.kind === "work" &&
+          (() => {
+            const groupId = row.id;
+            const groupedEntries = row.groupedEntries;
+            const isExpanded = expandedWorkGroups[groupId] ?? false;
+            const hasOverflow = groupedEntries.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
+            const visibleEntries =
+              hasOverflow && !isExpanded
+                ? groupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES)
+                : groupedEntries;
+            const hiddenCount = groupedEntries.length - visibleEntries.length;
+            const onlyToolEntries = groupedEntries.every((entry) => entry.tone === "tool");
+            const groupLabel = onlyToolEntries ? "Tool calls" : "Work log";
 
-          return (
-            <div className="rounded-lg border border-border/80 bg-card/45 px-3 py-2">
-              <div className="mb-1.5 flex items-center justify-between gap-3">
-                <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
-                  {groupLabel}
-                </p>
-                {hasOverflow && (
-                  <button
-                    type="button"
-                    className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors duration-150 hover:text-muted-foreground/80"
-                    onClick={() => onToggleWorkGroup(groupId)}
-                  >
-                    {isExpanded ? "Show less" : `Show ${hiddenCount} more`}
-                  </button>
-                )}
-              </div>
-              <div className="space-y-0.5">
-                {visibleEntries.map((workEntry) => (
-                  <SimpleWorkEntryRow key={`work-row:${workEntry.id}`} workEntry={workEntry} />
-                ))}
-              </div>
-            </div>
-          );
-        })()}
-
-      {row.kind === "message" &&
-        row.message.role === "user" &&
-        (() => {
-          const userImages = row.message.attachments ?? [];
-          const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
-          const terminalContexts = displayedUserMessage.contexts;
-          const canRevertAgentWork = revertTurnCountByUserMessageId.has(row.message.id);
-          return (
-            <div className="flex justify-end">
-              <div className="group relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
-                {userImages.length > 0 && (
-                  <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
-                    {userImages.map(
-                      (image: NonNullable<TimelineMessage["attachments"]>[number]) => (
-                        <div
-                          key={image.id}
-                          className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
-                        >
-                          {image.previewUrl ? (
-                            <button
-                              type="button"
-                              className="h-full w-full cursor-zoom-in"
-                              aria-label={`Preview ${image.name}`}
-                              onClick={() => {
-                                const preview = buildExpandedImagePreview(userImages, image.id);
-                                if (!preview) return;
-                                onImageExpand(preview);
-                              }}
-                            >
-                              <img
-                                src={image.previewUrl}
-                                alt={image.name}
-                                className="h-full max-h-[220px] w-full object-cover"
-                                onLoad={onTimelineImageLoad}
-                                onError={onTimelineImageLoad}
-                              />
-                            </button>
-                          ) : (
-                            <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-[11px] text-muted-foreground/70">
-                              {image.name}
-                            </div>
-                          )}
-                        </div>
-                      ),
-                    )}
-                  </div>
-                )}
-                {(displayedUserMessage.visibleText.trim().length > 0 ||
-                  terminalContexts.length > 0) &&
-                  (terminalContexts.length === 0 && sourceMatches.length > 0 ? (
-                    <pre className="whitespace-pre-wrap wrap-break-word font-mono text-sm leading-relaxed text-foreground">
-                      {renderHighlightedUserText(
-                        row.message.id,
-                        displayedUserMessage.visibleText,
-                        sourceMatches,
-                        rowHasActiveSearchMatch,
-                      )}
-                    </pre>
-                  ) : (
-                    <UserMessageBody
-                      text={displayedUserMessage.visibleText}
-                      terminalContexts={terminalContexts}
-                    />
+            return (
+              <div className="rounded-lg border border-border/80 bg-card/45 px-3 py-2">
+                <div className="mb-1.5 flex items-center justify-between gap-3">
+                  <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
+                    {groupLabel}
+                  </p>
+                  {hasOverflow && (
+                    <button
+                      type="button"
+                      className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors duration-150 hover:text-muted-foreground/80"
+                      onClick={() => onToggleWorkGroup(groupId)}
+                    >
+                      {isExpanded ? "Show less" : `Show ${hiddenCount} more`}
+                    </button>
+                  )}
+                </div>
+                <div className="space-y-0.5">
+                  {visibleEntries.map((workEntry) => (
+                    <SimpleWorkEntryRow key={`work-row:${workEntry.id}`} workEntry={workEntry} />
                   ))}
-                <div className="mt-1.5 flex items-center justify-end gap-2">
-                  <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
-                    {displayedUserMessage.copyText && (
-                      <MessageCopyButton text={displayedUserMessage.copyText} />
-                    )}
-                    {canRevertAgentWork && (
-                      <Button
-                        type="button"
-                        size="xs"
-                        variant="outline"
-                        disabled={isRevertingCheckpoint || isWorking}
-                        onClick={() => onRevertUserMessage(row.message.id)}
-                        title="Revert to this message"
-                      >
-                        <Undo2Icon className="size-3" />
-                      </Button>
-                    )}
+                </div>
+              </div>
+            );
+          })()}
+
+        {row.kind === "message" &&
+          row.message.role === "user" &&
+          (() => {
+            const userImages = row.message.attachments ?? [];
+            const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
+            const terminalContexts = displayedUserMessage.contexts;
+            const canRevertAgentWork = revertTurnCountByUserMessageId.has(row.message.id);
+            return (
+              <div className="flex justify-end">
+                <div className="group relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
+                  {userImages.length > 0 && (
+                    <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
+                      {userImages.map(
+                        (image: NonNullable<TimelineMessage["attachments"]>[number]) => (
+                          <div
+                            key={image.id}
+                            className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
+                          >
+                            {image.previewUrl ? (
+                              <button
+                                type="button"
+                                className="h-full w-full cursor-zoom-in"
+                                aria-label={`Preview ${image.name}`}
+                                onClick={() => {
+                                  const preview = buildExpandedImagePreview(userImages, image.id);
+                                  if (!preview) return;
+                                  onImageExpand(preview);
+                                }}
+                              >
+                                <img
+                                  src={image.previewUrl}
+                                  alt={image.name}
+                                  className="h-full max-h-[220px] w-full object-cover"
+                                  onLoad={onTimelineImageLoad}
+                                  onError={onTimelineImageLoad}
+                                />
+                              </button>
+                            ) : (
+                              <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-[11px] text-muted-foreground/70">
+                                {image.name}
+                              </div>
+                            )}
+                          </div>
+                        ),
+                      )}
+                    </div>
+                  )}
+                  {(displayedUserMessage.visibleText.trim().length > 0 ||
+                    terminalContexts.length > 0) &&
+                    (terminalContexts.length === 0 && sourceMatches.length > 0 ? (
+                      <pre className="whitespace-pre-wrap wrap-break-word font-mono text-sm leading-relaxed text-foreground">
+                        {renderHighlightedUserText(
+                          row.message.id,
+                          displayedUserMessage.visibleText,
+                          sourceMatches,
+                          rowHasActiveSearchMatch,
+                        )}
+                      </pre>
+                    ) : (
+                      <UserMessageBody
+                        text={displayedUserMessage.visibleText}
+                        terminalContexts={terminalContexts}
+                      />
+                    ))}
+                  <div className="mt-1.5 flex items-center justify-end gap-2">
+                    <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
+                      {displayedUserMessage.copyText && (
+                        <MessageCopyButton text={displayedUserMessage.copyText} />
+                      )}
+                      {canRevertAgentWork && (
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="outline"
+                          disabled={isRevertingCheckpoint || isWorking}
+                          onClick={() => onRevertUserMessage(row.message.id)}
+                          title="Revert to this message"
+                        >
+                          <Undo2Icon className="size-3" />
+                        </Button>
+                      )}
+                    </div>
+                    <p className="text-right text-[10px] text-muted-foreground/30">
+                      {formatTimestamp(row.message.createdAt, timestampFormat)}
+                    </p>
                   </div>
-                  <p className="text-right text-[10px] text-muted-foreground/30">
-                    {formatTimestamp(row.message.createdAt, timestampFormat)}
+                </div>
+              </div>
+            );
+          })()}
+
+        {row.kind === "message" &&
+          row.message.role === "assistant" &&
+          (() => {
+            const messageText =
+              row.message.text || (row.message.streaming ? "" : "(empty response)");
+            return (
+              <>
+                {row.showCompletionDivider && (
+                  <div className="my-3 flex items-center gap-3">
+                    <span className="h-px flex-1 bg-border" />
+                    <span className="rounded-full border border-border bg-background px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/80">
+                      {completionSummary ? `Response • ${completionSummary}` : "Response"}
+                    </span>
+                    <span className="h-px flex-1 bg-border" />
+                  </div>
+                )}
+                <div className="min-w-0 px-1 py-0.5">
+                  <ChatMarkdown
+                    text={messageText}
+                    cwd={markdownCwd}
+                    isStreaming={Boolean(row.message.streaming)}
+                  />
+                  {(() => {
+                    const turnSummary = turnDiffSummaryByAssistantMessageId.get(row.message.id);
+                    if (!turnSummary) return null;
+                    const checkpointFiles = turnSummary.files;
+                    if (checkpointFiles.length === 0) return null;
+                    const summaryStat = summarizeTurnDiffStats(checkpointFiles);
+                    const changedFileCountLabel = String(checkpointFiles.length);
+                    const allDirectoriesExpanded =
+                      allDirectoriesExpandedByTurnId[turnSummary.turnId] ?? true;
+                    return (
+                      <div className="mt-2 rounded-lg border border-border/80 bg-card/45 p-2.5">
+                        <div className="mb-1.5 flex items-center justify-between gap-2">
+                          <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
+                            <span>Changed files ({changedFileCountLabel})</span>
+                            {hasNonZeroStat(summaryStat) && (
+                              <>
+                                <span className="mx-1">•</span>
+                                <DiffStatLabel
+                                  additions={summaryStat.additions}
+                                  deletions={summaryStat.deletions}
+                                />
+                              </>
+                            )}
+                          </p>
+                          <div className="flex items-center gap-1.5">
+                            <Button
+                              type="button"
+                              size="xs"
+                              variant="outline"
+                              data-scroll-anchor-ignore
+                              onClick={() => onToggleAllDirectories(turnSummary.turnId)}
+                            >
+                              {allDirectoriesExpanded ? "Collapse all" : "Expand all"}
+                            </Button>
+                            <Button
+                              type="button"
+                              size="xs"
+                              variant="outline"
+                              onClick={() =>
+                                onOpenTurnDiff(turnSummary.turnId, checkpointFiles[0]?.path)
+                              }
+                            >
+                              View diff
+                            </Button>
+                          </div>
+                        </div>
+                        <ChangedFilesTree
+                          key={`changed-files-tree:${turnSummary.turnId}`}
+                          turnId={turnSummary.turnId}
+                          files={checkpointFiles}
+                          allDirectoriesExpanded={allDirectoriesExpanded}
+                          resolvedTheme={resolvedTheme}
+                          onOpenTurnDiff={onOpenTurnDiff}
+                        />
+                      </div>
+                    );
+                  })()}
+                  <p className="mt-1.5 text-[10px] text-muted-foreground/30">
+                    {formatMessageMeta(
+                      row.message.createdAt,
+                      row.message.streaming
+                        ? formatElapsed(row.durationStart, nowIso)
+                        : formatElapsed(row.durationStart, row.message.completedAt),
+                      timestampFormat,
+                    )}
                   </p>
                 </div>
-              </div>
-            </div>
-          );
-        })()}
+              </>
+            );
+          })()}
 
-      {row.kind === "message" &&
-        row.message.role === "assistant" &&
-        (() => {
-          const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
-          return (
-            <>
-              {row.showCompletionDivider && (
-                <div className="my-3 flex items-center gap-3">
-                  <span className="h-px flex-1 bg-border" />
-                  <span className="rounded-full border border-border bg-background px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/80">
-                    {completionSummary ? `Response • ${completionSummary}` : "Response"}
-                  </span>
-                  <span className="h-px flex-1 bg-border" />
-                </div>
-              )}
-              <div className="min-w-0 px-1 py-0.5">
-                <ChatMarkdown
-                  text={messageText}
-                  cwd={markdownCwd}
-                  isStreaming={Boolean(row.message.streaming)}
-                />
-                {(() => {
-                  const turnSummary = turnDiffSummaryByAssistantMessageId.get(row.message.id);
-                  if (!turnSummary) return null;
-                  const checkpointFiles = turnSummary.files;
-                  if (checkpointFiles.length === 0) return null;
-                  const summaryStat = summarizeTurnDiffStats(checkpointFiles);
-                  const changedFileCountLabel = String(checkpointFiles.length);
-                  const allDirectoriesExpanded =
-                    allDirectoriesExpandedByTurnId[turnSummary.turnId] ?? true;
-                  return (
-                    <div className="mt-2 rounded-lg border border-border/80 bg-card/45 p-2.5">
-                      <div className="mb-1.5 flex items-center justify-between gap-2">
-                        <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
-                          <span>Changed files ({changedFileCountLabel})</span>
-                          {hasNonZeroStat(summaryStat) && (
-                            <>
-                              <span className="mx-1">•</span>
-                              <DiffStatLabel
-                                additions={summaryStat.additions}
-                                deletions={summaryStat.deletions}
-                              />
-                            </>
-                          )}
-                        </p>
-                        <div className="flex items-center gap-1.5">
-                          <Button
-                            type="button"
-                            size="xs"
-                            variant="outline"
-                            data-scroll-anchor-ignore
-                            onClick={() => onToggleAllDirectories(turnSummary.turnId)}
-                          >
-                            {allDirectoriesExpanded ? "Collapse all" : "Expand all"}
-                          </Button>
-                          <Button
-                            type="button"
-                            size="xs"
-                            variant="outline"
-                            onClick={() =>
-                              onOpenTurnDiff(turnSummary.turnId, checkpointFiles[0]?.path)
-                            }
-                          >
-                            View diff
-                          </Button>
-                        </div>
-                      </div>
-                      <ChangedFilesTree
-                        key={`changed-files-tree:${turnSummary.turnId}`}
-                        turnId={turnSummary.turnId}
-                        files={checkpointFiles}
-                        allDirectoriesExpanded={allDirectoriesExpanded}
-                        resolvedTheme={resolvedTheme}
-                        onOpenTurnDiff={onOpenTurnDiff}
-                      />
-                    </div>
-                  );
-                })()}
-                <p className="mt-1.5 text-[10px] text-muted-foreground/30">
-                  {formatMessageMeta(
-                    row.message.createdAt,
-                    row.message.streaming
-                      ? formatElapsed(row.durationStart, nowIso)
-                      : formatElapsed(row.durationStart, row.message.completedAt),
-                    timestampFormat,
-                  )}
-                </p>
-              </div>
-            </>
-          );
-        })()}
-
-      {row.kind === "proposed-plan" && (
-        <div className="min-w-0 px-1 py-0.5">
-          <ProposedPlanCard
-            planMarkdown={row.proposedPlan.planMarkdown}
-            cwd={markdownCwd}
-            workspaceRoot={workspaceRoot}
-          />
-        </div>
-      )}
-
-      {row.kind === "working" && (
-        <div className="py-0.5 pl-1.5">
-          <div className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground/70">
-            <span className="inline-flex items-center gap-[3px]">
-              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse" />
-              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:200ms]" />
-              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:400ms]" />
-            </span>
-            <span>
-              {row.createdAt
-                ? `Working for ${formatWorkingTimer(row.createdAt, nowIso) ?? "0s"}`
-                : "Working..."}
-            </span>
+        {row.kind === "proposed-plan" && (
+          <div className="min-w-0 px-1 py-0.5">
+            <ProposedPlanCard
+              planMarkdown={row.proposedPlan.planMarkdown}
+              cwd={markdownCwd}
+              workspaceRoot={workspaceRoot}
+            />
           </div>
-        </div>
-      )}
+        )}
+
+        {row.kind === "working" && (
+          <div className="py-0.5 pl-1.5">
+            <div className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground/70">
+              <span className="inline-flex items-center gap-[3px]">
+                <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse" />
+                <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:200ms]" />
+                <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:400ms]" />
+              </span>
+              <span>
+                {row.createdAt
+                  ? `Working for ${formatWorkingTimer(row.createdAt, nowIso) ?? "0s"}`
+                  : "Working..."}
+              </span>
+            </div>
+          </div>
+        )}
       </div>
     );
   };

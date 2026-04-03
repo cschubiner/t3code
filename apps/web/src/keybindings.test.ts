@@ -303,7 +303,10 @@ describe("shortcutLabelForCommand", () => {
       shortcutLabelForCommand(DEFAULT_BINDINGS, "sidebar.history.previous", "MacIntel"),
       "⌘[",
     );
-    assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "thread.search", "Linux"), "Ctrl+F");
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "thread.search", "Linux"),
+      "Ctrl+F",
+    );
     assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "threads.search", "MacIntel"),
       "⇧⌘F",

@@ -168,7 +168,9 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         ),
       );
       assert.isTrue(
-        persisted.some((entry) => entry.command === "sidebar.history.next" && entry.key === "mod+]"),
+        persisted.some(
+          (entry) => entry.command === "sidebar.history.next" && entry.key === "mod+]",
+        ),
       );
       assert.isTrue(
         persisted.some(
@@ -193,7 +195,8 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       );
       assert.isTrue(
         persisted.some(
-          (entry) => entry.command === "sidebar.project.next" && entry.key === "alt+shift+arrowdown",
+          (entry) =>
+            entry.command === "sidebar.project.next" && entry.key === "alt+shift+arrowdown",
         ),
       );
       assert.isTrue(

@@ -29,7 +29,7 @@ data sources.
 - `a548d570` fix disabled branch selector on new threads
 - `76f615e3` add terminal focus coverage for branch selector shortcut
 - `eb736396` fix browser test setup for branch selector shortcut
-- `a89a9820` add thread search shortcuts
+- `a89a9820` add thread search shortcuts -> restored in `27e804de`
 - `936b5e03` add project folder fuzzy search shortcut
 - `db6fb355` dedupe global thread search results
 - `fd55d0bb` show relative time in thread search
