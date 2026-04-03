@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   createThreadJumpHintVisibilityController,
+  deriveSidebarThreadProjectName,
+  deriveThreadSidebarPullRequestReferences,
+  extractSidebarPullRequestReferences,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
   getFallbackThreadIdAfterDelete,
@@ -9,6 +12,7 @@ import {
   getProjectSortTimestamp,
   hasUnseenCompletion,
   isContextMenuPointerDown,
+  isTypingInSidebarTextEntry,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadSeedContext,
@@ -17,8 +21,11 @@ import {
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
+  sortThreadsForRecentSidebar,
   sortThreadsForSidebar,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
+  visibleRecentThreadsForSidebar,
+  visibleThreadIdsForRecentSidebar,
 } from "./Sidebar.logic";
 import { OrchestrationLatestTurn, ProjectId, ThreadId } from "@t3tools/contracts";
 import {
@@ -31,10 +38,11 @@ import {
 function makeLatestTurn(overrides?: {
   completedAt?: string | null;
   startedAt?: string | null;
+  state?: "completed" | "running" | "interrupted" | "error";
 }): OrchestrationLatestTurn {
   return {
     turnId: "turn-1" as never,
-    state: "completed",
+    state: overrides?.state ?? "completed",
     assistantMessageId: null,
     requestedAt: "2026-03-09T10:00:00.000Z",
     startedAt: overrides?.startedAt ?? "2026-03-09T10:00:00.000Z",
@@ -164,6 +172,185 @@ describe("resolveSidebarNewThreadEnvMode", () => {
         defaultEnvMode: "worktree",
       }),
     ).toBe("local");
+  });
+});
+
+describe("extractSidebarPullRequestReferences", () => {
+  it("extracts GitHub PR links and dedupes url variants for the same PR", () => {
+    expect(
+      extractSidebarPullRequestReferences(`
+        https://github.com/pingdotgg/t3code/pull/88
+        https://github.com/pingdotgg/t3code/pull/88/files
+        https://github.com/pingdotgg/t3code/pull/91
+      `),
+    ).toEqual([
+      {
+        url: "https://github.com/pingdotgg/t3code/pull/88",
+        owner: "pingdotgg",
+        repo: "t3code",
+        number: "88",
+      },
+      {
+        url: "https://github.com/pingdotgg/t3code/pull/91",
+        owner: "pingdotgg",
+        repo: "t3code",
+        number: "91",
+      },
+    ]);
+  });
+});
+
+describe("deriveThreadSidebarPullRequestReferences", () => {
+  it("returns deduped PR references from thread messages for worktree threads", () => {
+    expect(
+      deriveThreadSidebarPullRequestReferences({
+        worktreePath: "/tmp/worktree",
+        messages: [
+          {
+            id: "message-1" as never,
+            role: "assistant",
+            text: "See https://github.com/pingdotgg/t3code/pull/88",
+            createdAt: "2026-03-12T10:00:00.000Z",
+            streaming: false,
+          },
+          {
+            id: "message-2" as never,
+            role: "user",
+            text: "And also https://github.com/pingdotgg/t3code/pull/88/files plus https://github.com/openai/codex/pull/7",
+            createdAt: "2026-03-12T10:01:00.000Z",
+            streaming: false,
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        url: "https://github.com/pingdotgg/t3code/pull/88",
+        owner: "pingdotgg",
+        repo: "t3code",
+        number: "88",
+      },
+      {
+        url: "https://github.com/openai/codex/pull/7",
+        owner: "openai",
+        repo: "codex",
+        number: "7",
+      },
+    ]);
+  });
+
+  it("ignores PR references for local threads without a worktree", () => {
+    expect(
+      deriveThreadSidebarPullRequestReferences({
+        worktreePath: null,
+        messages: [
+          {
+            id: "message-1" as never,
+            role: "assistant",
+            text: "https://github.com/pingdotgg/t3code/pull/88",
+            createdAt: "2026-03-12T10:00:00.000Z",
+            streaming: false,
+          },
+        ],
+      }),
+    ).toEqual([]);
+  });
+});
+
+describe("isTypingInSidebarTextEntry", () => {
+  class FakeHTMLElement {
+    parent: FakeHTMLElement | null = null;
+    isContentEditable = false;
+
+    constructor(
+      readonly tagName: string,
+      readonly attributes: Record<string, string> = {},
+    ) {}
+
+    closest(selector: string): FakeHTMLElement | null {
+      return this.findAncestor((node) => {
+        switch (selector) {
+          case "[data-sidebar='sidebar']":
+            return node.attributes["data-sidebar"] === "sidebar";
+          case "[data-slot='sidebar']":
+            return node.attributes["data-slot"] === "sidebar";
+          case "input, textarea, select, [contenteditable]":
+            return (
+              node.tagName === "INPUT" ||
+              node.tagName === "TEXTAREA" ||
+              node.tagName === "SELECT" ||
+              node.isContentEditable
+            );
+          default:
+            return false;
+        }
+      });
+    }
+
+    private findAncestor(predicate: (node: FakeHTMLElement) => boolean): FakeHTMLElement | null {
+      if (predicate(this)) {
+        return this;
+      }
+      return this.parent?.findAncestor(predicate) ?? null;
+    }
+  }
+
+  class FakeHTMLInputElement extends FakeHTMLElement {
+    constructor() {
+      super("INPUT");
+    }
+  }
+
+  class FakeHTMLTextAreaElement extends FakeHTMLElement {
+    constructor() {
+      super("TEXTAREA");
+    }
+  }
+
+  class FakeHTMLSelectElement extends FakeHTMLElement {
+    constructor() {
+      super("SELECT");
+    }
+  }
+
+  function withMockedElementGlobals(run: () => void) {
+    const originals = {
+      HTMLElement: globalThis.HTMLElement,
+      HTMLInputElement: globalThis.HTMLInputElement,
+      HTMLTextAreaElement: globalThis.HTMLTextAreaElement,
+      HTMLSelectElement: globalThis.HTMLSelectElement,
+    };
+
+    Object.assign(globalThis, {
+      HTMLElement: FakeHTMLElement,
+      HTMLInputElement: FakeHTMLInputElement,
+      HTMLTextAreaElement: FakeHTMLTextAreaElement,
+      HTMLSelectElement: FakeHTMLSelectElement,
+    });
+
+    try {
+      run();
+    } finally {
+      Object.assign(globalThis, originals);
+    }
+  }
+
+  it("returns true for editable elements inside the sidebar", () => {
+    withMockedElementGlobals(() => {
+      const sidebar = new FakeHTMLElement("DIV", { "data-sidebar": "sidebar" });
+      const input = new FakeHTMLInputElement();
+      input.parent = sidebar;
+
+      expect(isTypingInSidebarTextEntry(input as unknown as EventTarget)).toBe(true);
+    });
+  });
+
+  it("returns false for the composer contenteditable outside the sidebar", () => {
+    withMockedElementGlobals(() => {
+      const composer = new FakeHTMLElement("DIV");
+      composer.isContentEditable = true;
+
+      expect(isTypingInSidebarTextEntry(composer as unknown as EventTarget)).toBe(false);
+    });
   });
 });
 
@@ -438,6 +625,70 @@ describe("resolveThreadStatusPill", () => {
     expect(
       resolveThreadStatusPill({
         thread: baseThread,
+      }),
+    ).toMatchObject({ label: "Working", pulse: true });
+  });
+
+  it("shows working while the latest turn is still running even after the session flips ready", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          latestTurn: makeLatestTurn({ completedAt: null, state: "running" }),
+          session: {
+            ...baseThread.session,
+            status: "ready",
+            orchestrationStatus: "ready",
+          },
+        },
+      }),
+    ).toMatchObject({ label: "Working", pulse: true });
+  });
+
+  it("does not show working when a stale running latest turn belongs to an errored session", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          latestTurn: makeLatestTurn({ completedAt: null, state: "running" }),
+          session: {
+            ...baseThread.session,
+            status: "error",
+            orchestrationStatus: "error",
+          },
+        },
+      }),
+    ).toMatchObject({ label: "Completed", pulse: false });
+  });
+
+  it("does not show working when a stale running latest turn belongs to a stopped session", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          latestTurn: makeLatestTurn({ completedAt: null, state: "running" }),
+          session: {
+            ...baseThread.session,
+            status: "closed",
+            orchestrationStatus: "stopped",
+          },
+        },
+      }),
+    ).toMatchObject({ label: "Completed", pulse: false });
+  });
+
+  it("shows working while transient local send state is active before the session flips running", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          hasTransientWork: true,
+          session: {
+            ...baseThread.session,
+            status: "ready",
+            orchestrationStatus: "ready",
+          },
+        },
       }),
     ).toMatchObject({ label: "Working", pulse: true });
   });
@@ -792,6 +1043,97 @@ describe("sortThreadsForSidebar", () => {
       ThreadId.makeUnsafe("thread-1"),
       ThreadId.makeUnsafe("thread-2"),
     ]);
+  });
+});
+
+describe("sortThreadsForRecentSidebar", () => {
+  it("sorts recent threads globally by updatedAt with createdAt and id tie-breakers", () => {
+    const threadA = makeThread({
+      id: ThreadId.makeUnsafe("thread-a"),
+      projectId: ProjectId.makeUnsafe("project-a"),
+      createdAt: "2026-03-09T10:00:00.000Z",
+      updatedAt: "2026-03-09T11:00:00.000Z",
+    });
+    const threadB = makeThread({
+      id: ThreadId.makeUnsafe("thread-b"),
+      projectId: ProjectId.makeUnsafe("project-a"),
+      createdAt: "2026-03-09T10:01:00.000Z",
+      updatedAt: undefined,
+    });
+    const threadC = makeThread({
+      id: ThreadId.makeUnsafe("thread-c"),
+      projectId: ProjectId.makeUnsafe("project-b"),
+      createdAt: "2026-03-09T10:02:00.000Z",
+      updatedAt: "2026-03-09T11:00:00.000Z",
+    });
+    const threadD = makeThread({
+      id: ThreadId.makeUnsafe("thread-d"),
+      projectId: ProjectId.makeUnsafe("project-b"),
+      createdAt: "2026-03-09T10:02:00.000Z",
+      updatedAt: "2026-03-09T11:00:00.000Z",
+    });
+
+    expect(
+      sortThreadsForRecentSidebar([threadA, threadB, threadC, threadD]).map((thread) => thread.id),
+    ).toEqual([
+      ThreadId.makeUnsafe("thread-d"),
+      ThreadId.makeUnsafe("thread-c"),
+      ThreadId.makeUnsafe("thread-a"),
+      ThreadId.makeUnsafe("thread-b"),
+    ]);
+  });
+});
+
+describe("recent sidebar helpers", () => {
+  const projectAlpha = ProjectId.makeUnsafe("project-alpha");
+  const projectBeta = ProjectId.makeUnsafe("project-beta");
+  const threadA1 = makeThread({
+    id: ThreadId.makeUnsafe("thread-a1"),
+    projectId: projectAlpha,
+    createdAt: "2026-03-09T10:01:00.000Z",
+  });
+  const threadA2 = makeThread({
+    id: ThreadId.makeUnsafe("thread-a2"),
+    projectId: projectAlpha,
+    createdAt: "2026-03-09T10:02:00.000Z",
+    updatedAt: "2026-03-09T10:05:00.000Z",
+  });
+  const threadB1 = makeThread({
+    id: ThreadId.makeUnsafe("thread-b1"),
+    projectId: projectBeta,
+    createdAt: "2026-03-09T10:03:00.000Z",
+    updatedAt: "2026-03-09T10:06:00.000Z",
+  });
+  const threads = [threadA1, threadA2, threadB1];
+
+  it("limits recent threads without considering project expansion state", () => {
+    expect(
+      visibleRecentThreadsForSidebar({
+        threads,
+        isExpanded: false,
+        threadPreviewLimit: 2,
+      }).map((thread) => thread.id),
+    ).toEqual([threadB1.id, threadA2.id]);
+
+    expect(
+      visibleThreadIdsForRecentSidebar({
+        threads,
+        isExpanded: true,
+        threadPreviewLimit: 2,
+      }),
+    ).toEqual([threadB1.id, threadA2.id, threadA1.id]);
+  });
+
+  it("derives project labels for recent rows", () => {
+    expect(
+      deriveSidebarThreadProjectName({
+        thread: threadA1,
+        projects: [
+          { id: projectAlpha, name: "Alpha" },
+          { id: projectBeta, name: "Beta" },
+        ],
+      }),
+    ).toBe("Alpha");
   });
 });
 

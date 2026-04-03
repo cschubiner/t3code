@@ -1,4 +1,12 @@
 import type {
+  CodexImportImportSessionsInput,
+  CodexImportImportSessionsResult,
+  CodexImportListSessionsInput,
+  CodexImportPeekSessionInput,
+  CodexImportPeekSessionResult,
+  CodexImportSessionSummary,
+} from "./codexImport";
+import type {
   GitCheckoutInput,
   GitCreateBranchInput,
   GitPreparePullRequestThreadInput,
@@ -22,6 +30,14 @@ import type {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project";
+import type { SkillSearchInput, SkillSearchResult } from "./skills";
+import type {
+  SnippetCreateInput,
+  SnippetCreateResult,
+  SnippetDeleteInput,
+  SnippetLibraryUpdatedPayload,
+  SnippetListResult,
+} from "./snippets";
 import type {
   ServerConfig,
   ServerProviderUpdatedPayload,
@@ -153,9 +169,27 @@ export interface NativeApi {
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
   };
+  skills: {
+    search: (input: SkillSearchInput) => Promise<SkillSearchResult>;
+  };
+  snippets: {
+    list: () => Promise<SnippetListResult>;
+    create: (input: SnippetCreateInput) => Promise<SnippetCreateResult>;
+    delete: (input: SnippetDeleteInput) => Promise<void>;
+    onUpdated: (callback: (payload: SnippetLibraryUpdatedPayload) => void) => () => void;
+  };
   shell: {
     openInEditor: (cwd: string, editor: EditorId) => Promise<void>;
     openExternal: (url: string) => Promise<void>;
+  };
+  codexImport: {
+    listSessions: (
+      input: CodexImportListSessionsInput,
+    ) => Promise<ReadonlyArray<CodexImportSessionSummary>>;
+    peekSession: (input: CodexImportPeekSessionInput) => Promise<CodexImportPeekSessionResult>;
+    importSessions: (
+      input: CodexImportImportSessionsInput,
+    ) => Promise<CodexImportImportSessionsResult>;
   };
   git: {
     // Existing branch/worktree API

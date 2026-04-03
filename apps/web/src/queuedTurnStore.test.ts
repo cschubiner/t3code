@@ -41,6 +41,23 @@ function resetQueuedTurnStore() {
 }
 
 describe("deriveQueuedTurnDispatchGate", () => {
+  it("allows dispatch from a disconnected thread when nothing else is blocking", () => {
+    expect(
+      deriveQueuedTurnDispatchGate({
+        phase: "disconnected",
+        sessionOrchestrationStatus: "stopped",
+        isLocalDispatchInFlight: false,
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      }),
+    ).toEqual({
+      canDispatch: true,
+      pauseReason: null,
+      blockReason: null,
+    });
+  });
+
   it("blocks without pausing while the current turn is running", () => {
     expect(
       deriveQueuedTurnDispatchGate({

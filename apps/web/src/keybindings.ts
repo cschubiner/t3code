@@ -261,6 +261,8 @@ export function threadTraversalDirectionFromCommand(
 ): "previous" | "next" | null {
   if (command === "thread.previous") return "previous";
   if (command === "thread.next") return "next";
+  if (command === "sidebar.thread.previous") return "previous";
+  if (command === "sidebar.thread.next") return "next";
   return null;
 }
 
@@ -320,6 +322,70 @@ export function isDiffToggleShortcut(
   options?: ShortcutMatchOptions,
 ): boolean {
   return matchesCommandShortcut(event, keybindings, "diff.toggle", options);
+}
+
+export function isThreadSearchShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "thread.search", options);
+}
+
+export function isThreadsSearchShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "threads.search", options);
+}
+
+export function isSidebarHistoryPreviousShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "sidebar.history.previous", options);
+}
+
+export function isSidebarHistoryNextShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "sidebar.history.next", options);
+}
+
+export function isSidebarThreadPreviousShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "sidebar.thread.previous", options);
+}
+
+export function isSidebarThreadNextShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "sidebar.thread.next", options);
+}
+
+export function isSidebarProjectPreviousShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "sidebar.project.previous", options);
+}
+
+export function isSidebarProjectNextShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "sidebar.project.next", options);
 }
 
 export function isChatNewShortcut(

@@ -21,6 +21,8 @@ import {
   ClientSettingsSchema,
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_UNIFIED_SETTINGS,
+  MAX_EXTRA_SKILL_ROOT_COUNT,
+  MAX_EXTRA_SKILL_ROOT_LENGTH,
   SidebarProjectSortOrder,
   SidebarThreadSortOrder,
   TimestampFormat,
@@ -36,6 +38,40 @@ import { applySettingsUpdated, getServerConfig, useServerSettings } from "~/rpc/
 
 const CLIENT_SETTINGS_STORAGE_KEY = "t3code:client-settings:v1";
 const OLD_SETTINGS_KEY = "t3code:app-settings:v1";
+
+export function normalizeExtraSkillRoots(roots: Iterable<unknown>): string[] {
+  const normalizedRoots: string[] = [];
+  const seen = new Set<string>();
+
+  for (const candidate of roots) {
+    if (!Predicate.isString(candidate)) {
+      continue;
+    }
+    const normalized = candidate.trim();
+    if (
+      normalized.length === 0 ||
+      normalized.length > MAX_EXTRA_SKILL_ROOT_LENGTH ||
+      seen.has(normalized)
+    ) {
+      continue;
+    }
+
+    seen.add(normalized);
+    normalizedRoots.push(normalized);
+    if (normalizedRoots.length >= MAX_EXTRA_SKILL_ROOT_COUNT) {
+      break;
+    }
+  }
+
+  return normalizedRoots;
+}
+
+function normalizeClientSettings(settings: ClientSettings): ClientSettings {
+  return {
+    ...settings,
+    extraSkillRoots: normalizeExtraSkillRoots(settings.extraSkillRoots),
+  };
+}
 
 // ── Key sets for routing patches ─────────────────────────────────────
 
@@ -80,7 +116,7 @@ export function useSettings<T extends UnifiedSettings = UnifiedSettings>(
   const merged = useMemo<UnifiedSettings>(
     () => ({
       ...serverSettings,
-      ...clientSettings,
+      ...normalizeClientSettings(clientSettings),
     }),
     [clientSettings, serverSettings],
   );
@@ -115,7 +151,7 @@ export function useUpdateSettings() {
       }
 
       if (Object.keys(clientPatch).length > 0) {
-        setClientSettings((prev) => ({ ...prev, ...clientPatch }));
+        setClientSettings((prev) => normalizeClientSettings({ ...prev, ...clientPatch }));
       }
     },
     [setClientSettings],
@@ -216,6 +252,10 @@ export function buildLegacyClientSettingsMigrationPatch(
 
   if (Schema.is(TimestampFormat)(legacySettings.timestampFormat)) {
     patch.timestampFormat = legacySettings.timestampFormat;
+  }
+
+  if (Array.isArray(legacySettings.extraSkillRoots)) {
+    patch.extraSkillRoots = normalizeExtraSkillRoots(legacySettings.extraSkillRoots);
   }
 
   return patch;

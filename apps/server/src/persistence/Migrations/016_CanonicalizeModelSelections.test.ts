@@ -2,10 +2,17 @@ import { assert, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import { runMigrations } from "../Migrations.ts";
+import { migrationEntries, runMigrations } from "../Migrations.ts";
 import * as NodeSqliteClient from "../NodeSqliteClient.ts";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
+const CANONICALIZE_MODEL_SELECTIONS_MIGRATION_ID = (() => {
+  const migration = migrationEntries.find(([, name]) => name === "CanonicalizeModelSelections");
+  if (!migration) {
+    throw new Error("CanonicalizeModelSelections migration is not registered.");
+  }
+  return migration[0];
+})();
 
 layer("016_CanonicalizeModelSelections", (it) => {
   it.effect(
@@ -16,7 +23,9 @@ layer("016_CanonicalizeModelSelections", (it) => {
 
         // Setup base state
         {
-          yield* runMigrations({ toMigrationInclusive: 15 });
+          yield* runMigrations({
+            toMigrationInclusive: CANONICALIZE_MODEL_SELECTIONS_MIGRATION_ID - 1,
+          });
 
           yield* sql`
         INSERT INTO projection_projects (
@@ -202,7 +211,9 @@ layer("016_CanonicalizeModelSelections", (it) => {
         }
 
         // Execute migration under test
-        yield* runMigrations({ toMigrationInclusive: 16 });
+        yield* runMigrations({
+          toMigrationInclusive: CANONICALIZE_MODEL_SELECTIONS_MIGRATION_ID,
+        });
 
         // Assert expected state
         {

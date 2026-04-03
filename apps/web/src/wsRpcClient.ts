@@ -50,6 +50,20 @@ export interface WsRpcClient {
     readonly searchEntries: RpcUnaryMethod<typeof WS_METHODS.projectsSearchEntries>;
     readonly writeFile: RpcUnaryMethod<typeof WS_METHODS.projectsWriteFile>;
   };
+  readonly skills: {
+    readonly search: RpcUnaryMethod<typeof WS_METHODS.skillsSearch>;
+  };
+  readonly snippets: {
+    readonly list: RpcUnaryNoArgMethod<typeof WS_METHODS.snippetsList>;
+    readonly create: RpcUnaryMethod<typeof WS_METHODS.snippetsCreate>;
+    readonly delete: RpcUnaryMethod<typeof WS_METHODS.snippetsDelete>;
+    readonly onUpdated: RpcStreamMethod<typeof WS_METHODS.subscribeSnippetsUpdated>;
+  };
+  readonly codexImport: {
+    readonly listSessions: RpcUnaryMethod<typeof WS_METHODS.codexImportListSessions>;
+    readonly peekSession: RpcUnaryMethod<typeof WS_METHODS.codexImportPeekSession>;
+    readonly importSessions: RpcUnaryMethod<typeof WS_METHODS.codexImportImportSessions>;
+  };
   readonly shell: {
     readonly openInEditor: (input: {
       readonly cwd: Parameters<NativeApi["shell"]["openInEditor"]>[0];
@@ -128,6 +142,24 @@ export function createWsRpcClient(transport = new WsTransport()): WsRpcClient {
         transport.request((client) => client[WS_METHODS.projectsSearchEntries](input)),
       writeFile: (input) =>
         transport.request((client) => client[WS_METHODS.projectsWriteFile](input)),
+    },
+    skills: {
+      search: (input) => transport.request((client) => client[WS_METHODS.skillsSearch](input)),
+    },
+    snippets: {
+      list: () => transport.request((client) => client[WS_METHODS.snippetsList]({})),
+      create: (input) => transport.request((client) => client[WS_METHODS.snippetsCreate](input)),
+      delete: (input) => transport.request((client) => client[WS_METHODS.snippetsDelete](input)),
+      onUpdated: (listener) =>
+        transport.subscribe((client) => client[WS_METHODS.subscribeSnippetsUpdated]({}), listener),
+    },
+    codexImport: {
+      listSessions: (input) =>
+        transport.request((client) => client[WS_METHODS.codexImportListSessions](input)),
+      peekSession: (input) =>
+        transport.request((client) => client[WS_METHODS.codexImportPeekSession](input)),
+      importSessions: (input) =>
+        transport.request((client) => client[WS_METHODS.codexImportImportSessions](input)),
     },
     shell: {
       openInEditor: (input) =>

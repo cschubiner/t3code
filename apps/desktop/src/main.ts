@@ -24,7 +24,7 @@ import type {
   DesktopUpdateActionResult,
   DesktopUpdateState,
 } from "@t3tools/contracts";
-import electronUpdater from "electron-updater";
+import { autoUpdater } from "electron-updater";
 
 import type { ContextMenuItem } from "@t3tools/contracts";
 import { NetService } from "@t3tools/shared/Net";
@@ -52,7 +52,6 @@ import {
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch";
 import { clearPrivateTailscaleServe, setupPrivateTailscaleServe } from "./tailscale";
 
-const { autoUpdater } = electronUpdater;
 const CURRENT_DIR = Path.dirname(fileURLToPath(import.meta.url));
 
 fixPath();
@@ -661,7 +660,7 @@ function configureApplicationMenu(): void {
       label: "View",
       submenu: [
         { role: "reload" },
-        { role: "forceReload" },
+        { role: "forceReload", accelerator: "CmdOrCtrl+Alt+R" },
         { role: "toggleDevTools" },
         { type: "separator" },
         { role: "resetZoom" },
@@ -1622,6 +1621,16 @@ function createWindow(): BrowserWindow {
       nodeIntegration: false,
       sandbox: true,
     },
+  });
+
+  window.webContents.on("before-input-event", (event, input) => {
+    if (input.type !== "keyDown") return;
+    if (input.key.toLowerCase() !== "r" || !input.shift || !(input.meta || input.control)) {
+      return;
+    }
+
+    event.preventDefault();
+    dispatchMenuAction("sidebar.rename");
   });
 
   window.webContents.on("context-menu", (event, params) => {

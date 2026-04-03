@@ -54,7 +54,7 @@ export const resolveServerUrl = (options?: {
 }): string => {
   const rawUrl = firstNonEmptyString(
     options?.url,
-    window.desktopBridge?.getWsUrl(),
+    window.desktopBridge?.getWsUrl?.(),
     import.meta.env.VITE_WS_URL,
     window.location.origin,
   );

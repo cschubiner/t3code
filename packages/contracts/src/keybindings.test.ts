@@ -41,11 +41,65 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedDiffToggle.command, "diff.toggle");
 
+    const parsedThreadSearch = yield* decode(KeybindingRule, {
+      key: "mod+f",
+      command: "thread.search",
+    });
+    assert.strictEqual(parsedThreadSearch.command, "thread.search");
+
+    const parsedThreadsSearch = yield* decode(KeybindingRule, {
+      key: "mod+shift+f",
+      command: "threads.search",
+    });
+    assert.strictEqual(parsedThreadsSearch.command, "threads.search");
+
+    const parsedProjectsSearch = yield* decode(KeybindingRule, {
+      key: "mod+shift+k",
+      command: "projects.search",
+    });
+    assert.strictEqual(parsedProjectsSearch.command, "projects.search");
+
+    const parsedHistoryPrevious = yield* decode(KeybindingRule, {
+      key: "mod+[",
+      command: "sidebar.history.previous",
+    });
+    assert.strictEqual(parsedHistoryPrevious.command, "sidebar.history.previous");
+
+    const parsedHistoryNext = yield* decode(KeybindingRule, {
+      key: "mod+]",
+      command: "sidebar.history.next",
+    });
+    assert.strictEqual(parsedHistoryNext.command, "sidebar.history.next");
+
+    const parsedSidebarThreadPrevious = yield* decode(KeybindingRule, {
+      key: "alt+arrowup",
+      command: "sidebar.thread.previous",
+    });
+    assert.strictEqual(parsedSidebarThreadPrevious.command, "sidebar.thread.previous");
+
+    const parsedProjectNext = yield* decode(KeybindingRule, {
+      key: "alt+shift+arrowdown",
+      command: "sidebar.project.next",
+    });
+    assert.strictEqual(parsedProjectNext.command, "sidebar.project.next");
+
     const parsedLocal = yield* decode(KeybindingRule, {
       key: "mod+shift+n",
       command: "chat.newLocal",
     });
     assert.strictEqual(parsedLocal.command, "chat.newLocal");
+
+    const parsedBranchSelectorFocus = yield* decode(KeybindingRule, {
+      key: "mod+shift+e",
+      command: "chat.branchSelector.focus",
+    });
+    assert.strictEqual(parsedBranchSelectorFocus.command, "chat.branchSelector.focus");
+
+    const parsedSnippetsOpen = yield* decode(KeybindingRule, {
+      key: "mod+shift+s",
+      command: "snippets.open",
+    });
+    assert.strictEqual(parsedSnippetsOpen.command, "snippets.open");
 
     const parsedThreadPrevious = yield* decode(KeybindingRule, {
       key: "mod+shift+[",

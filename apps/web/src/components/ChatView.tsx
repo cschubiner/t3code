@@ -12,6 +12,9 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ServerProvider,
+  type SkillSummary,
+  type Snippet,
+  type SnippetId,
   type ThreadId,
   type TurnId,
   type KeybindingCommand,
@@ -21,13 +24,24 @@ import {
   TerminalOpenInput,
 } from "@t3tools/contracts";
 import { applyClaudePromptEffortPrefix, normalizeModelSlug } from "@t3tools/shared/model";
+import { isCodexAuthErrorMessage } from "@t3tools/shared/providerAuth";
 import { truncate } from "@t3tools/shared/String";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "~/lib/gitReactQuery";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
+import { skillSearchQueryOptions } from "~/lib/skillReactQuery";
+import { snippetListQueryOptions, snippetQueryKeys } from "~/lib/snippetReactQuery";
 import { isElectron } from "../env";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import {
@@ -36,6 +50,7 @@ import {
   collapseExpandedComposerCursor,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
+  getMatchingComposerSlashCommands,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
 } from "../composer-logic";
@@ -63,8 +78,10 @@ import {
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
 import { useStore } from "../store";
+import { useThreadActivityStore } from "../threadActivityStore";
 import { useProjectById, useThreadById } from "../storeSelectors";
 import { useUiStateStore } from "../uiStateStore";
+import { useChatToolbarFocusStore } from "../chatToolbarFocusStore";
 import {
   buildPlanImplementationThreadTitle,
   buildPlanImplementationPrompt,
@@ -85,6 +102,7 @@ import { LRUCache } from "../lib/lruCache";
 
 import { basenameOfPath } from "../vscode-icons";
 import { useTheme } from "../hooks/useTheme";
+import { useThreadActions } from "../hooks/useThreadActions";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import BranchToolbar from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
@@ -103,7 +121,7 @@ import {
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Separator } from "./ui/separator";
-import { cn, randomUUID } from "~/lib/utils";
+import { cn, isMacPlatform, randomUUID } from "~/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
@@ -154,9 +172,11 @@ import { selectThreadTerminalState, useTerminalStateStore } from "../terminalSta
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import QueuedFollowUpsPanel from "./QueuedFollowUpsPanel";
+import { SnippetPickerDialog } from "./SnippetPickerDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
 import { ContextWindowMeter } from "./chat/ContextWindowMeter";
+import { ThreadSearchBar } from "./chat/ThreadSearchBar";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { AVAILABLE_PROVIDER_OPTIONS, ProviderModelPicker } from "./chat/ProviderModelPicker";
 import { ComposerCommandItem, ComposerCommandMenu } from "./chat/ComposerCommandMenu";
@@ -198,6 +218,8 @@ import {
   type QueuedTurnDraft,
   useQueuedTurnStore,
 } from "../queuedTurnStore";
+import { buildThreadSearchMatches, buildThreadSearchSources } from "../lib/threadSearch";
+import { useThreadSearchNavigationStore } from "../threadSearchNavigationStore";
 import {
   useServerAvailableEditors,
   useServerConfig,
@@ -211,6 +233,8 @@ const IMAGE_ONLY_BOOTSTRAP_PROMPT =
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
+const EMPTY_SKILLS: SkillSummary[] = [];
+const EMPTY_SNIPPETS: Snippet[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 const EMPTY_QUEUED_TURN_DRAFTS: readonly QueuedTurnDraft[] = [];
 
@@ -289,6 +313,14 @@ function useThreadPlanCatalog(threadIds: readonly ThreadId[]): ThreadPlanCatalog
   return useStore(selector);
 }
 
+function summarizeSnippetLabel(text: string): string {
+  const normalized = text.trim().replace(/\s+/g, " ");
+  if (normalized.length <= 72) {
+    return normalized;
+  }
+  return `${normalized.slice(0, 69).trimEnd()}...`;
+}
+
 function formatOutgoingPrompt(params: {
   provider: ProviderKind;
   model: string | null;
@@ -334,6 +366,8 @@ const terminalContextIdListsEqual = (
 ): boolean =>
   contexts.length === ids.length && contexts.every((context, index) => context.id === ids[index]);
 
+type ComposerSubmissionDisposition = "default" | "queue" | "queue-front" | "steer";
+
 interface ChatViewProps {
   threadId: ThreadId;
 }
@@ -342,6 +376,17 @@ interface PendingPullRequestSetupRequest {
   threadId: ThreadId;
   worktreePath: string;
   scriptId: string;
+}
+
+function isComposerTextboxFocused(target: EventTarget | null): boolean {
+  const activeElement =
+    target instanceof HTMLElement
+      ? target
+      : document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+  if (!activeElement) return false;
+  return activeElement.closest('[data-testid="composer-editor"]') !== null;
 }
 
 function useLocalDispatchState(input: {
@@ -420,6 +465,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     (store) => store.threadLastVisitedAtById[threadId],
   );
   const settings = useSettings();
+  const { confirmAndDeleteThread } = useThreadActions();
   const setStickyComposerModelSelection = useComposerDraftStore(
     (store) => store.setStickyModelSelection,
   );
@@ -432,6 +478,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const { resolvedTheme } = useTheme();
   const queryClient = useQueryClient();
   const createWorktreeMutation = useMutation(gitCreateWorktreeMutationOptions({ queryClient }));
+  const branchSelectorFocusRequest = useChatToolbarFocusStore(
+    (state) => state.branchSelectorFocusRequest,
+  );
+  const clearBranchSelectorFocusRequest = useChatToolbarFocusStore(
+    (state) => state.clearBranchSelectorFocusRequest,
+  );
   const composerDraft = useComposerThreadDraft(threadId);
   const prompt = composerDraft.prompt;
   const composerImages = composerDraft.images;
@@ -483,6 +535,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const clearProjectDraftThreadId = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadId,
   );
+  const pendingThreadSearchNavigation = useThreadSearchNavigationStore(
+    (store) => store.pendingNavigation,
+  );
   const draftThread = useComposerDraftStore(
     (store) => store.draftThreadsByThreadId[threadId] ?? null,
   );
@@ -500,10 +555,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
+  const [branchSelectorFocusRequestId, setBranchSelectorFocusRequestId] = useState(0);
+  const [snippetPickerFocusRequestId, setSnippetPickerFocusRequestId] = useState(0);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
   optimisticUserMessagesRef.current = optimisticUserMessages;
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>(composerTerminalContexts);
+  const setTransientWorking = useThreadActivityStore((state) => state.setTransientWorking);
   const [localDraftErrorsByThreadId, setLocalDraftErrorsByThreadId] = useState<
     Record<ThreadId, string | null>
   >({});
@@ -513,6 +571,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
     ApprovalRequestId[]
   >([]);
+
+  useEffect(() => {
+    if (!branchSelectorFocusRequest || branchSelectorFocusRequest.threadId !== threadId) {
+      return;
+    }
+    setBranchSelectorFocusRequestId(branchSelectorFocusRequest.requestId);
+    clearBranchSelectorFocusRequest();
+  }, [branchSelectorFocusRequest, clearBranchSelectorFocusRequest, threadId]);
   const [pendingUserInputAnswersByRequestId, setPendingUserInputAnswersByRequestId] = useState<
     Record<string, Record<string, PendingUserInputDraftAnswer>>
   >({});
@@ -532,6 +598,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
   const [pullRequestDialogState, setPullRequestDialogState] =
     useState<PullRequestDialogState | null>(null);
+  const [isSnippetPickerOpen, setIsSnippetPickerOpen] = useState(false);
+  const [deletingSnippetId, setDeletingSnippetId] = useState<SnippetId | null>(null);
+  const [isThreadSearchOpen, setIsThreadSearchOpen] = useState(false);
+  const [threadSearchQuery, setThreadSearchQuery] = useState("");
+  const [activeThreadSearchMatchIndex, setActiveThreadSearchMatchIndex] = useState(0);
+  const [titleSearchHighlightQuery, setTitleSearchHighlightQuery] = useState<string | null>(null);
+  const [titleSearchHighlighted, setTitleSearchHighlighted] = useState(false);
   const [pendingPullRequestSetupRequest, setPendingPullRequestSetupRequest] =
     useState<PendingPullRequestSetupRequest | null>(null);
   const [busyQueuedTurnId, setBusyQueuedTurnId] = useState<string | null>(null);
@@ -563,6 +636,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   } | null>(null);
   const pendingInteractionAnchorFrameRef = useRef<number | null>(null);
   const composerEditorRef = useRef<ComposerPromptEditorHandle>(null);
+  const threadSearchInputRef = useRef<HTMLInputElement | null>(null);
   const composerFormRef = useRef<HTMLFormElement>(null);
   const composerFormHeightRef = useRef(0);
   const composerFooterRef = useRef<HTMLDivElement>(null);
@@ -579,6 +653,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const queuedDispatchInFlightRef = useRef(false);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
+  const pendingThreadSearchRestoreRef = useRef<{
+    sourceKind: "message" | "proposed-plan";
+    sourceId: string;
+    occurrenceIndexInSource: number;
+  } | null>(null);
   const setMessagesScrollContainerRef = useCallback((element: HTMLDivElement | null) => {
     messagesScrollRef.current = element;
     setMessagesScrollElement(element);
@@ -694,6 +773,49 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = useProjectById(activeThread?.projectId);
+  const deferredThreadSearchQuery = useDeferredValue(threadSearchQuery);
+  const threadSearchSources = useMemo(
+    () =>
+      activeThread
+        ? buildThreadSearchSources(activeThread, {
+            includeTitle: false,
+          }).filter((source) => source.sourceKind !== "title")
+        : [],
+    [activeThread],
+  );
+  const threadSearchMatches = useMemo(
+    () =>
+      buildThreadSearchMatches(threadSearchSources, deferredThreadSearchQuery).toSorted(
+        (left, right) => {
+          const byCreatedAt = left.sourceCreatedAt.localeCompare(right.sourceCreatedAt);
+          if (byCreatedAt !== 0) return byCreatedAt;
+          const bySourceId = left.sourceId.localeCompare(right.sourceId);
+          if (bySourceId !== 0) return bySourceId;
+          return left.occurrenceIndexInSource - right.occurrenceIndexInSource;
+        },
+      ),
+    [deferredThreadSearchQuery, threadSearchSources],
+  );
+  const activeThreadSearchMatch =
+    threadSearchMatches[
+      Math.min(activeThreadSearchMatchIndex, Math.max(threadSearchMatches.length - 1, 0))
+    ] ?? null;
+  const threadSearchOccurrencesBySourceId = useMemo(() => {
+    const matchesBySourceId = new Map<
+      string,
+      Array<{ start: number; end: number; occurrenceIndexInSource: number }>
+    >();
+    for (const match of threadSearchMatches) {
+      const existing = matchesBySourceId.get(match.sourceId) ?? [];
+      existing.push({
+        start: match.matchStart,
+        end: match.matchEnd,
+        occurrenceIndexInSource: match.occurrenceIndexInSource,
+      });
+      matchesBySourceId.set(match.sourceId, existing);
+    }
+    return matchesBySourceId;
+  }, [threadSearchMatches]);
 
   const openPullRequestDialog = useCallback(
     (reference?: string) => {
@@ -968,7 +1090,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const canResumeQueuedTurns =
     queuedTurnPauseReason !== null && queuedTurnDispatchGate.pauseReason === null;
+  const composerHasContent = composerSendState.hasSendableContent;
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  useEffect(() => {
+    const hasTransientWork = isSendBusy || isConnecting || isRevertingCheckpoint;
+    setTransientWorking(threadId, hasTransientWork);
+    return () => {
+      setTransientWorking(threadId, false);
+    };
+  }, [isConnecting, isRevertingCheckpoint, isSendBusy, setTransientWorking, threadId]);
   const nowIso = new Date(nowTick).toISOString();
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
@@ -1237,12 +1367,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const composerTriggerKind = composerTrigger?.kind ?? null;
   const pathTriggerQuery = composerTrigger?.kind === "path" ? composerTrigger.query : "";
   const isPathTrigger = composerTriggerKind === "path";
+  const skillTriggerQuery = composerTrigger?.kind === "skill" ? composerTrigger.query : "";
+  const isSkillTrigger = composerTriggerKind === "skill";
   const [debouncedPathQuery, composerPathQueryDebouncer] = useDebouncedValue(
     pathTriggerQuery,
     { wait: COMPOSER_PATH_QUERY_DEBOUNCE_MS },
     (debouncerState) => ({ isPending: debouncerState.isPending }),
   );
+  const [debouncedSkillQuery, composerSkillQueryDebouncer] = useDebouncedValue(
+    skillTriggerQuery,
+    { wait: COMPOSER_PATH_QUERY_DEBOUNCE_MS },
+    (debouncerState) => ({ isPending: debouncerState.isPending }),
+  );
   const effectivePathQuery = pathTriggerQuery.length > 0 ? debouncedPathQuery : "";
+  const effectiveSkillQuery = skillTriggerQuery.length > 0 ? debouncedSkillQuery : "";
   const branchesQuery = useQuery(gitBranchesQueryOptions(gitCwd));
   const keybindings = useServerKeybindings();
   const availableEditors = useServerAvailableEditors();
@@ -1285,7 +1423,29 @@ export default function ChatView({ threadId }: ChatViewProps) {
       limit: 80,
     }),
   );
+  const skillSearchResultQuery = useQuery(
+    skillSearchQueryOptions({
+      cwd: gitCwd,
+      query: effectiveSkillQuery,
+      codexHomePath: settings.providers.codex.homePath,
+      extraRoots: settings.extraSkillRoots,
+      enabled: isSkillTrigger,
+      limit: 40,
+    }),
+  );
+  const snippetListQuery = useQuery(snippetListQueryOptions());
   const workspaceEntries = workspaceEntriesQuery.data?.entries ?? EMPTY_PROJECT_ENTRIES;
+  const discoveredSkills = skillSearchResultQuery.data?.skills ?? EMPTY_SKILLS;
+  const snippets = snippetListQuery.data?.snippets ?? EMPTY_SNIPPETS;
+  useEffect(() => {
+    const api = readNativeApi();
+    if (!api) {
+      return;
+    }
+    return api.snippets.onUpdated(() => {
+      void queryClient.invalidateQueries({ queryKey: snippetQueryKeys.all });
+    });
+  }, [queryClient]);
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
@@ -1322,14 +1482,59 @@ export default function ChatView({ threadId }: ChatViewProps) {
           label: "/default",
           description: "Switch this thread back to normal chat mode",
         },
+        {
+          id: "slash:delete",
+          type: "slash-command",
+          command: "delete",
+          label: "/delete",
+          description: "Delete this thread",
+        },
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
-      const query = composerTrigger.query.trim().toLowerCase();
-      if (!query) {
-        return [...slashCommandItems];
-      }
-      return slashCommandItems.filter(
-        (item) => item.command.includes(query) || item.label.slice(1).includes(query),
+      const slashCommandItemsByCommand = new Map(
+        slashCommandItems.map((item) => [item.command, item] as const),
       );
+      return getMatchingComposerSlashCommands(composerTrigger.query)
+        .map((command) => slashCommandItemsByCommand.get(command))
+        .filter((item) => item !== undefined);
+    }
+
+    if (composerTrigger.kind === "skill") {
+      return discoveredSkills.map((skill) => ({
+        id: `skill:${skill.source}:${skill.name}:${skill.skillPath}`,
+        type: "skill",
+        name: skill.name,
+        source: skill.source,
+        label: `$${skill.name}`,
+        description:
+          [
+            skill.source === "workspace"
+              ? "Workspace"
+              : skill.source === "extra-root"
+                ? "Extra root"
+                : "Codex home",
+            skill.description,
+          ]
+            .filter(Boolean)
+            .join(" · ") || "Skill",
+      }));
+    }
+
+    if (composerTrigger.kind === "snippet") {
+      const query = composerTrigger.query.trim().toLowerCase();
+      return snippets
+        .filter((snippet) => snippet.text.toLowerCase().includes(query))
+        .map((snippet) => ({
+          id: `snippet:${snippet.id}`,
+          type: "snippet" as const,
+          snippet,
+          label: summarizeSnippetLabel(snippet.text),
+          description: new Date(snippet.updatedAt).toLocaleString([], {
+            month: "short",
+            day: "numeric",
+            hour: "numeric",
+            minute: "2-digit",
+          }),
+        }));
     }
 
     return searchableModelOptions
@@ -1348,7 +1553,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         label: name,
         description: `${providerLabel} · ${slug}`,
       }));
-  }, [composerTrigger, searchableModelOptions, workspaceEntries]);
+  }, [composerTrigger, discoveredSkills, searchableModelOptions, snippets, workspaceEntries]);
   const composerMenuOpen = Boolean(composerTrigger);
   const activeComposerMenuItem = useMemo(
     () =>
@@ -1368,6 +1573,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
     () => providerStatuses.find((status) => status.provider === selectedProvider) ?? null,
     [selectedProvider, providerStatuses],
   );
+  const hasActiveCodexAuthFailure =
+    selectedProvider === "codex" &&
+    isCodexAuthErrorMessage(activeThread?.session?.lastError ?? null);
+  const isProviderBlockedForSend =
+    activeProviderStatus?.status === "error" || hasActiveCodexAuthFailure;
   const activeProjectCwd = activeProject?.cwd ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const threadTerminalRuntimeEnv = useMemo(() => {
@@ -1469,6 +1679,158 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const focusComposer = useCallback(() => {
     composerEditorRef.current?.focusAtEnd();
   }, []);
+  const focusThreadSearchInput = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      threadSearchInputRef.current?.focus();
+      threadSearchInputRef.current?.select();
+    });
+  }, []);
+  const closeThreadSearch = useCallback(() => {
+    setIsThreadSearchOpen(false);
+    setThreadSearchQuery("");
+    setActiveThreadSearchMatchIndex(0);
+    pendingThreadSearchRestoreRef.current = null;
+  }, []);
+  const openThreadSearch = useCallback(
+    (query?: string) => {
+      setIsThreadSearchOpen(true);
+      if (typeof query === "string") {
+        setThreadSearchQuery(query);
+      }
+      focusThreadSearchInput();
+    },
+    [focusThreadSearchInput],
+  );
+  const selectNextThreadSearchMatch = useCallback(() => {
+    if (threadSearchMatches.length === 0) {
+      return;
+    }
+    setActiveThreadSearchMatchIndex((current) => (current + 1) % threadSearchMatches.length);
+  }, [threadSearchMatches.length]);
+  const selectPreviousThreadSearchMatch = useCallback(() => {
+    if (threadSearchMatches.length === 0) {
+      return;
+    }
+    setActiveThreadSearchMatchIndex(
+      (current) => (current - 1 + threadSearchMatches.length) % threadSearchMatches.length,
+    );
+  }, [threadSearchMatches.length]);
+  const onThreadSearchInputKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeThreadSearch();
+        focusComposer();
+        return;
+      }
+      if (event.key !== "Enter") {
+        return;
+      }
+      event.preventDefault();
+      if (event.shiftKey) {
+        selectPreviousThreadSearchMatch();
+        return;
+      }
+      selectNextThreadSearchMatch();
+    },
+    [
+      closeThreadSearch,
+      focusComposer,
+      selectNextThreadSearchMatch,
+      selectPreviousThreadSearchMatch,
+    ],
+  );
+  useEffect(() => {
+    setActiveThreadSearchMatchIndex(0);
+  }, [deferredThreadSearchQuery]);
+  useEffect(() => {
+    if (threadSearchMatches.length === 0) {
+      setActiveThreadSearchMatchIndex(0);
+      return;
+    }
+    setActiveThreadSearchMatchIndex((current) =>
+      Math.min(current, Math.max(threadSearchMatches.length - 1, 0)),
+    );
+  }, [threadSearchMatches.length]);
+  useEffect(() => {
+    if (!pendingThreadSearchRestoreRef.current) {
+      return;
+    }
+    const target = pendingThreadSearchRestoreRef.current;
+    const nextIndex = threadSearchMatches.findIndex(
+      (match) =>
+        match.sourceKind === target.sourceKind &&
+        match.sourceId === target.sourceId &&
+        match.occurrenceIndexInSource === target.occurrenceIndexInSource,
+    );
+    pendingThreadSearchRestoreRef.current = null;
+    if (nextIndex >= 0) {
+      setActiveThreadSearchMatchIndex(nextIndex);
+    }
+  }, [threadSearchMatches]);
+  useEffect(() => {
+    if (!titleSearchHighlighted) {
+      return;
+    }
+    const timeout = window.setTimeout(() => {
+      setTitleSearchHighlighted(false);
+      setTitleSearchHighlightQuery(null);
+    }, 2200);
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [titleSearchHighlighted]);
+  useEffect(() => {
+    if (!isThreadSearchOpen || !activeThreadSearchMatch) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      const activeMatchSelector =
+        activeThreadSearchMatch.sourceKind === "message"
+          ? `[data-thread-search-source-id="${activeThreadSearchMatch.sourceId}"] [data-thread-search-occurrence-index="${String(activeThreadSearchMatch.occurrenceIndexInSource)}"]`
+          : `[data-thread-search-source-id="${activeThreadSearchMatch.sourceId}"]`;
+      const activeElement =
+        document.querySelector<HTMLElement>(activeMatchSelector) ??
+        document.querySelector<HTMLElement>(
+          `[data-thread-search-source-id="${activeThreadSearchMatch.sourceId}"]`,
+        );
+      activeElement?.scrollIntoView({
+        block: "center",
+        behavior: "smooth",
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [activeThreadSearchMatch, isThreadSearchOpen]);
+  useEffect(() => {
+    closeThreadSearch();
+    setTitleSearchHighlighted(false);
+    setTitleSearchHighlightQuery(null);
+  }, [closeThreadSearch, threadId]);
+  useEffect(() => {
+    const pendingNavigation = useThreadSearchNavigationStore
+      .getState()
+      .consumePendingNavigation(threadId);
+    if (!pendingNavigation) {
+      return;
+    }
+
+    if (pendingNavigation.kind === "content-match") {
+      pendingThreadSearchRestoreRef.current = {
+        sourceKind: pendingNavigation.sourceKind,
+        sourceId: pendingNavigation.sourceId,
+        occurrenceIndexInSource: pendingNavigation.occurrenceIndexInSource,
+      };
+      openThreadSearch(pendingNavigation.query);
+      return;
+    }
+
+    setTitleSearchHighlightQuery(pendingNavigation.query);
+    setTitleSearchHighlighted(true);
+  }, [openThreadSearch, pendingThreadSearchNavigation, threadId]);
   const scheduleComposerFocus = useCallback(() => {
     window.requestAnimationFrame(() => {
       focusComposer();
@@ -1883,6 +2245,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const toggleInteractionMode = useCallback(() => {
     handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
   }, [handleInteractionModeChange, interactionMode]);
+  const handleDeleteSlashCommand = useCallback(async () => {
+    if (!serverThread) {
+      toastManager.add({
+        type: "warning",
+        title: "Only saved threads can be deleted",
+        description: "Create the thread first, then run /delete.",
+      });
+      return;
+    }
+    await confirmAndDeleteThread(serverThread.id);
+  }, [confirmAndDeleteThread, serverThread]);
   const toggleRuntimeMode = useCallback(() => {
     void handleRuntimeModeChange(
       runtimeMode === "full-access" ? "approval-required" : "full-access",
@@ -2407,14 +2780,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
       : "local";
 
   useEffect(() => {
-    if (phase !== "running") return;
+    if (!isWorking) return;
     const timer = window.setInterval(() => {
       setNowTick(Date.now());
     }, 1000);
     return () => {
       window.clearInterval(timer);
     };
-  }, [phase]);
+  }, [isWorking]);
 
   useEffect(() => {
     if (!activeThreadId) return;
@@ -2493,6 +2866,24 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return;
       }
 
+      if (command === "thread.search") {
+        event.preventDefault();
+        event.stopPropagation();
+        openThreadSearch();
+        return;
+      }
+
+      if (command === "snippets.open") {
+        if (pullRequestDialogState || expandedImage) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        setIsSnippetPickerOpen(true);
+        setSnippetPickerFocusRequestId((current) => current + 1);
+        return;
+      }
+
       const scriptId = projectScriptIdFromCommand(command);
       if (!scriptId || !activeProject) return;
       const script = activeProject.scripts.find((entry) => entry.id === scriptId);
@@ -2514,9 +2905,63 @@ export default function ChatView({ threadId }: ChatViewProps) {
     runProjectScript,
     splitTerminal,
     keybindings,
+    openThreadSearch,
     onToggleDiff,
+    pullRequestDialogState,
+    expandedImage,
     toggleTerminalVisibility,
   ]);
+
+  const saveQueuedTurnAsSnippet = useCallback(
+    async (queuedTurnId: string) => {
+      const api = readNativeApi();
+      if (!api) {
+        return;
+      }
+      const queuedTurn = queuedTurns.find((entry) => entry.id === queuedTurnId);
+      if (!queuedTurn || queuedTurn.text.trim().length === 0) {
+        return;
+      }
+      try {
+        const result = await api.snippets.create({ text: queuedTurn.text });
+        await queryClient.invalidateQueries({ queryKey: snippetQueryKeys.all });
+        toastManager.add({
+          type: "success",
+          title: result.deduped ? "Already in snippets" : "Saved to snippets",
+        });
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Failed to save snippet",
+          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+        });
+      }
+    },
+    [queryClient, queuedTurns],
+  );
+
+  const deleteSnippet = useCallback(
+    async (snippet: Snippet) => {
+      const api = readNativeApi();
+      if (!api) {
+        return;
+      }
+      setDeletingSnippetId(snippet.id);
+      try {
+        await api.snippets.delete({ snippetId: snippet.id });
+        await queryClient.invalidateQueries({ queryKey: snippetQueryKeys.all });
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Failed to delete snippet",
+          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+        });
+      } finally {
+        setDeletingSnippetId((current) => (current === snippet.id ? null : current));
+      }
+    },
+    [queryClient],
+  );
 
   const addComposerImages = (files: File[]) => {
     if (!activeThreadId || files.length === 0) return;
@@ -2676,6 +3121,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       sendableComposerTerminalContexts: TerminalContextDraft[];
       expiredTerminalContextCount: number;
       interactionMode: ProviderInteractionMode;
+      prepend?: boolean;
     }) => {
       if (!activeThread || !isServerThread) {
         return false;
@@ -2720,6 +3166,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
         createdAt,
         updatedAt: createdAt,
       });
+      if (input.prepend) {
+        moveQueuedTurn(threadId, queuedTurnId, 0);
+      }
 
       if (input.expiredTerminalContextCount > 0) {
         const toastCopy = buildExpiredTerminalContextToastCopy(
@@ -2747,6 +3196,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       composerImages,
       enqueueQueuedTurn,
       isServerThread,
+      moveQueuedTurn,
       runtimeMode,
       selectedModel,
       selectedModelSelection,
@@ -2913,7 +3363,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     threadId,
   ]);
 
-  const onSend = async (e?: { preventDefault: () => void }) => {
+  const onSend = async (
+    e?: { preventDefault: () => void },
+    disposition: ComposerSubmissionDisposition = "default",
+  ) => {
     e?.preventDefault();
     const api = readNativeApi();
     if (!api || !activeThread) return;
@@ -2937,6 +3390,28 @@ export default function ChatView({ threadId }: ChatViewProps) {
         draftText: trimmed,
         planMarkdown: activeProposedPlan.planMarkdown,
       });
+      if (phase === "running") {
+        if (disposition === "steer") {
+          promptRef.current = "";
+          clearComposerDraftContent(activeThread.id);
+          setComposerHighlightedItemId(null);
+          setComposerCursor(0);
+          setComposerTrigger(null);
+          await onSubmitPlanFollowUp({
+            text: followUp.text,
+            interactionMode: followUp.interactionMode,
+          });
+          return;
+        }
+        await enqueueCurrentComposerTurn({
+          promptForSend: followUp.text,
+          sendableComposerTerminalContexts: [],
+          expiredTerminalContextCount: 0,
+          interactionMode: followUp.interactionMode,
+          prepend: disposition === "queue-front",
+        });
+        return;
+      }
       promptRef.current = "";
       clearComposerDraftContent(activeThread.id);
       setComposerHighlightedItemId(null);
@@ -2953,7 +3428,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
     if (standaloneSlashCommand) {
-      handleInteractionModeChange(standaloneSlashCommand);
+      if (standaloneSlashCommand === "delete") {
+        await handleDeleteSlashCommand();
+      } else {
+        handleInteractionModeChange(standaloneSlashCommand);
+      }
       promptRef.current = "";
       clearComposerDraftContent(activeThread.id);
       setComposerHighlightedItemId(null);
@@ -2975,13 +3454,29 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       return;
     }
-    if (isServerThread && threadHasStarted(activeThread) && !queuedTurnDispatchGate.canDispatch) {
+    const shouldSteerImmediately = disposition === "steer" && phase === "running";
+    if (
+      isServerThread &&
+      threadHasStarted(activeThread) &&
+      !queuedTurnDispatchGate.canDispatch &&
+      !shouldSteerImmediately
+    ) {
       await enqueueCurrentComposerTurn({
         promptForSend,
         sendableComposerTerminalContexts,
         expiredTerminalContextCount,
         interactionMode,
+        prepend: disposition === "queue-front",
       });
+      return;
+    }
+    if (isProviderBlockedForSend) {
+      setStoreThreadError(
+        activeThread.id,
+        activeProviderStatus?.message ??
+          activeThread.session?.lastError ??
+          `${selectedProvider} is unavailable right now.`,
+      );
       return;
     }
     if (isSendBusy || isConnecting || sendInFlightRef.current) return;
@@ -3733,6 +4228,31 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [isLocalDraftThread, scheduleComposerFocus, setDraftThreadContext, threadId],
   );
+  const canToggleComposerEnvMode =
+    isLocalDraftThread && !envLocked && !activeWorktreePath && !isComposerApprovalState;
+
+  useEffect(() => {
+    const handleComposerEnvModeShortcut = (event: globalThis.KeyboardEvent) => {
+      if (event.defaultPrevented || !canToggleComposerEnvMode) {
+        return;
+      }
+      if (!isComposerTextboxFocused(event.target)) {
+        return;
+      }
+
+      const usesMod = isMacPlatform(navigator.platform) ? event.metaKey : event.ctrlKey;
+      if (event.key.toLowerCase() !== "w" || !usesMod || !event.shiftKey || event.altKey) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      onEnvModeChange(envMode === "local" ? "worktree" : "local");
+    };
+
+    window.addEventListener("keydown", handleComposerEnvModeShortcut);
+    return () => window.removeEventListener("keydown", handleComposerEnvModeShortcut);
+  }, [canToggleComposerEnvMode, envMode, onEnvModeChange]);
 
   const applyPromptReplacement = useCallback(
     (
@@ -3809,6 +4329,32 @@ export default function ChatView({ threadId }: ChatViewProps) {
     };
   }, [readComposerSnapshot]);
 
+  const insertSnippetIntoComposer = useCallback(
+    (snippetText: string): boolean => {
+      if (isConnecting || isComposerApprovalState) {
+        toastManager.add({
+          type: "warning",
+          title: "Snippets are unavailable right now.",
+        });
+        return false;
+      }
+
+      const { snapshot, trigger } = resolveActiveComposerTrigger();
+      const activeSnippetTrigger = trigger?.kind === "snippet" ? trigger : null;
+      return applyPromptReplacement(
+        activeSnippetTrigger ? activeSnippetTrigger.rangeStart : snapshot.expandedCursor,
+        activeSnippetTrigger ? activeSnippetTrigger.rangeEnd : snapshot.expandedCursor,
+        snippetText,
+        {
+          expectedText: activeSnippetTrigger
+            ? snapshot.value.slice(activeSnippetTrigger.rangeStart, activeSnippetTrigger.rangeEnd)
+            : "",
+        },
+      );
+    },
+    [applyPromptReplacement, isComposerApprovalState, isConnecting, resolveActiveComposerTrigger],
+  );
+
   const onSelectComposerItem = useCallback(
     (item: ComposerCommandItem) => {
       if (composerSelectLockRef.current) return;
@@ -3836,6 +4382,30 @@ export default function ChatView({ threadId }: ChatViewProps) {
         }
         return;
       }
+      if (item.type === "skill") {
+        const applied = applyPromptReplacement(
+          trigger.rangeStart,
+          trigger.rangeEnd,
+          `$${item.name} `,
+          { expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd) },
+        );
+        if (applied) {
+          setComposerHighlightedItemId(null);
+        }
+        return;
+      }
+      if (item.type === "snippet") {
+        const applied = applyPromptReplacement(
+          trigger.rangeStart,
+          trigger.rangeEnd,
+          item.snippet.text,
+          { expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd) },
+        );
+        if (applied) {
+          setComposerHighlightedItemId(null);
+        }
+        return;
+      }
       if (item.type === "slash-command") {
         if (item.command === "model") {
           const replacement = "/model ";
@@ -3850,6 +4420,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
             replacement,
             { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
           );
+          if (applied) {
+            setComposerHighlightedItemId(null);
+          }
+          return;
+        }
+        if (item.command === "delete") {
+          void handleDeleteSlashCommand();
+          const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+            expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+          });
           if (applied) {
             setComposerHighlightedItemId(null);
           }
@@ -3874,6 +4454,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [
       applyPromptReplacement,
+      handleDeleteSlashCommand,
       handleInteractionModeChange,
       onProviderModelSelect,
       resolveActiveComposerTrigger,
@@ -3901,10 +4482,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [composerHighlightedItemId, composerMenuItems],
   );
   const isComposerMenuLoading =
-    composerTriggerKind === "path" &&
-    ((pathTriggerQuery.length > 0 && composerPathQueryDebouncer.state.isPending) ||
-      workspaceEntriesQuery.isLoading ||
-      workspaceEntriesQuery.isFetching);
+    (composerTriggerKind === "path" &&
+      ((pathTriggerQuery.length > 0 && composerPathQueryDebouncer.state.isPending) ||
+        workspaceEntriesQuery.isLoading ||
+        workspaceEntriesQuery.isFetching)) ||
+    (composerTriggerKind === "skill" &&
+      ((skillTriggerQuery.length > 0 && composerSkillQueryDebouncer.state.isPending) ||
+        skillSearchResultQuery.isLoading ||
+        skillSearchResultQuery.isFetching)) ||
+    (composerTriggerKind === "snippet" &&
+      (snippetListQuery.isLoading || snippetListQuery.isFetching));
 
   const onPromptChange = useCallback(
     (
@@ -3952,8 +4539,34 @@ export default function ChatView({ threadId }: ChatViewProps) {
     key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
     event: KeyboardEvent,
   ) => {
+    const steerModifierPressed = isMacPlatform(navigator.platform) ? event.metaKey : event.ctrlKey;
+
     if (key === "Tab" && event.shiftKey) {
       toggleInteractionMode();
+      return true;
+    }
+
+    if (
+      key === "Enter" &&
+      phase === "running" &&
+      composerHasContent &&
+      !event.shiftKey &&
+      !event.altKey &&
+      steerModifierPressed
+    ) {
+      void onSend(undefined, "steer");
+      return true;
+    }
+
+    if (
+      key === "Enter" &&
+      (phase === "running" || isPreparingWorktree) &&
+      composerHasContent &&
+      event.shiftKey &&
+      !event.altKey &&
+      steerModifierPressed
+    ) {
+      void onSend(undefined, "queue-front");
       return true;
     }
 
@@ -4071,6 +4684,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
           diffToggleShortcutLabel={diffPanelShortcutLabel}
           gitCwd={gitCwd}
           diffOpen={diffOpen}
+          titleSearchQuery={titleSearchHighlightQuery}
+          titleSearchHighlighted={titleSearchHighlighted}
           onRunProjectScript={(script) => {
             void runProjectScript(script);
           }}
@@ -4080,6 +4695,22 @@ export default function ChatView({ threadId }: ChatViewProps) {
           onToggleTerminal={toggleTerminalVisibility}
           onToggleDiff={onToggleDiff}
         />
+        {isThreadSearchOpen && (
+          <ThreadSearchBar
+            inputRef={threadSearchInputRef}
+            query={threadSearchQuery}
+            activeMatchIndex={activeThreadSearchMatch ? activeThreadSearchMatchIndex : 0}
+            totalMatches={threadSearchMatches.length}
+            onQueryChange={setThreadSearchQuery}
+            onPrevious={selectPreviousThreadSearchMatch}
+            onNext={selectNextThreadSearchMatch}
+            onClose={() => {
+              closeThreadSearch();
+              focusComposer();
+            }}
+            onKeyDown={onThreadSearchInputKeyDown}
+          />
+        )}
       </header>
 
       {/* Error banner */}
@@ -4132,6 +4763,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 resolvedTheme={resolvedTheme}
                 timestampFormat={timestampFormat}
                 workspaceRoot={activeProject?.cwd ?? undefined}
+                threadSearchQuery={deferredThreadSearchQuery}
+                threadSearchOccurrencesBySourceId={threadSearchOccurrencesBySourceId}
+                activeThreadSearchSourceId={activeThreadSearchMatch?.sourceId ?? null}
+                activeThreadSearchOccurrenceIndex={
+                  activeThreadSearchMatch?.occurrenceIndexInSource ?? null
+                }
               />
             </div>
 
@@ -4161,7 +4798,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             <form
               ref={composerFormRef}
               onSubmit={onSend}
-              className="mx-auto w-full min-w-0 max-w-[52rem]"
+              className="w-full min-w-0"
               data-chat-composer-form="true"
             >
               <QueuedFollowUpsPanel
@@ -4176,6 +4813,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 onResume={() => resumeThreadQueue(threadId, new Date().toISOString())}
                 onDelete={(queuedTurnId) => removeQueuedTurn(threadId, queuedTurnId)}
                 onClearAll={() => clearThreadQueue(threadId)}
+                onSaveAsSnippet={(queuedTurnId) => {
+                  void saveQueuedTurnAsSnippet(queuedTurnId);
+                }}
                 onSaveEdit={(queuedTurnId, text) => {
                   const queuedTurn = queuedTurns.find((entry) => entry.id === queuedTurnId);
                   if (!queuedTurn) {
@@ -4584,9 +5224,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
                           isSendBusy={isSendBusy}
                           isConnecting={isConnecting}
                           isPreparingWorktree={isPreparingWorktree}
-                          hasSendableContent={composerSendState.hasSendableContent}
+                          hasSendableContent={composerHasContent}
                           onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                           onInterrupt={() => void onInterrupt()}
+                          onSteer={() => void onSend(undefined, "steer")}
+                          onQueue={() => void onSend(undefined, "queue")}
                           onImplementPlanInNewThread={() => void onImplementPlanInNewThread()}
                         />
                       </div>
@@ -4602,6 +5244,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
               threadId={activeThread.id}
               onEnvModeChange={onEnvModeChange}
               envLocked={envLocked}
+              branchSelectorFocusRequestId={branchSelectorFocusRequestId}
               onComposerFocusRequest={scheduleComposerFocus}
               {...(canCheckoutPullRequestIntoThread
                 ? { onCheckoutPullRequestRequest: openPullRequestDialog }
@@ -4622,6 +5265,26 @@ export default function ChatView({ threadId }: ChatViewProps) {
               onPrepared={handlePreparedPullRequestThread}
             />
           ) : null}
+          <SnippetPickerDialog
+            open={isSnippetPickerOpen}
+            snippets={snippets}
+            focusRequestId={snippetPickerFocusRequestId}
+            deletingSnippetId={deletingSnippetId}
+            onOpenChange={(open) => {
+              setIsSnippetPickerOpen(open);
+              if (!open) {
+                focusComposer();
+              }
+            }}
+            onSelectSnippet={(snippet) => {
+              if (insertSnippetIntoComposer(snippet.text)) {
+                setIsSnippetPickerOpen(false);
+              }
+            }}
+            onDeleteSnippet={(snippet) => {
+              void deleteSnippet(snippet);
+            }}
+          />
         </div>
         {/* end chat column */}
 

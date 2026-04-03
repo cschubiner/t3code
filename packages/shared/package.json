@@ -43,6 +43,14 @@
     "./String": {
       "types": "./src/String.ts",
       "import": "./src/String.ts"
+    },
+    "./fuzzySearch": {
+      "types": "./src/fuzzySearch.ts",
+      "import": "./src/fuzzySearch.ts"
+    },
+    "./providerAuth": {
+      "types": "./src/providerAuth.ts",
+      "import": "./src/providerAuth.ts"
     }
   },
   "scripts": {

@@ -127,13 +127,22 @@ function ComboboxInput({
   );
 }
 
-function ComboboxTrigger({ className, children, ...props }: ComboboxPrimitive.Trigger.Props) {
-  return (
-    <ComboboxPrimitive.Trigger className={className} data-slot="combobox-trigger" {...props}>
-      {children}
-    </ComboboxPrimitive.Trigger>
-  );
-}
+const ComboboxTrigger = React.forwardRef<HTMLButtonElement, ComboboxPrimitive.Trigger.Props>(
+  ({ className, children, ...props }, ref) => {
+    return (
+      <ComboboxPrimitive.Trigger
+        ref={ref}
+        className={className}
+        data-slot="combobox-trigger"
+        {...props}
+      >
+        {children}
+      </ComboboxPrimitive.Trigger>
+    );
+  },
+);
+
+ComboboxTrigger.displayName = "ComboboxTrigger";
 
 function ComboboxPopup({
   className,

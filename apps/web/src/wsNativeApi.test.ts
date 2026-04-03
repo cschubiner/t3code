@@ -3,6 +3,8 @@ import {
   DEFAULT_SERVER_SETTINGS,
   type DesktopBridge,
   EventId,
+  SnippetId,
+  type SnippetLibraryUpdatedPayload,
   ProjectId,
   type OrchestrationEvent,
   type ServerConfig,
@@ -31,6 +33,7 @@ function registerListener<T>(listeners: Set<(event: T) => void>, listener: (even
 
 const terminalEventListeners = new Set<(event: TerminalEvent) => void>();
 const orchestrationEventListeners = new Set<(event: OrchestrationEvent) => void>();
+const snippetUpdatedListeners = new Set<(event: SnippetLibraryUpdatedPayload) => void>();
 
 const rpcClientMock = {
   dispose: vi.fn(),
@@ -48,6 +51,22 @@ const rpcClientMock = {
   projects: {
     searchEntries: vi.fn(),
     writeFile: vi.fn(),
+  },
+  skills: {
+    search: vi.fn(),
+  },
+  snippets: {
+    list: vi.fn(),
+    create: vi.fn(),
+    delete: vi.fn(),
+    onUpdated: vi.fn((listener: (event: SnippetLibraryUpdatedPayload) => void) =>
+      registerListener(snippetUpdatedListeners, listener),
+    ),
+  },
+  codexImport: {
+    listSessions: vi.fn(),
+    peekSession: vi.fn(),
+    importSessions: vi.fn(),
   },
   shell: {
     openInEditor: vi.fn(),
@@ -185,6 +204,7 @@ beforeEach(() => {
   showContextMenuFallbackMock.mockReset();
   terminalEventListeners.clear();
   orchestrationEventListeners.clear();
+  snippetUpdatedListeners.clear();
   Reflect.deleteProperty(getWindowForTest(), "desktopBridge");
 });
 
@@ -203,6 +223,161 @@ describe("wsNativeApi", () => {
     expect(rpcClientMock.server.getConfig).toHaveBeenCalledWith();
     expect(rpcClientMock.server.subscribeConfig).not.toHaveBeenCalled();
     expect(rpcClientMock.server.subscribeLifecycle).not.toHaveBeenCalled();
+  });
+
+  it("forwards skill search directly to the RPC client", async () => {
+    const searchResult = {
+      skills: [
+        {
+          name: "agent-browser",
+          description: "Browser automation skill",
+          skillPath: "/Users/test/.codex/skills/agent-browser/SKILL.md",
+          rootPath: "/Users/test/.codex/skills",
+          source: "codex-home" as const,
+        },
+      ],
+      truncated: false,
+    };
+    rpcClientMock.skills.search.mockResolvedValue(searchResult);
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+
+    await expect(
+      api.skills.search({
+        cwd: "/repo",
+        query: "agent",
+        limit: 40,
+        codexHomePath: "/Users/test/.codex",
+      }),
+    ).resolves.toEqual(searchResult);
+    expect(rpcClientMock.skills.search).toHaveBeenCalledWith({
+      cwd: "/repo",
+      query: "agent",
+      limit: 40,
+      codexHomePath: "/Users/test/.codex",
+    });
+  });
+
+  it("forwards snippet RPC and update subscriptions", async () => {
+    const listResult = {
+      snippets: [
+        {
+          id: SnippetId.makeUnsafe("snippet-1"),
+          text: "Saved snippet",
+          createdAt: "2026-03-16T12:00:00.000Z",
+          updatedAt: "2026-03-16T12:00:00.000Z",
+        },
+      ],
+    };
+    const createResult = {
+      snippet: listResult.snippets[0],
+      deduped: false,
+    };
+    rpcClientMock.snippets.list.mockResolvedValue(listResult);
+    rpcClientMock.snippets.create.mockResolvedValue(createResult);
+    rpcClientMock.snippets.delete.mockResolvedValue(undefined);
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    const onUpdated = vi.fn();
+    const unsubscribe = api.snippets.onUpdated(onUpdated);
+
+    await expect(api.snippets.list()).resolves.toEqual(listResult);
+    await expect(api.snippets.create({ text: "Saved snippet" })).resolves.toEqual(createResult);
+    await expect(
+      api.snippets.delete({ snippetId: SnippetId.makeUnsafe("snippet-1") }),
+    ).resolves.toBeUndefined();
+
+    emitEvent(snippetUpdatedListeners, {
+      kind: "upsert",
+      snippetId: SnippetId.makeUnsafe("snippet-1"),
+      updatedAt: "2026-03-16T12:00:00.000Z",
+    });
+    expect(onUpdated).toHaveBeenCalledWith({
+      kind: "upsert",
+      snippetId: SnippetId.makeUnsafe("snippet-1"),
+      updatedAt: "2026-03-16T12:00:00.000Z",
+    });
+
+    unsubscribe();
+  });
+
+  it("forwards codex import RPC directly to the RPC client", async () => {
+    const listResult = [
+      {
+        sessionId: "session-1",
+        title: "Imported session",
+        cwd: "/repo",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:10:00.000Z",
+        model: "gpt-5-codex",
+        kind: "direct" as const,
+        transcriptAvailable: true,
+        transcriptError: null,
+        alreadyImported: false,
+        importedThreadId: null,
+        lastUserMessage: "hello",
+        lastAssistantMessage: "hi",
+      },
+    ] as const;
+    const peekResult = {
+      sessionId: "session-1",
+      title: "Imported session",
+      cwd: "/repo",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:10:00.000Z",
+      model: "gpt-5-codex",
+      runtimeMode: "full-access" as const,
+      interactionMode: "default" as const,
+      kind: "direct" as const,
+      transcriptAvailable: true,
+      transcriptError: null,
+      alreadyImported: false,
+      importedThreadId: null,
+      messages: [],
+    };
+    const importResult = {
+      results: [
+        {
+          sessionId: "session-1",
+          status: "imported" as const,
+          threadId: ThreadId.makeUnsafe("thread-imported"),
+          projectId: ProjectId.makeUnsafe("project-imported"),
+          error: null,
+        },
+      ],
+    };
+
+    rpcClientMock.codexImport.listSessions.mockResolvedValue(listResult);
+    rpcClientMock.codexImport.peekSession.mockResolvedValue(peekResult);
+    rpcClientMock.codexImport.importSessions.mockResolvedValue(importResult);
+
+    const { createWsNativeApi } = await import("./wsNativeApi");
+    const api = createWsNativeApi();
+
+    await expect(
+      api.codexImport.listSessions({ kind: "direct", limit: 5, query: "import" }),
+    ).resolves.toEqual(listResult);
+    await expect(
+      api.codexImport.peekSession({ sessionId: "session-1", messageCount: 3 }),
+    ).resolves.toEqual(peekResult);
+    await expect(api.codexImport.importSessions({ sessionIds: ["session-1"] })).resolves.toEqual(
+      importResult,
+    );
+
+    expect(rpcClientMock.codexImport.listSessions).toHaveBeenCalledWith({
+      kind: "direct",
+      limit: 5,
+      query: "import",
+    });
+    expect(rpcClientMock.codexImport.peekSession).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      messageCount: 3,
+    });
+    expect(rpcClientMock.codexImport.importSessions).toHaveBeenCalledWith({
+      sessionIds: ["session-1"],
+    });
   });
 
   it("forwards terminal and orchestration stream events", async () => {

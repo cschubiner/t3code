@@ -27,11 +27,13 @@ import type { ServerConfigShape } from "./config.ts";
 import { deriveServerPaths, ServerConfig } from "./config.ts";
 import { makeRoutesLayer } from "./server.ts";
 import { resolveAttachmentRelativePath } from "./attachmentPaths.ts";
+import { CodexImport, type CodexImportShape } from "./codexImport/Services/CodexImport.ts";
 import {
   CheckpointDiffQuery,
   type CheckpointDiffQueryShape,
 } from "./checkpointing/Services/CheckpointDiffQuery.ts";
 import { GitCore, type GitCoreShape } from "./git/Services/GitCore.ts";
+import { GitHubCli, type GitHubCliShape } from "./git/Services/GitHubCli.ts";
 import { GitManager, type GitManagerShape } from "./git/Services/GitManager.ts";
 import { Keybindings, type KeybindingsShape } from "./keybindings.ts";
 import { Open, type OpenShape } from "./open.ts";
@@ -56,6 +58,8 @@ import { ProjectFaviconResolverLive } from "./project/Layers/ProjectFaviconResol
 import { WorkspaceEntriesLive } from "./workspace/Layers/WorkspaceEntries.ts";
 import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.ts";
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
+import { SnippetId } from "@t3tools/contracts";
+import { SnippetRepository, type SnippetRepositoryShape } from "./persistence/Services/Snippets.ts";
 
 const defaultProjectId = ProjectId.makeUnsafe("project-default");
 const defaultThreadId = ThreadId.makeUnsafe("thread-default");
@@ -124,6 +128,7 @@ const buildAppUnderTest = (options?: {
     serverSettings?: Partial<ServerSettingsShape>;
     open?: Partial<OpenShape>;
     gitCore?: Partial<GitCoreShape>;
+    githubCli?: Partial<GitHubCliShape>;
     gitManager?: Partial<GitManagerShape>;
     terminalManager?: Partial<TerminalManagerShape>;
     orchestrationEngine?: Partial<OrchestrationEngineShape>;
@@ -131,6 +136,8 @@ const buildAppUnderTest = (options?: {
     checkpointDiffQuery?: Partial<CheckpointDiffQueryShape>;
     serverLifecycleEvents?: Partial<ServerLifecycleEventsShape>;
     serverRuntimeStartup?: Partial<ServerRuntimeStartupShape>;
+    snippetRepository?: Partial<SnippetRepositoryShape>;
+    codexImport?: Partial<CodexImportShape>;
   };
 }) =>
   Effect.gen(function* () {
@@ -196,6 +203,31 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provide(
+        Layer.mock(GitHubCli)({
+          execute: () => Effect.die("Unexpected GitHub CLI execution in server test"),
+          listOpenPullRequests: () => Effect.succeed([]),
+          getPullRequest: (input) =>
+            Effect.succeed({
+              number: 1,
+              title: "Mock Pull Request",
+              url: input.reference,
+              baseRefName: "main",
+              headRefName: "mock-branch",
+              state: "open",
+            }),
+          getRepositoryCloneUrls: (input) =>
+            Effect.succeed({
+              nameWithOwner: input.repository,
+              url: `https://github.com/${input.repository}`,
+              sshUrl: `git@github.com:${input.repository}.git`,
+            }),
+          createPullRequest: () => Effect.void,
+          getDefaultBranch: () => Effect.succeed("main"),
+          checkoutPullRequest: () => Effect.void,
+          ...options?.layers?.githubCli,
+        }),
+      ),
+      Layer.provide(
         Layer.mock(GitManager)({
           ...options?.layers?.gitManager,
         }),
@@ -253,6 +285,47 @@ const buildAppUnderTest = (options?: {
           markHttpListening: Effect.void,
           enqueueCommand: (effect) => effect,
           ...options?.layers?.serverRuntimeStartup,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(CodexImport)({
+          listSessions: () => Effect.succeed([]),
+          peekSession: (input) =>
+            Effect.succeed({
+              sessionId: input.sessionId,
+              title: "Mock Codex Session",
+              cwd: null,
+              createdAt: null,
+              updatedAt: null,
+              model: null,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              kind: "direct",
+              transcriptAvailable: false,
+              transcriptError: null,
+              alreadyImported: false,
+              importedThreadId: null,
+              messages: [],
+            }),
+          importSessions: () => Effect.succeed({ results: [] }),
+          ...options?.layers?.codexImport,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(SnippetRepository)({
+          listAll: () => Effect.succeed([]),
+          upsertByExactText: ({ text, updatedAt }) =>
+            Effect.succeed({
+              snippet: {
+                id: SnippetId.makeUnsafe("snippet-default"),
+                text,
+                createdAt: updatedAt,
+                updatedAt,
+              },
+              deduped: false,
+            }),
+          deleteById: () => Effect.void,
+          ...options?.layers?.snippetRepository,
         }),
       ),
       Layer.provide(workspaceAndProjectServicesLayer),
@@ -683,6 +756,48 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.isAtLeast(response.entries.length, 1);
       assert.isTrue(response.entries.some((entry) => entry.path === "needle-file.ts"));
       assert.equal(response.truncated, false);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc skills.search", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-skills-search-" });
+      const codexHomeDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-skills-home-" });
+      const skillPath = path.join(workspaceDir, ".codex", "skills", "agent-browser", "SKILL.md");
+      yield* fs.makeDirectory(path.dirname(skillPath), { recursive: true });
+      yield* fs.writeFileString(
+        skillPath,
+        "---\nname: agent-browser\ndescription: Browser automation\n---\n# Agent Browser\n",
+      );
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.skillsSearch]({
+            cwd: workspaceDir,
+            query: "agent",
+            limit: 10,
+            codexHomePath: codexHomeDir,
+          }),
+        ),
+      );
+
+      assert.deepEqual(response, {
+        skills: [
+          {
+            name: "agent-browser",
+            description: "Browser automation",
+            skillPath,
+            rootPath: path.join(workspaceDir, ".codex", "skills"),
+            source: "workspace",
+          },
+        ],
+        truncated: false,
+      });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

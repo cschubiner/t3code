@@ -2,6 +2,15 @@ import { Schema } from "effect";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
+import {
+  CodexImportError,
+  CodexImportImportSessionsInput,
+  CodexImportImportSessionsResult,
+  CodexImportListSessionsInput,
+  CodexImportPeekSessionInput,
+  CodexImportPeekSessionResult,
+  CodexImportSessionSummary,
+} from "./codexImport";
 import { OpenError, OpenInEditorInput } from "./editor";
 import {
   GitActionProgressEvent,
@@ -49,6 +58,15 @@ import {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project";
+import { SkillSearchError, SkillSearchInput, SkillSearchResult } from "./skills";
+import {
+  SnippetCreateInput,
+  SnippetCreateResult,
+  SnippetDeleteInput,
+  SnippetLibraryError,
+  SnippetLibraryUpdatedPayload,
+  SnippetListResult,
+} from "./snippets";
 import {
   TerminalClearInput,
   TerminalCloseInput,
@@ -77,6 +95,13 @@ export const WS_METHODS = {
   projectsRemove: "projects.remove",
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
+  skillsSearch: "skills.search",
+  snippetsList: "snippets.list",
+  snippetsCreate: "snippets.create",
+  snippetsDelete: "snippets.delete",
+  codexImportListSessions: "codexImport.listSessions",
+  codexImportPeekSession: "codexImport.peekSession",
+  codexImportImportSessions: "codexImport.importSessions",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -114,6 +139,7 @@ export const WS_METHODS = {
   subscribeTerminalEvents: "subscribeTerminalEvents",
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
+  subscribeSnippetsUpdated: "subscribeSnippetsUpdated",
 } as const;
 
 export const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -155,6 +181,47 @@ export const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
   payload: ProjectWriteFileInput,
   success: ProjectWriteFileResult,
   error: ProjectWriteFileError,
+});
+
+export const WsSkillsSearchRpc = Rpc.make(WS_METHODS.skillsSearch, {
+  payload: SkillSearchInput,
+  success: SkillSearchResult,
+  error: SkillSearchError,
+});
+
+export const WsSnippetsListRpc = Rpc.make(WS_METHODS.snippetsList, {
+  payload: Schema.Struct({}),
+  success: SnippetListResult,
+  error: SnippetLibraryError,
+});
+
+export const WsSnippetsCreateRpc = Rpc.make(WS_METHODS.snippetsCreate, {
+  payload: SnippetCreateInput,
+  success: SnippetCreateResult,
+  error: SnippetLibraryError,
+});
+
+export const WsSnippetsDeleteRpc = Rpc.make(WS_METHODS.snippetsDelete, {
+  payload: SnippetDeleteInput,
+  error: SnippetLibraryError,
+});
+
+export const WsCodexImportListSessionsRpc = Rpc.make(WS_METHODS.codexImportListSessions, {
+  payload: CodexImportListSessionsInput,
+  success: Schema.Array(CodexImportSessionSummary),
+  error: CodexImportError,
+});
+
+export const WsCodexImportPeekSessionRpc = Rpc.make(WS_METHODS.codexImportPeekSession, {
+  payload: CodexImportPeekSessionInput,
+  success: CodexImportPeekSessionResult,
+  error: CodexImportError,
+});
+
+export const WsCodexImportImportSessionsRpc = Rpc.make(WS_METHODS.codexImportImportSessions, {
+  payload: CodexImportImportSessionsInput,
+  success: CodexImportImportSessionsResult,
+  error: CodexImportError,
 });
 
 export const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {
@@ -321,6 +388,12 @@ export const WsSubscribeServerLifecycleRpc = Rpc.make(WS_METHODS.subscribeServer
   stream: true,
 });
 
+export const WsSubscribeSnippetsUpdatedRpc = Rpc.make(WS_METHODS.subscribeSnippetsUpdated, {
+  payload: Schema.Struct({}),
+  success: SnippetLibraryUpdatedPayload,
+  stream: true,
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
@@ -329,6 +402,13 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerUpdateSettingsRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsWriteFileRpc,
+  WsSkillsSearchRpc,
+  WsSnippetsListRpc,
+  WsSnippetsCreateRpc,
+  WsSnippetsDeleteRpc,
+  WsCodexImportListSessionsRpc,
+  WsCodexImportPeekSessionRpc,
+  WsCodexImportImportSessionsRpc,
   WsShellOpenInEditorRpc,
   WsGitStatusRpc,
   WsGitPullRpc,
@@ -351,6 +431,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeTerminalEventsRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
+  WsSubscribeSnippetsUpdatedRpc,
   WsOrchestrationGetSnapshotRpc,
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetTurnDiffRpc,

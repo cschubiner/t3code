@@ -9,6 +9,7 @@ import {
 } from "./attachmentPaths";
 import { resolveAttachmentPathById } from "./attachmentStore";
 import { ServerConfig } from "./config";
+import { GitHubCli } from "./git/Services/GitHubCli";
 import { ProjectFaviconResolver } from "./project/Services/ProjectFaviconResolver";
 
 const PROJECT_FAVICON_CACHE_CONTROL = "public, max-age=3600";
@@ -105,6 +106,55 @@ export const projectFaviconRouteLayer = HttpRouter.add(
       Effect.catch(() =>
         Effect.succeed(HttpServerResponse.text("Internal Server Error", { status: 500 })),
       ),
+    );
+  }),
+);
+
+export const githubPullRequestStatusRouteLayer = HttpRouter.add(
+  "GET",
+  "/api/github-pr-status",
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const url = HttpServerRequest.toURL(request);
+    if (Option.isNone(url)) {
+      return HttpServerResponse.text("Bad Request", { status: 400 });
+    }
+
+    const cwd = url.value.searchParams.get("cwd")?.trim();
+    const reference = url.value.searchParams.get("url")?.trim();
+    if (!cwd || !reference) {
+      return HttpServerResponse.text(JSON.stringify({ state: null }), {
+        status: 400,
+        contentType: "application/json",
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+        },
+      });
+    }
+
+    const gitHubCli = yield* GitHubCli;
+    const pullRequest = yield* gitHubCli
+      .getPullRequest({
+        cwd,
+        reference,
+      })
+      .pipe(Effect.catch(() => Effect.succeed(null)));
+
+    return HttpServerResponse.text(
+      JSON.stringify({
+        state: pullRequest?.state ?? null,
+        number: pullRequest?.number ?? null,
+        title: pullRequest?.title ?? null,
+        url: pullRequest?.url ?? null,
+      }),
+      {
+        status: 200,
+        contentType: "application/json",
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+          "Cache-Control": "private, max-age=300",
+        },
+      },
     );
   }),
 );

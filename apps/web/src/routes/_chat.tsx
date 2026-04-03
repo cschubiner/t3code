@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { resolveShortcutCommand } from "../keybindings";
+import { useChatToolbarFocusStore } from "../chatToolbarFocusStore";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { resolveSidebarNewThreadEnvMode } from "~/components/Sidebar.logic";
@@ -13,6 +14,9 @@ import { useServerKeybindings } from "~/rpc/serverState";
 function ChatRouteGlobalShortcuts() {
   const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
   const selectedThreadIdsSize = useThreadSelectionStore((state) => state.selectedThreadIds.size);
+  const requestBranchSelectorFocus = useChatToolbarFocusStore(
+    (state) => state.requestBranchSelectorFocus,
+  );
   const { activeDraftThread, activeThread, defaultProjectId, handleNewThread, routeThreadId } =
     useHandleNewThread();
   const keybindings = useServerKeybindings();
@@ -54,17 +58,22 @@ function ChatRouteGlobalShortcuts() {
         return;
       }
 
-      if (command === "chat.new") {
+      if (command === "chat.branchSelector.focus") {
+        if (!routeThreadId) return;
         event.preventDefault();
         event.stopPropagation();
-        void handleNewThread(projectId, {
-          branch: activeThread?.branch ?? activeDraftThread?.branch ?? null,
-          worktreePath: activeThread?.worktreePath ?? activeDraftThread?.worktreePath ?? null,
-          envMode:
-            activeDraftThread?.envMode ?? (activeThread?.worktreePath ? "worktree" : "local"),
-        });
+        requestBranchSelectorFocus(routeThreadId);
         return;
       }
+
+      if (command !== "chat.new") return;
+      event.preventDefault();
+      event.stopPropagation();
+      void handleNewThread(projectId, {
+        branch: activeThread?.branch ?? activeDraftThread?.branch ?? null,
+        worktreePath: activeThread?.worktreePath ?? activeDraftThread?.worktreePath ?? null,
+        envMode: activeDraftThread?.envMode ?? (activeThread?.worktreePath ? "worktree" : "local"),
+      });
     };
 
     window.addEventListener("keydown", onWindowKeyDown);
@@ -77,6 +86,8 @@ function ChatRouteGlobalShortcuts() {
     clearSelection,
     handleNewThread,
     keybindings,
+    requestBranchSelectorFocus,
+    routeThreadId,
     defaultProjectId,
     selectedThreadIdsSize,
     terminalOpen,

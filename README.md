@@ -21,6 +21,9 @@ npx t3
 
 Install the latest version of the desktop app from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or from your favorite package registry:
 
+Maintaining a personal fork? See [docs/fork-workflow.md](./docs/fork-workflow.md).
+For this clone, all commit/push/PR work should target `cschubiner/t3code`, with PRs against `cschubiner/t3code` `main`.
+
 #### Windows (`winget`)
 
 ```bash

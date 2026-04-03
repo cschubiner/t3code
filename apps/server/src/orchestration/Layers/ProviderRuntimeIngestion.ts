@@ -34,6 +34,8 @@ const providerCommandId = (event: ProviderRuntimeEvent, tag: string): CommandId 
 
 const TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY = 10_000;
 const TURN_MESSAGE_IDS_BY_TURN_TTL = Duration.minutes(120);
+const COMPLETED_TURN_KEYS_CACHE_CAPACITY = 10_000;
+const COMPLETED_TURN_KEYS_TTL = Duration.hours(12);
 const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY = 20_000;
 const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL = Duration.minutes(120);
 const BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY = 10_000;
@@ -73,6 +75,17 @@ function sameId(left: string | null | undefined, right: string | null | undefine
 
 function truncateDetail(value: string, limit = 180): string {
   return value.length > limit ? `${value.slice(0, limit - 3)}...` : value;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 function normalizeProposedPlanMarkdown(planMarkdown: string | undefined): string | undefined {
@@ -156,6 +169,10 @@ function requestKindFromCanonicalRequestType(
     default:
       return undefined;
   }
+}
+
+function runtimeErrorClassFromEvent(event: ProviderRuntimeEvent): string | undefined {
+  return asString(asRecord(event.payload)?.class);
 }
 
 function runtimeEventToActivities(
@@ -524,6 +541,12 @@ const make = Effect.fn("make")(function* () {
     lookup: () => Effect.succeed({ text: "", createdAt: "" }),
   });
 
+  const completedTurnKeys = yield* Cache.make<string, true>({
+    capacity: COMPLETED_TURN_KEYS_CACHE_CAPACITY,
+    timeToLive: COMPLETED_TURN_KEYS_TTL,
+    lookup: () => Effect.succeed(true),
+  });
+
   const isGitRepoForThread = Effect.fnUntraced(function* (threadId: ThreadId) {
     const readModel = yield* orchestrationEngine.getReadModel();
     const thread = readModel.threads.find((entry) => entry.id === threadId);
@@ -879,6 +902,16 @@ const make = Effect.fn("make")(function* () {
     const now = event.createdAt;
     const eventTurnId = toTurnId(event.turnId);
     const activeTurnId = thread.session?.activeTurnId ?? null;
+    const completedTurnAlreadyObserved =
+      event.type === "turn.started" && eventTurnId !== undefined
+        ? Option.isSome(
+            yield* Cache.getOption(completedTurnKeys, providerTurnKey(thread.id, eventTurnId)),
+          )
+        : false;
+
+    if (event.type === "turn.completed" && eventTurnId !== undefined) {
+      yield* Cache.set(completedTurnKeys, providerTurnKey(thread.id, eventTurnId), true);
+    }
 
     const conflictsWithActiveTurn =
       activeTurnId !== null && eventTurnId !== undefined && !sameId(activeTurnId, eventTurnId);
@@ -895,7 +928,7 @@ const make = Effect.fn("make")(function* () {
         case "thread.started":
           return true;
         case "turn.started":
-          return !conflictsWithActiveTurn;
+          return !conflictsWithActiveTurn && !completedTurnAlreadyObserved;
         case "turn.completed":
           if (conflictsWithActiveTurn || missingTurnForActiveTurn) {
             return false;
@@ -1140,10 +1173,18 @@ const make = Effect.fn("make")(function* () {
 
     if (event.type === "runtime.error") {
       const runtimeErrorMessage = event.payload.message;
+      const fatalProviderRuntimeError = runtimeErrorClassFromEvent(event) === "provider_error";
+      const preservesActiveTurn =
+        !fatalProviderRuntimeError &&
+        activeTurnId !== null &&
+        (eventTurnId === undefined || sameId(activeTurnId, eventTurnId));
 
       const shouldApplyRuntimeError = !STRICT_PROVIDER_LIFECYCLE_GUARD
         ? true
-        : activeTurnId === null || eventTurnId === undefined || sameId(activeTurnId, eventTurnId);
+        : fatalProviderRuntimeError ||
+          activeTurnId === null ||
+          eventTurnId === undefined ||
+          sameId(activeTurnId, eventTurnId);
 
       if (shouldApplyRuntimeError) {
         yield* orchestrationEngine.dispatch({
@@ -1152,10 +1193,14 @@ const make = Effect.fn("make")(function* () {
           threadId: thread.id,
           session: {
             threadId: thread.id,
-            status: "error",
+            status: preservesActiveTurn ? "running" : "error",
             providerName: event.provider,
             runtimeMode: thread.session?.runtimeMode ?? "full-access",
-            activeTurnId: eventTurnId ?? null,
+            activeTurnId: preservesActiveTurn
+              ? activeTurnId
+              : fatalProviderRuntimeError
+                ? null
+                : (eventTurnId ?? null),
             lastError: runtimeErrorMessage,
             updatedAt: now,
           },

@@ -5,11 +5,12 @@ import {
   EventId,
   ORCHESTRATION_WS_METHODS,
   type MessageId,
-  type OrchestrationEvent,
   type OrchestrationReadModel,
   type ProjectId,
   type ServerConfig,
   type ServerLifecycleWelcomePayload,
+  type SnippetListResult,
+  SnippetId,
   type ThreadId,
   type TurnId,
   WS_METHODS,
@@ -24,6 +25,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { render } from "vitest-browser-react";
 
 import { useComposerDraftStore } from "../composerDraftStore";
+import { useQueuedTurnStore } from "../queuedTurnStore";
 import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   type TerminalContextDraft,
@@ -33,6 +35,7 @@ import { isMacPlatform } from "../lib/utils";
 import { __resetNativeApiForTests } from "../nativeApi";
 import { getRouter } from "../router";
 import { useStore } from "../store";
+import { useChatToolbarFocusStore } from "../chatToolbarFocusStore";
 import { BrowserWsRpcHarness, type NormalizedWsRpcRequestBody } from "../../test/wsRpcHarness";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
@@ -47,6 +50,7 @@ const ATTACHMENT_SVG = "<svg xmlns='http://www.w3.org/2000/svg' width='120' heig
 interface TestFixture {
   snapshot: OrchestrationReadModel;
   serverConfig: ServerConfig;
+  snippetListResult: SnippetListResult;
   welcome: ServerLifecycleWelcomePayload;
 }
 
@@ -112,6 +116,16 @@ interface MountedChatView {
   router: ReturnType<typeof getRouter>;
 }
 
+function modShiftShortcutModifiers(): Pick<KeyboardEventInit, "ctrlKey" | "metaKey" | "shiftKey"> {
+  return isMacPlatform(navigator.platform)
+    ? { metaKey: true, shiftKey: true }
+    : { ctrlKey: true, shiftKey: true };
+}
+
+function steerShortcutModifiers(): Pick<KeyboardEventInit, "ctrlKey" | "metaKey"> {
+  return isMacPlatform(navigator.platform) ? { metaKey: true } : { ctrlKey: true };
+}
+
 function isoAt(offsetSeconds: number): string {
   return new Date(BASE_TIME_MS + offsetSeconds * 1_000).toISOString();
 }
@@ -120,7 +134,23 @@ function createBaseServerConfig(): ServerConfig {
   return {
     cwd: "/repo/project",
     keybindingsConfigPath: "/repo/project/.t3code-keybindings.json",
-    keybindings: [],
+    keybindings: [
+      {
+        command: "snippets.open",
+        shortcut: {
+          key: "s",
+          metaKey: false,
+          ctrlKey: false,
+          shiftKey: true,
+          altKey: false,
+          modKey: true,
+        },
+        whenAst: {
+          type: "not",
+          node: { type: "identifier", name: "terminalFocus" },
+        },
+      },
+    ],
     issues: [],
     providers: [
       {
@@ -291,10 +321,42 @@ function createSnapshotForTargetUser(options: {
   };
 }
 
+function createRunningSnapshotForTargetUser(options: {
+  targetMessageId: MessageId;
+  targetText: string;
+}): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    ...options,
+    sessionStatus: "running",
+  });
+  const thread = snapshot.threads[0];
+  if (!thread?.session) {
+    return snapshot;
+  }
+  const session = thread.session;
+  const runningSession: typeof session = {
+    ...session,
+    status: "running",
+    activeTurnId: "turn-running" as TurnId,
+  };
+  const threads = [...snapshot.threads];
+  threads[0] = {
+    ...thread,
+    session: runningSession,
+  };
+  return {
+    ...snapshot,
+    threads,
+  };
+}
+
 function buildFixture(snapshot: OrchestrationReadModel): TestFixture {
   return {
     snapshot,
     serverConfig: createBaseServerConfig(),
+    snippetListResult: {
+      snippets: [],
+    },
     welcome: {
       cwd: "/repo/project",
       projectName: "Project",
@@ -346,67 +408,6 @@ function addThreadToSnapshot(
       },
     ],
   };
-}
-
-function createThreadCreatedEvent(threadId: ThreadId, sequence: number): OrchestrationEvent {
-  return {
-    sequence,
-    eventId: EventId.makeUnsafe(`event-thread-created-${sequence}`),
-    aggregateKind: "thread",
-    aggregateId: threadId,
-    occurredAt: NOW_ISO,
-    commandId: null,
-    causationEventId: null,
-    correlationId: null,
-    metadata: {},
-    type: "thread.created",
-    payload: {
-      threadId,
-      projectId: PROJECT_ID,
-      title: "New thread",
-      modelSelection: {
-        provider: "codex",
-        model: "gpt-5",
-      },
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      branch: "main",
-      worktreePath: null,
-      createdAt: NOW_ISO,
-      updatedAt: NOW_ISO,
-    },
-  };
-}
-
-function sendOrchestrationDomainEvent(event: OrchestrationEvent): void {
-  rpcHarness.emitStreamValue(WS_METHODS.subscribeOrchestrationDomainEvents, event);
-}
-
-async function waitForWsClient(): Promise<void> {
-  await vi.waitFor(
-    () => {
-      expect(
-        wsRequests.some(
-          (request) => request._tag === WS_METHODS.subscribeOrchestrationDomainEvents,
-        ),
-      ).toBe(true);
-    },
-    { timeout: 8_000, interval: 16 },
-  );
-}
-
-async function promoteDraftThreadViaDomainEvent(threadId: ThreadId): Promise<void> {
-  await waitForWsClient();
-  fixture.snapshot = addThreadToSnapshot(fixture.snapshot, threadId);
-  sendOrchestrationDomainEvent(
-    createThreadCreatedEvent(threadId, fixture.snapshot.snapshotSequence),
-  );
-  await vi.waitFor(
-    () => {
-      expect(useComposerDraftStore.getState().draftThreadsByThreadId[threadId]).toBeUndefined();
-    },
-    { timeout: 8_000, interval: 16 },
-  );
 }
 
 function createDraftOnlySnapshot(): OrchestrationReadModel {
@@ -663,6 +664,55 @@ function resolveWsRpc(body: NormalizedWsRpcRequestBody): unknown {
       truncated: false,
     };
   }
+  if (tag === WS_METHODS.snippetsList) {
+    return fixture.snippetListResult;
+  }
+  if (tag === WS_METHODS.snippetsCreate && typeof body.text === "string") {
+    const trimmedText = body.text.trim();
+    const existing =
+      fixture.snippetListResult.snippets.find((snippet) => snippet.text === trimmedText) ?? null;
+    const snippet = existing ?? {
+      id: SnippetId.makeUnsafe(`snippet-${fixture.snippetListResult.snippets.length + 1}`),
+      text: trimmedText,
+      createdAt: NOW_ISO,
+      updatedAt: NOW_ISO,
+    };
+    fixture = {
+      ...fixture,
+      snippetListResult: {
+        snippets: existing
+          ? fixture.snippetListResult.snippets.map((entry) =>
+              entry.id === existing.id ? { ...entry, updatedAt: NOW_ISO } : entry,
+            )
+          : [{ ...snippet }, ...fixture.snippetListResult.snippets],
+      },
+    };
+    rpcHarness.emitStreamValue(WS_METHODS.subscribeSnippetsUpdated, {
+      kind: "upsert",
+      snippetId: snippet.id,
+      updatedAt: NOW_ISO,
+    });
+    return {
+      snippet: existing ? { ...existing, updatedAt: NOW_ISO } : snippet,
+      deduped: existing !== null,
+    };
+  }
+  if (tag === WS_METHODS.snippetsDelete && typeof body.snippetId === "string") {
+    fixture = {
+      ...fixture,
+      snippetListResult: {
+        snippets: fixture.snippetListResult.snippets.filter(
+          (snippet) => snippet.id !== body.snippetId,
+        ),
+      },
+    };
+    rpcHarness.emitStreamValue(WS_METHODS.subscribeSnippetsUpdated, {
+      kind: "delete",
+      snippetId: body.snippetId,
+      updatedAt: NOW_ISO,
+    });
+    return null;
+  }
   if (tag === WS_METHODS.shellOpenInEditor) {
     return null;
   }
@@ -805,6 +855,15 @@ async function waitForButtonByText(text: string): Promise<HTMLButtonElement> {
   return waitForElement(() => findButtonByText(text), `Unable to find "${text}" button.`);
 }
 
+function listDispatchCommandsByType(type: string): Array<{ _tag: string; [key: string]: unknown }> {
+  return wsRequests.filter((request) => {
+    if (request._tag !== ORCHESTRATION_WS_METHODS.dispatchCommand) {
+      return false;
+    }
+    return request.type === type;
+  }) as Array<{ _tag: string; [key: string]: unknown }>;
+}
+
 function findButtonContainingText(text: string): HTMLButtonElement | null {
   return (Array.from(document.querySelectorAll("button")).find((button) =>
     button.textContent?.includes(text),
@@ -883,6 +942,18 @@ function dispatchChatNewShortcut(): void {
       cancelable: true,
     }),
   );
+}
+
+async function triggerBranchSelectorFocusUntilOpen(errorMessage: string): Promise<void> {
+  const deadline = Date.now() + 8_000;
+  while (Date.now() < deadline) {
+    useChatToolbarFocusStore.getState().requestBranchSelectorFocus(THREAD_ID);
+    await waitForLayout();
+    if (document.querySelector('input[placeholder="Search branches..."]')) {
+      return;
+    }
+  }
+  throw new Error(errorMessage);
 }
 
 async function triggerChatNewShortcutUntilPath(
@@ -1133,10 +1204,16 @@ describe("ChatView timeline estimator parity (full app)", () => {
       stickyModelSelectionByProvider: {},
       stickyActiveProvider: null,
     });
+    useQueuedTurnStore.setState({
+      threadsByThreadId: {},
+    });
     useStore.setState({
       projects: [],
       threads: [],
       bootstrapComplete: false,
+    });
+    useChatToolbarFocusStore.setState({
+      branchSelectorFocusRequest: null,
     });
   });
 
@@ -2071,6 +2148,194 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("toggles worktree mode with Mod+Shift+W only while the composer is focused", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+    });
+
+    try {
+      const initialEnvButton = await waitForButtonByText("Local");
+      initialEnvButton.focus();
+      initialEnvButton.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "w",
+          bubbles: true,
+          cancelable: true,
+          ...modShiftShortcutModifiers(),
+        }),
+      );
+      await waitForLayout();
+
+      expect(findButtonByText("New worktree")).toBeNull();
+
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "w",
+          bubbles: true,
+          cancelable: true,
+          ...modShiftShortcutModifiers(),
+        }),
+      );
+
+      await waitForButtonByText("New worktree");
+
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "w",
+          bubbles: true,
+          cancelable: true,
+          ...modShiftShortcutModifiers(),
+        }),
+      );
+
+      await waitForButtonByText("Local");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("steers immediately with mod+enter during a running turn", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshotForTargetUser({
+        targetMessageId: "msg-user-steer-shortcut" as MessageId,
+        targetText: "steer shortcut target",
+      }),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Steer this right now");
+      await waitForLayout();
+
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+          ...steerShortcutModifiers(),
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          const turnStartRequest = listDispatchCommandsByType("thread.turn.start").at(-1);
+          const command = turnStartRequest as { message?: { text?: string } } | undefined;
+          expect(command?.message?.text).toBe("Steer this right now");
+          expect(useQueuedTurnStore.getState().threadsByThreadId[THREAD_ID]?.items ?? []).toEqual(
+            [],
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("queues next up with mod+shift+enter during a running turn", async () => {
+    useQueuedTurnStore.getState().enqueueTurn(THREAD_ID, {
+      id: "queued-head",
+      text: "Current next up",
+      attachments: [],
+      terminalContexts: [],
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5",
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdAt: isoAt(90),
+      updatedAt: isoAt(90),
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshotForTargetUser({
+        targetMessageId: "msg-user-next-up-shortcut" as MessageId,
+        targetText: "next up shortcut target",
+      }),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Put this next");
+      await waitForLayout();
+
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+          ...modShiftShortcutModifiers(),
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(
+            useQueuedTurnStore
+              .getState()
+              .threadsByThreadId[THREAD_ID]?.items.map((entry) => entry.text),
+          ).toEqual(["Put this next", "Current next up"]);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("steers immediately from the composer button during a running turn", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshotForTargetUser({
+        targetMessageId: "msg-user-steer-button" as MessageId,
+        targetText: "steer button target",
+      }),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Button steer");
+      await waitForLayout();
+
+      findButtonByText("Steer")?.click();
+
+      await vi.waitFor(
+        () => {
+          const turnStartRequest = listDispatchCommandsByType("thread.turn.start").at(-1);
+          const command = turnStartRequest as { message?: { text?: string } } | undefined;
+          expect(command?.message?.text).toBe("Button steer");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("shows a pointer cursor for the running stop button", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
@@ -2201,10 +2466,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
       // The composer editor should be present for the new draft thread.
       await waitForComposerEditor();
 
-      // Simulate the steady-state promotion path: the server emits
-      // `thread.created`, the client materializes the thread incrementally,
-      // and the draft is cleared by live batch effects.
-      await promoteDraftThreadViaDomainEvent(newThreadId);
+      const promotedSnapshot = addThreadToSnapshot(fixture.snapshot, newThreadId);
+      fixture.snapshot = promotedSnapshot;
+      useStore.getState().syncServerReadModel(promotedSnapshot);
+      useComposerDraftStore.getState().clearDraftThread(newThreadId);
 
       // The route should still be on the new thread — not redirected away.
       await waitForURL(
@@ -2532,7 +2797,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
       const promotedThreadId = promotedThreadPath.slice(1) as ThreadId;
 
-      await promoteDraftThreadViaDomainEvent(promotedThreadId);
+      const promotedSnapshot = addThreadToSnapshot(fixture.snapshot, promotedThreadId);
+      fixture.snapshot = promotedSnapshot;
+      useStore.getState().syncServerReadModel(promotedSnapshot);
+      useComposerDraftStore.getState().clearDraftThread(promotedThreadId);
 
       const freshThreadPath = await triggerChatNewShortcutUntilPath(
         mounted.router,
@@ -2663,6 +2931,155 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("opens and focuses the branch/worktree selector from a focus request", async () => {
+    setDraftThreadWithoutWorktree();
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "chat.branchSelector.focus",
+              shortcut: {
+                key: "e",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: true,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await triggerBranchSelectorFocusUntilOpen("Unable to find branch search input.");
+
+      const branchSearchInput = document.querySelector(
+        'input[placeholder="Search branches..."]',
+      ) as HTMLInputElement | null;
+      expect(branchSearchInput).toBeTruthy();
+      if (!branchSearchInput) {
+        throw new Error("Unable to find branch search input.");
+      }
+
+      await vi.waitFor(
+        () => {
+          expect(document.activeElement).toBe(branchSearchInput);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not reopen the branch selector from a stale focus request after remounting", async () => {
+    setDraftThreadWithoutWorktree();
+
+    const firstMount = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "chat.branchSelector.focus",
+              shortcut: {
+                key: "e",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: true,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await triggerBranchSelectorFocusUntilOpen("Unable to find branch search input.");
+
+      const branchSearchInput = document.querySelector(
+        'input[placeholder="Search branches..."]',
+      ) as HTMLInputElement | null;
+      expect(branchSearchInput).toBeTruthy();
+      if (!branchSearchInput) {
+        throw new Error("Unable to find branch search input.");
+      }
+
+      branchSearchInput.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Escape",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(document.querySelector('input[placeholder="Search branches..."]')).toBeNull();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await firstMount.cleanup();
+    }
+
+    const secondMount = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "chat.branchSelector.focus",
+              shortcut: {
+                key: "e",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: true,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await waitForLayout();
+      expect(document.querySelector('input[placeholder="Search branches..."]')).toBeNull();
+    } finally {
+      await secondMount.cleanup();
+    }
+  });
+
   it("keeps the slash-command menu visible above the composer", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
@@ -2698,6 +3115,124 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows snippet matches for %query and replaces the trigger when Enter is pressed", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-snippet-trigger" as MessageId,
+        targetText: "snippet trigger target",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.snippetListResult = {
+          snippets: [
+            {
+              id: SnippetId.makeUnsafe("snippet-1"),
+              text: "Summarize the diff and next steps",
+              createdAt: isoAt(93),
+              updatedAt: isoAt(93),
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      const composerEditor = page.getByTestId("composer-editor");
+      await expect.element(composerEditor).toBeVisible();
+      await composerEditor.click();
+      await composerEditor.fill("%Summ");
+
+      await expect.element(page.getByText("Summarize the diff and next steps")).toBeVisible();
+      await expect.element(page.getByText("snippet")).toBeVisible();
+
+      const composerEditorElement = await waitForComposerEditor();
+      composerEditorElement.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.prompt ?? "").toBe(
+            "Summarize the diff and next steps",
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps the inline diff sidebar provider layout-less while the diff is closed", async () => {
+    const mounted = await mountChatView({
+      viewport: {
+        name: "wide-desktop",
+        width: 1440,
+        height: 1100,
+        textTolerancePx: 44,
+        attachmentTolerancePx: 56,
+      },
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-inline-diff-wrapper" as MessageId,
+        targetText: "wide desktop thread",
+      }),
+    });
+
+    try {
+      const wrappers = Array.from(
+        document.querySelectorAll<HTMLElement>("[data-slot='sidebar-wrapper']"),
+      );
+      const displays = wrappers.map((wrapper) => getComputedStyle(wrapper).display);
+
+      expect(wrappers).toHaveLength(2);
+      expect(displays).toEqual(["flex", "contents"]);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("uses the available thread width on wide desktop viewports", async () => {
+    const mounted = await mountChatView({
+      viewport: {
+        name: "wide-desktop",
+        width: 1440,
+        height: 1100,
+        textTolerancePx: 44,
+        attachmentTolerancePx: 56,
+      },
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-wide-layout" as MessageId,
+        targetText: "wide desktop layout thread",
+      }),
+    });
+
+    try {
+      const timelineRoot = document.querySelector<HTMLElement>("[data-timeline-root='true']");
+      expect(timelineRoot).toBeTruthy();
+      const scrollContainer = timelineRoot?.parentElement;
+      expect(scrollContainer).toBeTruthy();
+      const composerForm = document.querySelector<HTMLElement>("[data-chat-composer-form='true']");
+      expect(composerForm).toBeTruthy();
+
+      const timelineWidth = timelineRoot!.getBoundingClientRect().width;
+      const scrollStyles = getComputedStyle(scrollContainer!);
+      const horizontalPadding =
+        (Number.parseFloat(scrollStyles.paddingLeft) || 0) +
+        (Number.parseFloat(scrollStyles.paddingRight) || 0);
+      const availableContentWidth = scrollContainer!.clientWidth - horizontalPadding;
+      const composerWidth = composerForm!.getBoundingClientRect().width;
+
+      expect(timelineWidth).toBeGreaterThanOrEqual(availableContentWidth - 8);
+      expect(composerWidth).toBeGreaterThanOrEqual(availableContentWidth - 2);
     } finally {
       await mounted.cleanup();
     }

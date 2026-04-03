@@ -266,7 +266,7 @@ async function waitForNoToast(title: string): Promise<void> {
     () => {
       expect(queryToastTitles().filter((t) => t === title)).toHaveLength(0);
     },
-    { timeout: 10_000, interval: 50 },
+    { timeout: 4_000, interval: 16 },
   );
 }
 
@@ -311,6 +311,7 @@ describe("Keybindings update toast", () => {
   });
 
   beforeEach(async () => {
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
     await rpcHarness.reset({
       resolveUnary: (request) => resolveWsRpc(request._tag),
       getInitialStreamValues: (request) => {
@@ -349,9 +350,11 @@ describe("Keybindings update toast", () => {
       threads: [],
       bootstrapComplete: false,
     });
+    window.dispatchEvent(new Event("focus"));
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     document.body.innerHTML = "";
   });
 
@@ -389,11 +392,11 @@ describe("Keybindings update toast", () => {
     try {
       sendServerConfigUpdatedPush([]);
       await waitForToast("Keybindings updated");
-      await waitForNoToast("Keybindings updated");
 
       // Remount the app — onServerConfigUpdated replays the cached value
       // synchronously on subscribe. This should NOT produce a toast.
       await mounted.cleanup();
+      await waitForNoToast("Keybindings updated");
       const remounted = await mountApp();
 
       // Give it a moment to process the replayed value

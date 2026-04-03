@@ -416,6 +416,61 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBeNull();
   });
 
+  it("ignores a late turn.started after the same turn already completed", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-1");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-initial"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      createdAt: new Date().toISOString(),
+      turnId,
+    });
+
+    await waitForThread(
+      harness.engine,
+      (thread) => thread.session?.status === "running" && thread.session?.activeTurnId === turnId,
+    );
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-initial"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      createdAt: new Date().toISOString(),
+      turnId,
+      payload: {
+        state: "completed",
+      },
+    });
+
+    await waitForThread(
+      harness.engine,
+      (thread) => thread.session?.status === "ready" && thread.session?.activeTurnId === null,
+    );
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-late-duplicate"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      createdAt: new Date().toISOString(),
+      turnId,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === asThreadId("thread-1"));
+    expect(thread?.session).toMatchObject({
+      status: "ready",
+      activeTurnId: null,
+      lastError: null,
+    });
+  });
+
   it("does not clear active turn when session/thread started arrives mid-turn", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
@@ -1726,6 +1781,48 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("runtime exploded");
+  });
+
+  it("clears the active turn when a fatal provider runtime.error arrives", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-runtime-error-auth-turn-started"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-auth"),
+    });
+
+    await waitForThread(
+      harness.engine,
+      (entry) => entry.session?.status === "running" && entry.session?.activeTurnId === "turn-auth",
+    );
+
+    harness.emit({
+      type: "runtime.error",
+      eventId: asEventId("evt-runtime-error-auth"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-auth"),
+      payload: {
+        message: "invalid_token Missing or invalid access token",
+        class: "provider_error",
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.session?.status === "error" &&
+        entry.session?.activeTurnId === null &&
+        entry.session?.lastError === "invalid_token Missing or invalid access token",
+    );
+    expect(thread.session?.status).toBe("error");
+    expect(thread.session?.activeTurnId).toBeNull();
   });
 
   it("records runtime.error activities from the typed payload message", async () => {
