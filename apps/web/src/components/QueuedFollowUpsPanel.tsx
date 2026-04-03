@@ -9,7 +9,14 @@ import {
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { restrictToParentElement, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVerticalIcon, LoaderCircleIcon, PencilIcon, PlayIcon, Trash2Icon } from "lucide-react";
+import {
+  GripVerticalIcon,
+  HeartIcon,
+  LoaderCircleIcon,
+  PencilIcon,
+  PlayIcon,
+  Trash2Icon,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import {
@@ -90,6 +97,7 @@ function SortableQueuedFollowUpRow({
   onSave,
   onCancel,
   onDelete,
+  onSaveAsSnippet,
   onSendNow,
 }: {
   queuedTurn: QueuedTurnDraft;
@@ -103,6 +111,7 @@ function SortableQueuedFollowUpRow({
   onSave: () => void;
   onCancel: () => void;
   onDelete: () => void;
+  onSaveAsSnippet: () => void;
   onSendNow: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -110,6 +119,7 @@ function SortableQueuedFollowUpRow({
     disabled: isInteractionDisabled || isEditing,
   });
   const canSave = draftText.trim().length > 0 || queuedTurn.attachments.length > 0;
+  const canSaveAsSnippet = queuedTurn.text.trim().length > 0;
   const preview = summarizeQueuedTurn(queuedTurn);
 
   return (
@@ -194,6 +204,19 @@ function SortableQueuedFollowUpRow({
               size="icon-xs"
               variant="ghost"
               className="rounded-full text-muted-foreground hover:bg-background/80 hover:text-foreground"
+              onClick={onSaveAsSnippet}
+              disabled={isInteractionDisabled || !canSaveAsSnippet}
+              aria-label="Save as snippet"
+              title="Save as snippet"
+              data-testid={`queued-follow-up-save-snippet-${queuedTurn.id}`}
+            >
+              <HeartIcon className="size-3.5" />
+            </Button>
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              className="rounded-full text-muted-foreground hover:bg-background/80 hover:text-foreground"
               onClick={onEdit}
               disabled={isInteractionDisabled}
               aria-label="Edit"
@@ -246,6 +269,7 @@ export default function QueuedFollowUpsPanel({
   onResume,
   onDelete,
   onClearAll,
+  onSaveAsSnippet,
   onSaveEdit,
   onSendNow,
   onReorder,
@@ -259,6 +283,7 @@ export default function QueuedFollowUpsPanel({
   onResume: () => void;
   onDelete: (queuedTurnId: string) => void;
   onClearAll: () => void;
+  onSaveAsSnippet: (queuedTurnId: string) => void;
   onSaveEdit: (queuedTurnId: string, text: string) => void;
   onSendNow: (queuedTurnId: string) => void;
   onReorder: (activeQueuedTurnId: string, targetQueuedTurnId: string) => void;
@@ -382,6 +407,7 @@ export default function QueuedFollowUpsPanel({
                       setDraftText("");
                     }
                   }}
+                  onSaveAsSnippet={() => onSaveAsSnippet(queuedTurn.id)}
                   onSendNow={() => onSendNow(queuedTurn.id)}
                 />
               ))}

@@ -3,6 +3,8 @@ import {
   DEFAULT_SERVER_SETTINGS,
   type DesktopBridge,
   EventId,
+  SnippetId,
+  type SnippetLibraryUpdatedPayload,
   ProjectId,
   type OrchestrationEvent,
   type ServerConfig,
@@ -31,6 +33,7 @@ function registerListener<T>(listeners: Set<(event: T) => void>, listener: (even
 
 const terminalEventListeners = new Set<(event: TerminalEvent) => void>();
 const orchestrationEventListeners = new Set<(event: OrchestrationEvent) => void>();
+const snippetUpdatedListeners = new Set<(event: SnippetLibraryUpdatedPayload) => void>();
 
 const rpcClientMock = {
   dispose: vi.fn(),
@@ -51,6 +54,14 @@ const rpcClientMock = {
   },
   skills: {
     search: vi.fn(),
+  },
+  snippets: {
+    list: vi.fn(),
+    create: vi.fn(),
+    delete: vi.fn(),
+    onUpdated: vi.fn((listener: (event: SnippetLibraryUpdatedPayload) => void) =>
+      registerListener(snippetUpdatedListeners, listener),
+    ),
   },
   shell: {
     openInEditor: vi.fn(),
@@ -188,6 +199,7 @@ beforeEach(() => {
   showContextMenuFallbackMock.mockReset();
   terminalEventListeners.clear();
   orchestrationEventListeners.clear();
+  snippetUpdatedListeners.clear();
   Reflect.deleteProperty(getWindowForTest(), "desktopBridge");
 });
 
@@ -240,6 +252,50 @@ describe("wsNativeApi", () => {
       limit: 40,
       codexHomePath: "/Users/test/.codex",
     });
+  });
+
+  it("forwards snippet RPC and update subscriptions", async () => {
+    const listResult = {
+      snippets: [
+        {
+          id: SnippetId.makeUnsafe("snippet-1"),
+          text: "Saved snippet",
+          createdAt: "2026-03-16T12:00:00.000Z",
+          updatedAt: "2026-03-16T12:00:00.000Z",
+        },
+      ],
+    };
+    const createResult = {
+      snippet: listResult.snippets[0],
+      deduped: false,
+    };
+    rpcClientMock.snippets.list.mockResolvedValue(listResult);
+    rpcClientMock.snippets.create.mockResolvedValue(createResult);
+    rpcClientMock.snippets.delete.mockResolvedValue(undefined);
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    const onUpdated = vi.fn();
+    const unsubscribe = api.snippets.onUpdated(onUpdated);
+
+    await expect(api.snippets.list()).resolves.toEqual(listResult);
+    await expect(api.snippets.create({ text: "Saved snippet" })).resolves.toEqual(createResult);
+    await expect(
+      api.snippets.delete({ snippetId: SnippetId.makeUnsafe("snippet-1") }),
+    ).resolves.toBeUndefined();
+
+    emitEvent(snippetUpdatedListeners, {
+      kind: "upsert",
+      snippetId: SnippetId.makeUnsafe("snippet-1"),
+      updatedAt: "2026-03-16T12:00:00.000Z",
+    });
+    expect(onUpdated).toHaveBeenCalledWith({
+      kind: "upsert",
+      snippetId: SnippetId.makeUnsafe("snippet-1"),
+      updatedAt: "2026-03-16T12:00:00.000Z",
+    });
+
+    unsubscribe();
   });
 
   it("forwards terminal and orchestration stream events", async () => {

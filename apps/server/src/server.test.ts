@@ -56,6 +56,8 @@ import { ProjectFaviconResolverLive } from "./project/Layers/ProjectFaviconResol
 import { WorkspaceEntriesLive } from "./workspace/Layers/WorkspaceEntries.ts";
 import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.ts";
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
+import { SnippetId } from "@t3tools/contracts";
+import { SnippetRepository, type SnippetRepositoryShape } from "./persistence/Services/Snippets.ts";
 
 const defaultProjectId = ProjectId.makeUnsafe("project-default");
 const defaultThreadId = ThreadId.makeUnsafe("thread-default");
@@ -131,6 +133,7 @@ const buildAppUnderTest = (options?: {
     checkpointDiffQuery?: Partial<CheckpointDiffQueryShape>;
     serverLifecycleEvents?: Partial<ServerLifecycleEventsShape>;
     serverRuntimeStartup?: Partial<ServerRuntimeStartupShape>;
+    snippetRepository?: Partial<SnippetRepositoryShape>;
   };
 }) =>
   Effect.gen(function* () {
@@ -253,6 +256,23 @@ const buildAppUnderTest = (options?: {
           markHttpListening: Effect.void,
           enqueueCommand: (effect) => effect,
           ...options?.layers?.serverRuntimeStartup,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(SnippetRepository)({
+          listAll: () => Effect.succeed([]),
+          upsertByExactText: ({ text, updatedAt }) =>
+            Effect.succeed({
+              snippet: {
+                id: SnippetId.makeUnsafe("snippet-default"),
+                text,
+                createdAt: updatedAt,
+                updatedAt,
+              },
+              deduped: false,
+            }),
+          deleteById: () => Effect.void,
+          ...options?.layers?.snippetRepository,
         }),
       ),
       Layer.provide(workspaceAndProjectServicesLayer),

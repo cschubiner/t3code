@@ -10,6 +10,8 @@ import {
   type ProjectId,
   type ServerConfig,
   type ServerLifecycleWelcomePayload,
+  type SnippetListResult,
+  SnippetId,
   type ThreadId,
   type TurnId,
   WS_METHODS,
@@ -48,6 +50,7 @@ const ATTACHMENT_SVG = "<svg xmlns='http://www.w3.org/2000/svg' width='120' heig
 interface TestFixture {
   snapshot: OrchestrationReadModel;
   serverConfig: ServerConfig;
+  snippetListResult: SnippetListResult;
   welcome: ServerLifecycleWelcomePayload;
 }
 
@@ -127,7 +130,23 @@ function createBaseServerConfig(): ServerConfig {
   return {
     cwd: "/repo/project",
     keybindingsConfigPath: "/repo/project/.t3code-keybindings.json",
-    keybindings: [],
+    keybindings: [
+      {
+        command: "snippets.open",
+        shortcut: {
+          key: "s",
+          metaKey: false,
+          ctrlKey: false,
+          shiftKey: true,
+          altKey: false,
+          modKey: true,
+        },
+        whenAst: {
+          type: "not",
+          node: { type: "identifier", name: "terminalFocus" },
+        },
+      },
+    ],
     issues: [],
     providers: [
       {
@@ -302,6 +321,9 @@ function buildFixture(snapshot: OrchestrationReadModel): TestFixture {
   return {
     snapshot,
     serverConfig: createBaseServerConfig(),
+    snippetListResult: {
+      snippets: [],
+    },
     welcome: {
       cwd: "/repo/project",
       projectName: "Project",
@@ -670,6 +692,55 @@ function resolveWsRpc(body: NormalizedWsRpcRequestBody): unknown {
       truncated: false,
     };
   }
+  if (tag === WS_METHODS.snippetsList) {
+    return fixture.snippetListResult;
+  }
+  if (tag === WS_METHODS.snippetsCreate && typeof body.text === "string") {
+    const trimmedText = body.text.trim();
+    const existing =
+      fixture.snippetListResult.snippets.find((snippet) => snippet.text === trimmedText) ?? null;
+    const snippet = existing ?? {
+      id: SnippetId.makeUnsafe(`snippet-${fixture.snippetListResult.snippets.length + 1}`),
+      text: trimmedText,
+      createdAt: NOW_ISO,
+      updatedAt: NOW_ISO,
+    };
+    fixture = {
+      ...fixture,
+      snippetListResult: {
+        snippets: existing
+          ? fixture.snippetListResult.snippets.map((entry) =>
+              entry.id === existing.id ? { ...entry, updatedAt: NOW_ISO } : entry,
+            )
+          : [{ ...snippet }, ...fixture.snippetListResult.snippets],
+      },
+    };
+    rpcHarness.emitStreamValue(WS_METHODS.subscribeSnippetsUpdated, {
+      kind: "upsert",
+      snippetId: snippet.id,
+      updatedAt: NOW_ISO,
+    });
+    return {
+      snippet: existing ? { ...existing, updatedAt: NOW_ISO } : snippet,
+      deduped: existing !== null,
+    };
+  }
+  if (tag === WS_METHODS.snippetsDelete && typeof body.snippetId === "string") {
+    fixture = {
+      ...fixture,
+      snippetListResult: {
+        snippets: fixture.snippetListResult.snippets.filter(
+          (snippet) => snippet.id !== body.snippetId,
+        ),
+      },
+    };
+    rpcHarness.emitStreamValue(WS_METHODS.subscribeSnippetsUpdated, {
+      kind: "delete",
+      snippetId: body.snippetId,
+      updatedAt: NOW_ISO,
+    });
+    return null;
+  }
   if (tag === WS_METHODS.shellOpenInEditor) {
     return null;
   }
@@ -784,6 +855,17 @@ async function waitForComposerEditor(): Promise<HTMLElement> {
   );
 }
 
+async function waitForSnippetPickerInput(): Promise<HTMLInputElement> {
+  return waitForElement(
+    () => document.querySelector<HTMLInputElement>('[data-testid="snippet-picker-input"]'),
+    "Unable to find the snippet picker input.",
+  );
+}
+
+function listSnippetPickerResults(): HTMLElement[] {
+  return Array.from(document.querySelectorAll<HTMLElement>('[data-snippet-picker-result="true"]'));
+}
+
 async function waitForComposerMenuItem(itemId: string): Promise<HTMLElement> {
   return waitForElement(
     () => document.querySelector<HTMLElement>(`[data-composer-item-id="${itemId}"]`),
@@ -886,6 +968,17 @@ function dispatchChatNewShortcut(): void {
       shiftKey: true,
       metaKey: useMetaForMod,
       ctrlKey: !useMetaForMod,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
+function dispatchOpenSnippetsShortcut(): void {
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "s",
+      ...modShiftShortcutModifiers(),
       bubbles: true,
       cancelable: true,
     }),
@@ -2932,6 +3025,174 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(menuRect.height).toBeGreaterThan(0);
           expect(menuRect.bottom).toBeLessThanOrEqual(composerRect.bottom);
           expect(hitTarget instanceof Element && menuItem.contains(hitTarget)).toBe(true);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens the snippet picker with mod+shift+s and inserts the highlighted snippet with Enter", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-snippet-picker-open" as MessageId,
+        targetText: "snippet picker target",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.snippetListResult = {
+          snippets: [
+            {
+              id: SnippetId.makeUnsafe("snippet-1"),
+              text: "First saved snippet",
+              createdAt: isoAt(91),
+              updatedAt: isoAt(91),
+            },
+            {
+              id: SnippetId.makeUnsafe("snippet-2"),
+              text: "Second saved snippet",
+              createdAt: isoAt(90),
+              updatedAt: isoAt(90),
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await waitForComposerEditor();
+      dispatchOpenSnippetsShortcut();
+      const input = await waitForSnippetPickerInput();
+      await vi.waitFor(
+        () => {
+          expect(document.activeElement).toBe(input);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      expect(listSnippetPickerResults()).toHaveLength(2);
+
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "ArrowDown",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      await waitForLayout();
+      expect(listSnippetPickerResults()[1]?.dataset.highlighted).toBe("true");
+
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(document.querySelector('[data-testid="snippet-picker-input"]')).toBeNull();
+          expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.prompt ?? "").toBe(
+            "Second saved snippet",
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("deletes snippets from the picker dialog", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-snippet-picker-delete" as MessageId,
+        targetText: "snippet delete target",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.snippetListResult = {
+          snippets: [
+            {
+              id: SnippetId.makeUnsafe("snippet-1"),
+              text: "Delete me",
+              createdAt: isoAt(92),
+              updatedAt: isoAt(92),
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await waitForComposerEditor();
+      dispatchOpenSnippetsShortcut();
+      await waitForSnippetPickerInput();
+
+      await page.getByTestId("snippet-picker-delete-snippet-1").click();
+
+      await vi.waitFor(
+        () => {
+          const deleteRequest = wsRequests.find(
+            (request) =>
+              request._tag === WS_METHODS.snippetsDelete && request.snippetId === "snippet-1",
+          );
+          expect(deleteRequest).toBeTruthy();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows snippet matches for %query and replaces the trigger when Enter is pressed", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-snippet-trigger" as MessageId,
+        targetText: "snippet trigger target",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.snippetListResult = {
+          snippets: [
+            {
+              id: SnippetId.makeUnsafe("snippet-1"),
+              text: "Summarize the diff and next steps",
+              createdAt: isoAt(93),
+              updatedAt: isoAt(93),
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      const composerEditor = page.getByTestId("composer-editor");
+      await expect.element(composerEditor).toBeVisible();
+      await composerEditor.click();
+      await composerEditor.fill("%Summ");
+
+      await expect.element(page.getByText("Summarize the diff and next steps")).toBeVisible();
+      await expect.element(page.getByText("snippet")).toBeVisible();
+
+      const composerEditorElement = await waitForComposerEditor();
+      composerEditorElement.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.prompt ?? "").toBe(
+            "Summarize the diff and next steps",
+          );
         },
         { timeout: 8_000, interval: 16 },
       );

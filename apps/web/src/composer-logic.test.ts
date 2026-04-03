@@ -37,6 +37,30 @@ describe("detectComposerTrigger", () => {
     });
   });
 
+  it("detects %snippet triggers at cursor", () => {
+    const text = "reuse %summ";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "snippet",
+      query: "summ",
+      rangeStart: "reuse ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("detects empty %snippet triggers so the picker can open while typing", () => {
+    const text = "reuse %";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "snippet",
+      query: "",
+      rangeStart: "reuse ".length,
+      rangeEnd: text.length,
+    });
+  });
+
   it("detects slash command token while typing command name", () => {
     const text = "/mo";
     const trigger = detectComposerTrigger(text, text.length);

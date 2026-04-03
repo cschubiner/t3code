@@ -13,6 +13,8 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ServerProvider,
   type SkillSummary,
+  type Snippet,
+  type SnippetId,
   type ThreadId,
   type TurnId,
   type KeybindingCommand,
@@ -38,6 +40,7 @@ import { useNavigate, useSearch } from "@tanstack/react-router";
 import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "~/lib/gitReactQuery";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { skillSearchQueryOptions } from "~/lib/skillReactQuery";
+import { snippetListQueryOptions, snippetQueryKeys } from "~/lib/snippetReactQuery";
 import { isElectron } from "../env";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import {
@@ -167,6 +170,7 @@ import { selectThreadTerminalState, useTerminalStateStore } from "../terminalSta
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import QueuedFollowUpsPanel from "./QueuedFollowUpsPanel";
+import { SnippetPickerDialog } from "./SnippetPickerDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
 import { ContextWindowMeter } from "./chat/ContextWindowMeter";
@@ -228,6 +232,7 @@ const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_SKILLS: SkillSummary[] = [];
+const EMPTY_SNIPPETS: Snippet[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 const EMPTY_QUEUED_TURN_DRAFTS: readonly QueuedTurnDraft[] = [];
 
@@ -304,6 +309,14 @@ function useThreadPlanCatalog(threadIds: readonly ThreadId[]): ThreadPlanCatalog
   }, [threadIds]);
 
   return useStore(selector);
+}
+
+function summarizeSnippetLabel(text: string): string {
+  const normalized = text.trim().replace(/\s+/g, " ");
+  if (normalized.length <= 72) {
+    return normalized;
+  }
+  return `${normalized.slice(0, 69).trimEnd()}...`;
 }
 
 function formatOutgoingPrompt(params: {
@@ -539,6 +552,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [branchSelectorFocusRequestId, setBranchSelectorFocusRequestId] = useState(0);
+  const [snippetPickerFocusRequestId, setSnippetPickerFocusRequestId] = useState(0);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
   optimisticUserMessagesRef.current = optimisticUserMessages;
@@ -579,6 +593,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
   const [pullRequestDialogState, setPullRequestDialogState] =
     useState<PullRequestDialogState | null>(null);
+  const [isSnippetPickerOpen, setIsSnippetPickerOpen] = useState(false);
+  const [deletingSnippetId, setDeletingSnippetId] = useState<SnippetId | null>(null);
   const [isThreadSearchOpen, setIsThreadSearchOpen] = useState(false);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [activeThreadSearchMatchIndex, setActiveThreadSearchMatchIndex] = useState(0);
@@ -1404,8 +1420,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
       limit: 40,
     }),
   );
+  const snippetListQuery = useQuery(snippetListQueryOptions());
   const workspaceEntries = workspaceEntriesQuery.data?.entries ?? EMPTY_PROJECT_ENTRIES;
   const discoveredSkills = skillSearchResultQuery.data?.skills ?? EMPTY_SKILLS;
+  const snippets = snippetListQuery.data?.snippets ?? EMPTY_SNIPPETS;
+  useEffect(() => {
+    const api = readNativeApi();
+    if (!api) {
+      return;
+    }
+    return api.snippets.onUpdated(() => {
+      void queryClient.invalidateQueries({ queryKey: snippetQueryKeys.all });
+    });
+  }, [queryClient]);
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
@@ -1479,6 +1506,24 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }));
     }
 
+    if (composerTrigger.kind === "snippet") {
+      const query = composerTrigger.query.trim().toLowerCase();
+      return snippets
+        .filter((snippet) => snippet.text.toLowerCase().includes(query))
+        .map((snippet) => ({
+          id: `snippet:${snippet.id}`,
+          type: "snippet" as const,
+          snippet,
+          label: summarizeSnippetLabel(snippet.text),
+          description: new Date(snippet.updatedAt).toLocaleString([], {
+            month: "short",
+            day: "numeric",
+            hour: "numeric",
+            minute: "2-digit",
+          }),
+        }));
+    }
+
     return searchableModelOptions
       .filter(({ searchSlug, searchName, searchProvider }) => {
         const query = composerTrigger.query.trim().toLowerCase();
@@ -1495,7 +1540,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         label: name,
         description: `${providerLabel} · ${slug}`,
       }));
-  }, [composerTrigger, discoveredSkills, searchableModelOptions, workspaceEntries]);
+  }, [composerTrigger, discoveredSkills, searchableModelOptions, snippets, workspaceEntries]);
   const composerMenuOpen = Boolean(composerTrigger);
   const activeComposerMenuItem = useMemo(
     () =>
@@ -2810,6 +2855,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return;
       }
 
+      if (command === "snippets.open") {
+        if (pullRequestDialogState || expandedImage) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        setIsSnippetPickerOpen(true);
+        setSnippetPickerFocusRequestId((current) => current + 1);
+        return;
+      }
+
       const scriptId = projectScriptIdFromCommand(command);
       if (!scriptId || !activeProject) return;
       const script = activeProject.scripts.find((entry) => entry.id === scriptId);
@@ -2833,8 +2889,61 @@ export default function ChatView({ threadId }: ChatViewProps) {
     keybindings,
     openThreadSearch,
     onToggleDiff,
+    pullRequestDialogState,
+    expandedImage,
     toggleTerminalVisibility,
   ]);
+
+  const saveQueuedTurnAsSnippet = useCallback(
+    async (queuedTurnId: string) => {
+      const api = readNativeApi();
+      if (!api) {
+        return;
+      }
+      const queuedTurn = queuedTurns.find((entry) => entry.id === queuedTurnId);
+      if (!queuedTurn || queuedTurn.text.trim().length === 0) {
+        return;
+      }
+      try {
+        const result = await api.snippets.create({ text: queuedTurn.text });
+        await queryClient.invalidateQueries({ queryKey: snippetQueryKeys.all });
+        toastManager.add({
+          type: "success",
+          title: result.deduped ? "Already in snippets" : "Saved to snippets",
+        });
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Failed to save snippet",
+          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+        });
+      }
+    },
+    [queryClient, queuedTurns],
+  );
+
+  const deleteSnippet = useCallback(
+    async (snippet: Snippet) => {
+      const api = readNativeApi();
+      if (!api) {
+        return;
+      }
+      setDeletingSnippetId(snippet.id);
+      try {
+        await api.snippets.delete({ snippetId: snippet.id });
+        await queryClient.invalidateQueries({ queryKey: snippetQueryKeys.all });
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Failed to delete snippet",
+          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+        });
+      } finally {
+        setDeletingSnippetId((current) => (current === snippet.id ? null : current));
+      }
+    },
+    [queryClient],
+  );
 
   const addComposerImages = (files: File[]) => {
     if (!activeThreadId || files.length === 0) return;
@@ -4156,6 +4265,32 @@ export default function ChatView({ threadId }: ChatViewProps) {
     };
   }, [readComposerSnapshot]);
 
+  const insertSnippetIntoComposer = useCallback(
+    (snippetText: string): boolean => {
+      if (isConnecting || isComposerApprovalState) {
+        toastManager.add({
+          type: "warning",
+          title: "Snippets are unavailable right now.",
+        });
+        return false;
+      }
+
+      const { snapshot, trigger } = resolveActiveComposerTrigger();
+      const activeSnippetTrigger = trigger?.kind === "snippet" ? trigger : null;
+      return applyPromptReplacement(
+        activeSnippetTrigger ? activeSnippetTrigger.rangeStart : snapshot.expandedCursor,
+        activeSnippetTrigger ? activeSnippetTrigger.rangeEnd : snapshot.expandedCursor,
+        snippetText,
+        {
+          expectedText: activeSnippetTrigger
+            ? snapshot.value.slice(activeSnippetTrigger.rangeStart, activeSnippetTrigger.rangeEnd)
+            : "",
+        },
+      );
+    },
+    [applyPromptReplacement, isComposerApprovalState, isConnecting, resolveActiveComposerTrigger],
+  );
+
   const onSelectComposerItem = useCallback(
     (item: ComposerCommandItem) => {
       if (composerSelectLockRef.current) return;
@@ -4188,6 +4323,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
           trigger.rangeStart,
           trigger.rangeEnd,
           `$${item.name} `,
+          { expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd) },
+        );
+        if (applied) {
+          setComposerHighlightedItemId(null);
+        }
+        return;
+      }
+      if (item.type === "snippet") {
+        const applied = applyPromptReplacement(
+          trigger.rangeStart,
+          trigger.rangeEnd,
+          item.snippet.text,
           { expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd) },
         );
         if (applied) {
@@ -4278,7 +4425,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
     (composerTriggerKind === "skill" &&
       ((skillTriggerQuery.length > 0 && composerSkillQueryDebouncer.state.isPending) ||
         skillSearchResultQuery.isLoading ||
-        skillSearchResultQuery.isFetching));
+        skillSearchResultQuery.isFetching)) ||
+    (composerTriggerKind === "snippet" &&
+      (snippetListQuery.isLoading || snippetListQuery.isFetching));
 
   const onPromptChange = useCallback(
     (
@@ -4574,6 +4723,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 onResume={() => resumeThreadQueue(threadId, new Date().toISOString())}
                 onDelete={(queuedTurnId) => removeQueuedTurn(threadId, queuedTurnId)}
                 onClearAll={() => clearThreadQueue(threadId)}
+                onSaveAsSnippet={(queuedTurnId) => {
+                  void saveQueuedTurnAsSnippet(queuedTurnId);
+                }}
                 onSaveEdit={(queuedTurnId, text) => {
                   const queuedTurn = queuedTurns.find((entry) => entry.id === queuedTurnId);
                   if (!queuedTurn) {
@@ -5021,6 +5173,26 @@ export default function ChatView({ threadId }: ChatViewProps) {
               onPrepared={handlePreparedPullRequestThread}
             />
           ) : null}
+          <SnippetPickerDialog
+            open={isSnippetPickerOpen}
+            snippets={snippets}
+            focusRequestId={snippetPickerFocusRequestId}
+            deletingSnippetId={deletingSnippetId}
+            onOpenChange={(open) => {
+              setIsSnippetPickerOpen(open);
+              if (!open) {
+                focusComposer();
+              }
+            }}
+            onSelectSnippet={(snippet) => {
+              if (insertSnippetIntoComposer(snippet.text)) {
+                setIsSnippetPickerOpen(false);
+              }
+            }}
+            onDeleteSnippet={(snippet) => {
+              void deleteSnippet(snippet);
+            }}
+          />
         </div>
         {/* end chat column */}
 

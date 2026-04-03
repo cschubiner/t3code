@@ -51,6 +51,14 @@ import {
 } from "./project";
 import { SkillSearchError, SkillSearchInput, SkillSearchResult } from "./skills";
 import {
+  SnippetCreateInput,
+  SnippetCreateResult,
+  SnippetDeleteInput,
+  SnippetLibraryError,
+  SnippetLibraryUpdatedPayload,
+  SnippetListResult,
+} from "./snippets";
+import {
   TerminalClearInput,
   TerminalCloseInput,
   TerminalError,
@@ -79,6 +87,9 @@ export const WS_METHODS = {
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
   skillsSearch: "skills.search",
+  snippetsList: "snippets.list",
+  snippetsCreate: "snippets.create",
+  snippetsDelete: "snippets.delete",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -116,6 +127,7 @@ export const WS_METHODS = {
   subscribeTerminalEvents: "subscribeTerminalEvents",
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
+  subscribeSnippetsUpdated: "subscribeSnippetsUpdated",
 } as const;
 
 export const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -163,6 +175,23 @@ export const WsSkillsSearchRpc = Rpc.make(WS_METHODS.skillsSearch, {
   payload: SkillSearchInput,
   success: SkillSearchResult,
   error: SkillSearchError,
+});
+
+export const WsSnippetsListRpc = Rpc.make(WS_METHODS.snippetsList, {
+  payload: Schema.Struct({}),
+  success: SnippetListResult,
+  error: SnippetLibraryError,
+});
+
+export const WsSnippetsCreateRpc = Rpc.make(WS_METHODS.snippetsCreate, {
+  payload: SnippetCreateInput,
+  success: SnippetCreateResult,
+  error: SnippetLibraryError,
+});
+
+export const WsSnippetsDeleteRpc = Rpc.make(WS_METHODS.snippetsDelete, {
+  payload: SnippetDeleteInput,
+  error: SnippetLibraryError,
 });
 
 export const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {
@@ -329,6 +358,12 @@ export const WsSubscribeServerLifecycleRpc = Rpc.make(WS_METHODS.subscribeServer
   stream: true,
 });
 
+export const WsSubscribeSnippetsUpdatedRpc = Rpc.make(WS_METHODS.subscribeSnippetsUpdated, {
+  payload: Schema.Struct({}),
+  success: SnippetLibraryUpdatedPayload,
+  stream: true,
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
@@ -338,6 +373,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsSearchEntriesRpc,
   WsProjectsWriteFileRpc,
   WsSkillsSearchRpc,
+  WsSnippetsListRpc,
+  WsSnippetsCreateRpc,
+  WsSnippetsDeleteRpc,
   WsShellOpenInEditorRpc,
   WsGitStatusRpc,
   WsGitPullRpc,
@@ -360,6 +398,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeTerminalEventsRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
+  WsSubscribeSnippetsUpdatedRpc,
   WsOrchestrationGetSnapshotRpc,
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetTurnDiffRpc,

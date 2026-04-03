@@ -1,4 +1,9 @@
-import { type ProjectEntry, type ProviderKind, type SkillSource } from "@t3tools/contracts";
+import {
+  type ProjectEntry,
+  type ProviderKind,
+  type SkillSource,
+  type Snippet,
+} from "@t3tools/contracts";
 import { memo, useLayoutEffect, useRef } from "react";
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
 import { BotIcon } from "lucide-react";
@@ -36,6 +41,13 @@ export type ComposerCommandItem =
       type: "skill";
       name: string;
       source: SkillSource;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "snippet";
+      snippet: Snippet;
       label: string;
       description: string;
     };
@@ -90,12 +102,16 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
             {props.isLoading
               ? props.triggerKind === "skill"
                 ? "Searching skills..."
-                : "Searching workspace files..."
+                : props.triggerKind === "snippet"
+                  ? "Loading snippets..."
+                  : "Searching workspace files..."
               : props.triggerKind === "path"
                 ? "No matching files or folders."
                 : props.triggerKind === "skill"
                   ? "No matching skills."
-                  : "No matching command."}
+                  : props.triggerKind === "snippet"
+                    ? "No matching snippets."
+                    : "No matching command."}
           </p>
         )}
       </div>
@@ -179,6 +195,19 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
                 skill
               </Badge>
               <SkillSourceBadge source={props.item.source} />
+            </div>
+            {props.item.description ? (
+              <p className="mt-1 truncate text-muted-foreground/70 text-xs leading-tight">
+                {props.item.description}
+              </p>
+            ) : null}
+          </>
+        ) : props.item.type === "snippet" ? (
+          <>
+            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+              <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px]">
+                snippet
+              </Badge>
             </div>
             {props.item.description ? (
               <p className="mt-1 truncate text-muted-foreground/70 text-xs leading-tight">

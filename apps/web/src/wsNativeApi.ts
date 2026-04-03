@@ -48,6 +48,12 @@ export function createWsNativeApi(): NativeApi {
     skills: {
       search: rpcClient.skills.search,
     },
+    snippets: {
+      list: rpcClient.snippets.list,
+      create: rpcClient.snippets.create,
+      delete: rpcClient.snippets.delete,
+      onUpdated: rpcClient.snippets.onUpdated,
+    },
     shell: {
       openInEditor: (cwd, editor) => rpcClient.shell.openInEditor({ cwd, editor }),
       openExternal: async (url) => {

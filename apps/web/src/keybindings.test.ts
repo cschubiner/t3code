@@ -129,6 +129,11 @@ const DEFAULT_BINDINGS = compile([
     command: "chat.branchSelector.focus",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
+  {
+    shortcut: modShortcut("s", { shiftKey: true }),
+    command: "snippets.open",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
   { shortcut: modShortcut("["), command: "sidebar.history.previous" },
   { shortcut: modShortcut("]"), command: "sidebar.history.next" },
   {
@@ -192,6 +197,16 @@ describe("split/new/close terminal shortcuts", () => {
         platform: "Linux",
         context: { terminalFocus: false },
       }),
+    );
+  });
+
+  it("resolves the snippet picker shortcut while terminalFocus is false", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "s", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "snippets.open",
     );
   });
 

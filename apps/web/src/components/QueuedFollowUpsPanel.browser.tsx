@@ -28,6 +28,7 @@ async function mountPanel(props: Partial<ComponentProps<typeof QueuedFollowUpsPa
   const onResume = vi.fn();
   const onDelete = vi.fn();
   const onClearAll = vi.fn();
+  const onSaveAsSnippet = vi.fn();
   const onSaveEdit = vi.fn();
   const onSendNow = vi.fn();
   const onReorder = vi.fn();
@@ -46,6 +47,7 @@ async function mountPanel(props: Partial<ComponentProps<typeof QueuedFollowUpsPa
       onResume={onResume}
       onDelete={onDelete}
       onClearAll={onClearAll}
+      onSaveAsSnippet={onSaveAsSnippet}
       onSaveEdit={onSaveEdit}
       onSendNow={onSendNow}
       onReorder={onReorder}
@@ -58,6 +60,7 @@ async function mountPanel(props: Partial<ComponentProps<typeof QueuedFollowUpsPa
     onResume,
     onDelete,
     onClearAll,
+    onSaveAsSnippet,
     onSaveEdit,
     onSendNow,
     onReorder,
@@ -91,6 +94,9 @@ describe("QueuedFollowUpsPanel", () => {
 
       expect(mounted.onSaveEdit).toHaveBeenCalledWith("turn-1", "Updated first queued follow-up");
 
+      await page.getByRole("button", { name: "Save as snippet" }).first().click();
+      expect(mounted.onSaveAsSnippet).toHaveBeenCalledWith("turn-1");
+
       await page.getByRole("button", { name: "Send now" }).nth(1).click();
       expect(mounted.onSendNow).toHaveBeenCalledWith("turn-2");
 
@@ -120,6 +126,32 @@ describe("QueuedFollowUpsPanel", () => {
 
       await page.getByRole("button", { name: "Resume" }).click();
       expect(mounted.onResume).toHaveBeenCalledTimes(1);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("disables save-as-snippet for attachment-only queued turns", async () => {
+    const mounted = await mountPanel({
+      queuedTurns: [
+        makeQueuedTurn({
+          id: "turn-1",
+          text: "   ",
+          attachments: [
+            {
+              id: "image-1",
+              name: "image.png",
+              mimeType: "image/png",
+              sizeBytes: 128,
+              dataUrl: "data:image/png;base64,AAA=",
+            },
+          ],
+        }),
+      ],
+    });
+
+    try {
+      await expect.element(page.getByRole("button", { name: "Save as snippet" })).toBeDisabled();
     } finally {
       await mounted.cleanup();
     }

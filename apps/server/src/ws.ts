@@ -1,4 +1,4 @@
-import { Effect, Layer, Option, Queue, Ref, Schema, Stream } from "effect";
+import { Effect, Layer, Option, PubSub, Queue, Ref, Schema, Stream } from "effect";
 import {
   type GitActionProgressEvent,
   type GitManagerServiceError,
@@ -11,8 +11,10 @@ import {
   ProjectSearchEntriesError,
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
+  SnippetLibraryError,
   type TerminalEvent,
   SkillSearchError,
+  SnippetLibraryUpdatedPayload,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -33,6 +35,7 @@ import { ProviderRegistry } from "./provider/Services/ProviderRegistry";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup";
 import { ServerSettingsService } from "./serverSettings";
+import { SnippetRepository } from "./persistence/Services/Snippets";
 import { searchSkills } from "./skills";
 import { TerminalManager } from "./terminal/Services/Manager";
 import { WorkspaceEntries } from "./workspace/Services/WorkspaceEntries";
@@ -53,9 +56,14 @@ const WsRpcLayer = WsRpcGroup.toLayer(
     const config = yield* ServerConfig;
     const lifecycleEvents = yield* ServerLifecycleEvents;
     const serverSettings = yield* ServerSettingsService;
+    const snippetRepository = yield* SnippetRepository;
     const startup = yield* ServerRuntimeStartup;
     const workspaceEntries = yield* WorkspaceEntries;
     const workspaceFileSystem = yield* WorkspaceFileSystem;
+    const snippetsUpdatedPubSub = yield* Effect.acquireRelease(
+      PubSub.unbounded<SnippetLibraryUpdatedPayload>(),
+      (pubsub) => PubSub.shutdown(pubsub),
+    );
 
     const loadServerConfig = Effect.gen(function* () {
       const keybindingsConfig = yield* keybindings.loadConfigState;
@@ -230,6 +238,57 @@ const WsRpcLayer = WsRpcGroup.toLayer(
               message: `Failed to search skills: ${String(cause)}`,
             }),
         }),
+      [WS_METHODS.snippetsList]: (_input) =>
+        snippetRepository.listAll().pipe(
+          Effect.map((snippets) => ({ snippets })),
+          Effect.mapError(
+            (cause) =>
+              new SnippetLibraryError({
+                message: "Failed to load snippets.",
+                cause,
+              }),
+          ),
+        ),
+      [WS_METHODS.snippetsCreate]: (input) =>
+        Effect.gen(function* () {
+          const result = yield* snippetRepository
+            .upsertByExactText({
+              text: input.text,
+              updatedAt: new Date().toISOString(),
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new SnippetLibraryError({
+                    message: "Failed to save snippet.",
+                    cause,
+                  }),
+              ),
+            );
+          yield* PubSub.publish(snippetsUpdatedPubSub, {
+            kind: "upsert" as const,
+            snippetId: result.snippet.id,
+            updatedAt: result.snippet.updatedAt,
+          });
+          return result;
+        }),
+      [WS_METHODS.snippetsDelete]: (input) =>
+        Effect.gen(function* () {
+          yield* snippetRepository.deleteById(input).pipe(
+            Effect.mapError(
+              (cause) =>
+                new SnippetLibraryError({
+                  message: "Failed to delete snippet.",
+                  cause,
+                }),
+            ),
+          );
+          yield* PubSub.publish(snippetsUpdatedPubSub, {
+            kind: "delete" as const,
+            snippetId: input.snippetId,
+            updatedAt: new Date().toISOString(),
+          });
+        }),
       [WS_METHODS.shellOpenInEditor]: (input) => open.openInEditor(input),
       [WS_METHODS.gitStatus]: (input) => gitManager.status(input),
       [WS_METHODS.gitPull]: (input) => git.pullCurrentBranch(input.cwd),
@@ -271,6 +330,7 @@ const WsRpcLayer = WsRpcGroup.toLayer(
             (unsubscribe) => Effect.sync(unsubscribe),
           ),
         ),
+      [WS_METHODS.subscribeSnippetsUpdated]: (_input) => Stream.fromPubSub(snippetsUpdatedPubSub),
       [WS_METHODS.subscribeServerConfig]: (_input) =>
         Stream.unwrap(
           Effect.gen(function* () {
