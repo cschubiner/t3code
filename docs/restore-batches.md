@@ -40,6 +40,7 @@ data sources.
 - `5db9583a` add delete slash command -> restored in `9bbf39f2`
 - `dbf3b0a9` add composer env toggle hotkey -> restored in `4feef38f`
 - `8bbf907b` Fix composer-focused sidebar hotkeys -> restored in `4feef38f`
+- `8ef1ce35` fix steer and next-up shortcuts -> restored in `ab9f78cd`
 - `8cfc8879` docs: add main-state desktop boot shortcut -> restored in `06cae40e`
 
 ## Batch 2: Skills and Snippets
