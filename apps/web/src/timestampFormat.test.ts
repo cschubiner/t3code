@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { formatRelativeTime, formatRelativeTimeLabel, getTimestampFormatOptions } from "./timestampFormat";
+import {
+  formatRelativeTime,
+  formatRelativeTimeLabel,
+  getTimestampFormatOptions,
+} from "./timestampFormat";
 
 describe("getTimestampFormatOptions", () => {
   it("omits hour12 when locale formatting is requested", () => {
