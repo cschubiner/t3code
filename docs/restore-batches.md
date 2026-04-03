@@ -14,7 +14,7 @@ Start here so later restores land on a stable base.
 - `552405b4` fix browser rpc harness bootstrapping
 - `8eb3c648` stabilize keybindings toast replay test -> restored in `aa25bc91`
 - `4956345b` stabilize keybindings toast browser test -> restored in `aa25bc91`
-- `c4bed798` stabilize chatview browser checks
+- `c4bed798` stabilize chatview browser checks -> restored in `1882ff95`
 - `edcf6a1e` Fix git test timeouts and process cleanup
 - `9ac3a320` run CI quality job on ubuntu runner
 - `3e8e0a5b` fix web auto-animate typings
