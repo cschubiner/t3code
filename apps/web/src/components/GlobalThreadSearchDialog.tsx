@@ -6,6 +6,7 @@ import { buildGlobalThreadSearchResults } from "../lib/globalThreadSearch";
 import { buildHighlightSegments, findTextOccurrences } from "../lib/threadSearch";
 import { useStore } from "../store";
 import { useThreadSearchNavigationStore } from "../threadSearchNavigationStore";
+import { formatRelativeTimeLabel } from "../timestampFormat";
 import { Badge } from "./ui/badge";
 import {
   Dialog,
@@ -27,6 +28,10 @@ interface GlobalThreadSearchDialogProps {
 }
 
 function formatResultTimestamp(value: string): string {
+  return formatRelativeTimeLabel(value, { style: "long" });
+}
+
+function formatExactResultTimestamp(value: string): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
     return value;
@@ -276,7 +281,10 @@ export function GlobalThreadSearchDialog({
                           <span className="text-muted-foreground text-xs">
                             {result.projectName}
                           </span>
-                          <span className="ml-auto text-muted-foreground text-[11px]">
+                          <span
+                            className="ml-auto text-muted-foreground text-[11px]"
+                            title={formatExactResultTimestamp(result.sourceCreatedAt)}
+                          >
                             {formatResultTimestamp(result.sourceCreatedAt)}
                           </span>
                         </div>

@@ -1,5 +1,10 @@
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 
+export interface RelativeTimeFormatOptions {
+  now?: number | Date;
+  style?: "compact" | "long";
+}
+
 export function getTimestampFormatOptions(
   timestampFormat: TimestampFormat,
   includeSeconds: boolean,
@@ -53,21 +58,65 @@ export function formatShortTimestamp(isoDate: string, timestampFormat: Timestamp
  * Returns `{ value: "20s", suffix: "ago" }` or `{ value: "just now", suffix: null }`
  * so callers can style the numeric portion independently.
  */
-export function formatRelativeTime(isoDate: string): { value: string; suffix: string | null } {
-  const diffMs = Date.now() - new Date(isoDate).getTime();
+function resolveRelativeTimeNow(now?: number | Date): number {
+  if (now instanceof Date) {
+    return now.getTime();
+  }
+  if (typeof now === "number") {
+    return now;
+  }
+  return Date.now();
+}
+
+function relativeTimeValue(
+  amount: number,
+  compactUnit: string,
+  longSingular: string,
+  style: "compact" | "long",
+): string {
+  if (style === "compact") {
+    return `${amount}${compactUnit}`;
+  }
+  return `${amount} ${amount === 1 ? longSingular : `${longSingular}s`}`;
+}
+
+export function formatRelativeTime(
+  isoDate: string,
+  options?: RelativeTimeFormatOptions,
+): { value: string; suffix: string | null } {
+  const diffMs = resolveRelativeTimeNow(options?.now) - new Date(isoDate).getTime();
   if (diffMs < 0) return { value: "just now", suffix: null };
   const seconds = Math.floor(diffMs / 1000);
   if (seconds < 5) return { value: "just now", suffix: null };
-  if (seconds < 60) return { value: `${seconds}s`, suffix: "ago" };
+  const style = options?.style ?? "compact";
+  if (seconds < 60) {
+    return { value: relativeTimeValue(seconds, "s", "second", style), suffix: "ago" };
+  }
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return { value: `${minutes}m`, suffix: "ago" };
+  if (minutes < 60) {
+    return { value: relativeTimeValue(minutes, "m", "minute", style), suffix: "ago" };
+  }
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return { value: `${hours}h`, suffix: "ago" };
+  if (hours < 24) {
+    return { value: relativeTimeValue(hours, "h", "hour", style), suffix: "ago" };
+  }
   const days = Math.floor(hours / 24);
-  return { value: `${days}d`, suffix: "ago" };
+  if (days < 7) {
+    return { value: relativeTimeValue(days, "d", "day", style), suffix: "ago" };
+  }
+  const weeks = Math.floor(days / 7);
+  if (weeks < 5) {
+    return { value: relativeTimeValue(weeks, "w", "week", style), suffix: "ago" };
+  }
+  const months = Math.floor(days / 30);
+  if (months < 12) {
+    return { value: relativeTimeValue(months, "mo", "month", style), suffix: "ago" };
+  }
+  const years = Math.floor(days / 365);
+  return { value: relativeTimeValue(years, "y", "year", style), suffix: "ago" };
 }
 
-export function formatRelativeTimeLabel(isoDate: string) {
-  const relative = formatRelativeTime(isoDate);
+export function formatRelativeTimeLabel(isoDate: string, options?: RelativeTimeFormatOptions) {
+  const relative = formatRelativeTime(isoDate, options);
   return relative.suffix ? `${relative.value} ${relative.suffix}` : relative.value;
 }
