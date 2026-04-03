@@ -60,10 +60,10 @@ Restore non-queue sidebar UX after the shortcut substrate is back.
 - `97d8ac89` update sidebar navigation hotkeys -> restored in `27e804de`
 - `8bcfffb5` update sidebar navigation hotkeys -> folded into `27e804de`
 - `ed8555f6` add sidebar rename hotkey -> restored in `402cdcaa`
-- `c93359cd` add sidebar referenced PR pills
-- `3c7a97a1` fix sidebar PR pill formatting
-- `8c7af835` dedupe sidebar pr mentions
-- `23529a62` fix pr pill merge status lookup
+- `c93359cd` add sidebar referenced PR pills -> restored in `412d14cc`
+- `3c7a97a1` fix sidebar PR pill formatting -> restored in `412d14cc`
+- `8c7af835` dedupe sidebar pr mentions -> restored in `412d14cc`
+- `23529a62` fix pr pill merge status lookup -> restored in `412d14cc`
 - `f1e49e60` polish sidebar thread rows
 - `ff24a79e` match delete navigation to sidebar next thread
 - `d54ecdad` shrink sidebar project toggle further
