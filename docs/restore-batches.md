@@ -87,7 +87,7 @@ These commits likely need adaptation rather than blind cherry-picks.
 - `7d6f03a6` integrate sidebar working fix with main
 - `fd574794` reconcile imported worktree projects
 - `c60b7667` fix CI typing for imported worktree reconciliation
-- `31d78042` fix desktop rename shortcut
+- `31d78042` fix desktop rename shortcut -> restored in `a3ed91dc`
 
 ## Batch 5: Codex Import
 
