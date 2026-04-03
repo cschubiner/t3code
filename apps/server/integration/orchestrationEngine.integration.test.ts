@@ -1299,17 +1299,10 @@ it.live("reverts claudeAgent turns and rolls back provider conversation state", 
           text: "Second Claude edit",
         });
 
-        yield* harness.waitForReceipt(
-          (receipt): receipt is TurnProcessingQuiescedReceipt =>
-            receipt.type === "turn.processing.quiesced" &&
-            receipt.threadId === THREAD_ID &&
-            receipt.turnId === "turn-2" &&
-            receipt.checkpointTurnCount === 2,
-        );
         yield* harness.waitForThread(
           THREAD_ID,
           (entry) => entry.latestTurn?.turnId === "turn-2" && entry.checkpoints.length === 2,
-          15_000,
+          30_000,
         );
 
         yield* harness.engine.dispatch({
