@@ -80,9 +80,9 @@ These commits likely need adaptation rather than blind cherry-picks.
 
 - `cbef4b51` fix codex auth state recovery
 - `dce81e88` downgrade codex provider noise
-- `9b56879f` fix stale runtime working state (#82)
-- `0e5c9f02` fix stuck working state (#80)
-- `1e5ee7f4` fix stale working session state
+- `9b56879f` fix stale runtime working state (#82) -> restored in `a309843b`
+- `0e5c9f02` fix stuck working state (#80) -> restored in `a309843b`
+- `1e5ee7f4` fix stale working session state -> restored in `a309843b`
 - `58c7fbef` fix missing sidebar working status -> restored in `a94bc45a`
 - `7d6f03a6` integrate sidebar working fix with main -> restored in `a94bc45a`
 - `fd574794` reconcile imported worktree projects
