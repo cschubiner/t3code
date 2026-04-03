@@ -27,7 +27,7 @@ import {
 } from "./lib/terminalContext";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { createDebouncedStorage, createMemoryStorage } from "./lib/storage";
+import { createDebouncedStorage, createMemoryStorage, getIsomorphicStorage } from "./lib/storage";
 import { getDefaultServerModel } from "./providerModels";
 import { UnifiedSettings } from "@t3tools/contracts/settings";
 
@@ -321,6 +321,13 @@ const EMPTY_THREAD_DRAFT = Object.freeze<ComposerThreadDraftState>({
   runtimeMode: null,
   interactionMode: null,
 });
+
+type PersistedAttachmentStorageStatus = "missing" | "ready" | "mismatch";
+
+interface PersistedAttachmentStorageSnapshot {
+  ids: string[];
+  status: PersistedAttachmentStorageStatus;
+}
 
 function createEmptyThreadDraft(): ComposerThreadDraftState {
   return {
@@ -1113,9 +1120,14 @@ function normalizeCurrentPersistedComposerDraftStoreState(
   };
 }
 
-function readPersistedAttachmentIdsFromStorage(threadId: ThreadId): string[] {
+function readPersistedAttachmentSnapshotFromStorage(
+  threadId: ThreadId,
+): PersistedAttachmentStorageSnapshot {
   if (threadId.length === 0) {
-    return [];
+    return { ids: [], status: "missing" };
+  }
+  if (getIsomorphicStorage().getItem(COMPOSER_DRAFT_STORAGE_KEY) === null) {
+    return { ids: [], status: "missing" };
   }
   try {
     const persisted = getLocalStorageItem(
@@ -1123,13 +1135,16 @@ function readPersistedAttachmentIdsFromStorage(threadId: ThreadId): string[] {
       PersistedComposerDraftStoreStorage,
     );
     if (!persisted || persisted.version !== COMPOSER_DRAFT_STORAGE_VERSION) {
-      return [];
+      return { ids: [], status: "mismatch" };
     }
-    return (persisted.state.draftsByThreadId[threadId]?.attachments ?? []).map(
-      (attachment) => attachment.id,
-    );
+    return {
+      ids: (persisted.state.draftsByThreadId[threadId]?.attachments ?? []).map(
+        (attachment) => attachment.id,
+      ),
+      status: "ready",
+    };
   } catch {
-    return [];
+    return { ids: [], status: "mismatch" };
   }
 }
 
@@ -1146,10 +1161,13 @@ function verifyPersistedAttachments(
     replace?: false,
   ) => void,
 ): void {
+  const persistedStorageBeforeFlush = readPersistedAttachmentSnapshotFromStorage(threadId);
   let persistedIdSet = new Set<string>();
   try {
     composerDebouncedStorage.flush();
-    persistedIdSet = new Set(readPersistedAttachmentIdsFromStorage(threadId));
+    if (persistedStorageBeforeFlush.status !== "mismatch") {
+      persistedIdSet = new Set(readPersistedAttachmentSnapshotFromStorage(threadId).ids);
+    }
   } catch {
     persistedIdSet = new Set();
   }
