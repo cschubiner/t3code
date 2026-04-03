@@ -1428,7 +1428,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       cwd: gitCwd,
       query: effectiveSkillQuery,
       codexHomePath: settings.providers.codex.homePath,
-      extraRoots: [],
+      extraRoots: settings.extraSkillRoots,
       enabled: isSkillTrigger,
       limit: 40,
     }),

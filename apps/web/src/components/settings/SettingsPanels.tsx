@@ -59,6 +59,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "..
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ProjectFavicon } from "../ProjectFavicon";
@@ -187,6 +188,10 @@ function getProviderSummary(provider: ServerProvider | undefined) {
 function getProviderVersionLabel(version: string | null | undefined) {
   if (!version) return null;
   return version.startsWith("v") ? version : `v${version}`;
+}
+
+function formatSkillRootsForTextarea(roots: readonly string[]) {
+  return roots.join("\n");
 }
 
 function useRelativeTimeTick(intervalMs = 1_000) {
@@ -466,6 +471,11 @@ export function useSettingsRestore(onRestored?: () => void) {
   const { theme, setTheme } = useTheme();
   const settings = useSettings();
   const { resetSettings } = useUpdateSettings();
+  const isSkillDiscoveryDirty =
+    settings.extraSkillRoots.length !== DEFAULT_UNIFIED_SETTINGS.extraSkillRoots.length ||
+    settings.extraSkillRoots.some(
+      (root, index) => root !== DEFAULT_UNIFIED_SETTINGS.extraSkillRoots[index],
+    );
 
   const isGitWritingModelDirty = !Equal.equals(
     settings.textGenerationModelSelection ?? null,
@@ -499,11 +509,13 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Delete confirmation"]
         : []),
       ...(isGitWritingModelDirty ? ["Git writing model"] : []),
+      ...(isSkillDiscoveryDirty ? ["Skill discovery"] : []),
       ...(areProviderSettingsDirty ? ["Providers"] : []),
     ],
     [
       areProviderSettingsDirty,
       isGitWritingModelDirty,
+      isSkillDiscoveryDirty,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.defaultThreadEnvMode,
@@ -588,6 +600,7 @@ export function GeneralSettingsPanel() {
   const availableEditors = useServerAvailableEditors();
   const serverProviders = useServerProviders();
   const codexHomePath = settings.providers.codex.homePath;
+  const extraSkillRoots = settings.extraSkillRoots;
 
   const textGenerationModelSelection = resolveAppModelSelectionState(settings, serverProviders);
   const textGenProvider = textGenerationModelSelection.provider;
@@ -1572,6 +1585,50 @@ export function GeneralSettingsPanel() {
             </div>
           );
         })}
+      </SettingsSection>
+
+      <SettingsSection title="Skill discovery">
+        <SettingsRow
+          title="Extra skill roots"
+          description="Add extra skill roots outside your workspace and CODEX_HOME. Enter one absolute path per line."
+          status={
+            <span className="block break-all font-mono text-[11px] whitespace-pre-wrap text-foreground">
+              {extraSkillRoots.length > 0 ? formatSkillRootsForTextarea(extraSkillRoots) : "None"}
+            </span>
+          }
+          control={
+            extraSkillRoots.length > 0 ? (
+              <SettingResetButton
+                label="skill discovery"
+                onClick={() =>
+                  updateSettings({
+                    extraSkillRoots: DEFAULT_UNIFIED_SETTINGS.extraSkillRoots,
+                  })
+                }
+              />
+            ) : null
+          }
+        >
+          <label htmlFor="skill-roots" className="block">
+            <span className="block text-xs font-medium text-foreground">Extra skill roots</span>
+            <Textarea
+              id="skill-roots"
+              className="mt-1.5"
+              value={formatSkillRootsForTextarea(extraSkillRoots)}
+              onChange={(event) =>
+                updateSettings({
+                  extraSkillRoots: event.target.value.split(/\r?\n/),
+                })
+              }
+              placeholder={"/Users/you/.codex/skills\n/Users/you/dotfiles/.codex/skills"}
+              rows={4}
+              spellCheck={false}
+            />
+            <span className="mt-1 block text-xs text-muted-foreground">
+              Workspace-local skills from <code>.codex/skills</code> are discovered automatically.
+            </span>
+          </label>
+        </SettingsRow>
       </SettingsSection>
 
       <SettingsSection title="Advanced">
