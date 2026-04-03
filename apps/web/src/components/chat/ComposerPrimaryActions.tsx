@@ -24,6 +24,8 @@ interface ComposerPrimaryActionsProps {
   hasSendableContent: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
+  onSteer: () => void;
+  onQueue: () => void;
   onImplementPlanInNewThread: () => void;
 }
 
@@ -53,6 +55,8 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   hasSendableContent,
   onPreviousPendingQuestion,
   onInterrupt,
+  onSteer,
+  onQueue,
   onImplementPlanInNewThread,
 }: ComposerPrimaryActionsProps) {
   if (pendingAction) {
@@ -105,14 +109,27 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     return (
       <div className={cn("flex items-center justify-end", compact ? "gap-1.5" : "gap-2")}>
         {hasSendableContent ? (
-          <Button
-            type="submit"
-            size="sm"
-            className={cn("rounded-full", compact ? "px-3" : "px-4")}
-            disabled={isPreparingWorktree || isSendBusy || isConnecting}
-          >
-            Queue
-          </Button>
+          <>
+            <Button
+              type="button"
+              size="sm"
+              className={cn("rounded-full", compact ? "px-3" : "px-4")}
+              disabled={isSendBusy || isConnecting}
+              onClick={onSteer}
+            >
+              Steer
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className={cn("rounded-full", compact ? "px-3" : "px-4")}
+              disabled={isPreparingWorktree || isSendBusy || isConnecting}
+              onClick={onQueue}
+            >
+              Queue
+            </Button>
+          </>
         ) : null}
         <button
           type="button"

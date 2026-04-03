@@ -26,6 +26,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { render } from "vitest-browser-react";
 
 import { useComposerDraftStore } from "../composerDraftStore";
+import { useQueuedTurnStore } from "../queuedTurnStore";
 import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   type TerminalContextDraft,
@@ -120,6 +121,10 @@ function modShiftShortcutModifiers(): Pick<KeyboardEventInit, "ctrlKey" | "metaK
   return isMacPlatform(navigator.platform)
     ? { metaKey: true, shiftKey: true }
     : { ctrlKey: true, shiftKey: true };
+}
+
+function steerShortcutModifiers(): Pick<KeyboardEventInit, "ctrlKey" | "metaKey"> {
+  return isMacPlatform(navigator.platform) ? { metaKey: true } : { ctrlKey: true };
 }
 
 function isoAt(offsetSeconds: number): string {
@@ -314,6 +319,35 @@ function createSnapshotForTargetUser(options: {
       },
     ],
     updatedAt: NOW_ISO,
+  };
+}
+
+function createRunningSnapshotForTargetUser(options: {
+  targetMessageId: MessageId;
+  targetText: string;
+}): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    ...options,
+    sessionStatus: "running",
+  });
+  const thread = snapshot.threads[0];
+  if (!thread?.session) {
+    return snapshot;
+  }
+  const session = thread.session;
+  const runningSession: typeof session = {
+    ...session,
+    status: "running",
+    activeTurnId: "turn-running" as TurnId,
+  };
+  const threads = [...snapshot.threads];
+  threads[0] = {
+    ...thread,
+    session: runningSession,
+  };
+  return {
+    ...snapshot,
+    threads,
   };
 }
 
@@ -894,6 +928,15 @@ async function waitForButtonByText(text: string): Promise<HTMLButtonElement> {
   return waitForElement(() => findButtonByText(text), `Unable to find "${text}" button.`);
 }
 
+function listDispatchCommandsByType(type: string): Array<{ _tag: string; [key: string]: unknown }> {
+  return wsRequests.filter((request) => {
+    if (request._tag !== ORCHESTRATION_WS_METHODS.dispatchCommand) {
+      return false;
+    }
+    return request.type === type;
+  }) as Array<{ _tag: string; [key: string]: unknown }>;
+}
+
 function findButtonContainingText(text: string): HTMLButtonElement | null {
   return (Array.from(document.querySelectorAll("button")).find((button) =>
     button.textContent?.includes(text),
@@ -1244,6 +1287,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
       projectDraftThreadIdByProjectId: {},
       stickyModelSelectionByProvider: {},
       stickyActiveProvider: null,
+    });
+    useQueuedTurnStore.setState({
+      threadsByThreadId: {},
     });
     useStore.setState({
       projects: [],
@@ -2247,6 +2293,128 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
 
       await waitForButtonByText("Local");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("steers immediately with mod+enter during a running turn", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshotForTargetUser({
+        targetMessageId: "msg-user-steer-shortcut" as MessageId,
+        targetText: "steer shortcut target",
+      }),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Steer this right now");
+      await waitForLayout();
+
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+          ...steerShortcutModifiers(),
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          const turnStartRequest = listDispatchCommandsByType("thread.turn.start").at(-1);
+          const command = turnStartRequest as { message?: { text?: string } } | undefined;
+          expect(command?.message?.text).toBe("Steer this right now");
+          expect(useQueuedTurnStore.getState().threadsByThreadId[THREAD_ID]?.items ?? []).toEqual(
+            [],
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("queues next up with mod+shift+enter during a running turn", async () => {
+    useQueuedTurnStore.getState().enqueueTurn(THREAD_ID, {
+      id: "queued-head",
+      text: "Current next up",
+      attachments: [],
+      terminalContexts: [],
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5",
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdAt: isoAt(90),
+      updatedAt: isoAt(90),
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshotForTargetUser({
+        targetMessageId: "msg-user-next-up-shortcut" as MessageId,
+        targetText: "next up shortcut target",
+      }),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Put this next");
+      await waitForLayout();
+
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+          ...modShiftShortcutModifiers(),
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(
+            useQueuedTurnStore
+              .getState()
+              .threadsByThreadId[THREAD_ID]?.items.map((entry) => entry.text),
+          ).toEqual(["Put this next", "Current next up"]);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("steers immediately from the composer button during a running turn", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshotForTargetUser({
+        targetMessageId: "msg-user-steer-button" as MessageId,
+        targetText: "steer button target",
+      }),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Button steer");
+      await waitForLayout();
+
+      findButtonByText("Steer")?.click();
+
+      await vi.waitFor(
+        () => {
+          const turnStartRequest = listDispatchCommandsByType("thread.turn.start").at(-1);
+          const command = turnStartRequest as { message?: { text?: string } } | undefined;
+          expect(command?.message?.text).toBe("Button steer");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
     } finally {
       await mounted.cleanup();
     }

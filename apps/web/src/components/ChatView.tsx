@@ -366,6 +366,8 @@ const terminalContextIdListsEqual = (
 ): boolean =>
   contexts.length === ids.length && contexts.every((context, index) => context.id === ids[index]);
 
+type ComposerSubmissionDisposition = "default" | "queue" | "queue-front" | "steer";
+
 interface ChatViewProps {
   threadId: ThreadId;
 }
@@ -1088,6 +1090,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const canResumeQueuedTurns =
     queuedTurnPauseReason !== null && queuedTurnDispatchGate.pauseReason === null;
+  const composerHasContent = composerSendState.hasSendableContent;
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
   useEffect(() => {
     const hasTransientWork = isSendBusy || isConnecting || isRevertingCheckpoint;
@@ -3118,6 +3121,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       sendableComposerTerminalContexts: TerminalContextDraft[];
       expiredTerminalContextCount: number;
       interactionMode: ProviderInteractionMode;
+      prepend?: boolean;
     }) => {
       if (!activeThread || !isServerThread) {
         return false;
@@ -3162,6 +3166,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
         createdAt,
         updatedAt: createdAt,
       });
+      if (input.prepend) {
+        moveQueuedTurn(threadId, queuedTurnId, 0);
+      }
 
       if (input.expiredTerminalContextCount > 0) {
         const toastCopy = buildExpiredTerminalContextToastCopy(
@@ -3189,6 +3196,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       composerImages,
       enqueueQueuedTurn,
       isServerThread,
+      moveQueuedTurn,
       runtimeMode,
       selectedModel,
       selectedModelSelection,
@@ -3355,7 +3363,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     threadId,
   ]);
 
-  const onSend = async (e?: { preventDefault: () => void }) => {
+  const onSend = async (
+    e?: { preventDefault: () => void },
+    disposition: ComposerSubmissionDisposition = "default",
+  ) => {
     e?.preventDefault();
     const api = readNativeApi();
     if (!api || !activeThread) return;
@@ -3379,6 +3390,28 @@ export default function ChatView({ threadId }: ChatViewProps) {
         draftText: trimmed,
         planMarkdown: activeProposedPlan.planMarkdown,
       });
+      if (phase === "running") {
+        if (disposition === "steer") {
+          promptRef.current = "";
+          clearComposerDraftContent(activeThread.id);
+          setComposerHighlightedItemId(null);
+          setComposerCursor(0);
+          setComposerTrigger(null);
+          await onSubmitPlanFollowUp({
+            text: followUp.text,
+            interactionMode: followUp.interactionMode,
+          });
+          return;
+        }
+        await enqueueCurrentComposerTurn({
+          promptForSend: followUp.text,
+          sendableComposerTerminalContexts: [],
+          expiredTerminalContextCount: 0,
+          interactionMode: followUp.interactionMode,
+          prepend: disposition === "queue-front",
+        });
+        return;
+      }
       promptRef.current = "";
       clearComposerDraftContent(activeThread.id);
       setComposerHighlightedItemId(null);
@@ -3421,12 +3454,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       return;
     }
-    if (isServerThread && threadHasStarted(activeThread) && !queuedTurnDispatchGate.canDispatch) {
+    const shouldSteerImmediately = disposition === "steer" && phase === "running";
+    if (
+      isServerThread &&
+      threadHasStarted(activeThread) &&
+      !queuedTurnDispatchGate.canDispatch &&
+      !shouldSteerImmediately
+    ) {
       await enqueueCurrentComposerTurn({
         promptForSend,
         sendableComposerTerminalContexts,
         expiredTerminalContextCount,
         interactionMode,
+        prepend: disposition === "queue-front",
       });
       return;
     }
@@ -4499,8 +4539,34 @@ export default function ChatView({ threadId }: ChatViewProps) {
     key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
     event: KeyboardEvent,
   ) => {
+    const steerModifierPressed = isMacPlatform(navigator.platform) ? event.metaKey : event.ctrlKey;
+
     if (key === "Tab" && event.shiftKey) {
       toggleInteractionMode();
+      return true;
+    }
+
+    if (
+      key === "Enter" &&
+      phase === "running" &&
+      composerHasContent &&
+      !event.shiftKey &&
+      !event.altKey &&
+      steerModifierPressed
+    ) {
+      void onSend(undefined, "steer");
+      return true;
+    }
+
+    if (
+      key === "Enter" &&
+      (phase === "running" || isPreparingWorktree) &&
+      composerHasContent &&
+      event.shiftKey &&
+      !event.altKey &&
+      steerModifierPressed
+    ) {
+      void onSend(undefined, "queue-front");
       return true;
     }
 
@@ -5158,9 +5224,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
                           isSendBusy={isSendBusy}
                           isConnecting={isConnecting}
                           isPreparingWorktree={isPreparingWorktree}
-                          hasSendableContent={composerSendState.hasSendableContent}
+                          hasSendableContent={composerHasContent}
                           onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                           onInterrupt={() => void onInterrupt()}
+                          onSteer={() => void onSend(undefined, "steer")}
+                          onQueue={() => void onSend(undefined, "queue")}
                           onImplementPlanInNewThread={() => void onImplementPlanInNewThread()}
                         />
                       </div>
