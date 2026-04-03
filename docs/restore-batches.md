@@ -65,7 +65,7 @@ Restore non-queue sidebar UX after the shortcut substrate is back.
 - `8c7af835` dedupe sidebar pr mentions -> restored in `412d14cc`
 - `23529a62` fix pr pill merge status lookup -> restored in `412d14cc`
 - `f1e49e60` polish sidebar thread rows
-- `ff24a79e` match delete navigation to sidebar next thread
+- `ff24a79e` match delete navigation to sidebar next thread -> restored in `bc4c34fc`
 - `d54ecdad` shrink sidebar project toggle further
 - `246a9aa3` shrink sidebar project toggle
 - `c590e6c0` test sidebar navigation with manual project sort
