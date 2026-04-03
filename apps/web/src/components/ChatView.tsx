@@ -12,6 +12,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ServerProvider,
+  type SkillSummary,
   type ThreadId,
   type TurnId,
   type KeybindingCommand,
@@ -36,6 +37,7 @@ import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "~/lib/gitReactQuery";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
+import { skillSearchQueryOptions } from "~/lib/skillReactQuery";
 import { isElectron } from "../env";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import {
@@ -225,6 +227,7 @@ const IMAGE_ONLY_BOOTSTRAP_PROMPT =
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
+const EMPTY_SKILLS: SkillSummary[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 const EMPTY_QUEUED_TURN_DRAFTS: readonly QueuedTurnDraft[] = [];
 
@@ -1335,12 +1338,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const composerTriggerKind = composerTrigger?.kind ?? null;
   const pathTriggerQuery = composerTrigger?.kind === "path" ? composerTrigger.query : "";
   const isPathTrigger = composerTriggerKind === "path";
+  const skillTriggerQuery = composerTrigger?.kind === "skill" ? composerTrigger.query : "";
+  const isSkillTrigger = composerTriggerKind === "skill";
   const [debouncedPathQuery, composerPathQueryDebouncer] = useDebouncedValue(
     pathTriggerQuery,
     { wait: COMPOSER_PATH_QUERY_DEBOUNCE_MS },
     (debouncerState) => ({ isPending: debouncerState.isPending }),
   );
+  const [debouncedSkillQuery, composerSkillQueryDebouncer] = useDebouncedValue(
+    skillTriggerQuery,
+    { wait: COMPOSER_PATH_QUERY_DEBOUNCE_MS },
+    (debouncerState) => ({ isPending: debouncerState.isPending }),
+  );
   const effectivePathQuery = pathTriggerQuery.length > 0 ? debouncedPathQuery : "";
+  const effectiveSkillQuery = skillTriggerQuery.length > 0 ? debouncedSkillQuery : "";
   const branchesQuery = useQuery(gitBranchesQueryOptions(gitCwd));
   const keybindings = useServerKeybindings();
   const availableEditors = useServerAvailableEditors();
@@ -1383,7 +1394,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
       limit: 80,
     }),
   );
+  const skillSearchResultQuery = useQuery(
+    skillSearchQueryOptions({
+      cwd: gitCwd,
+      query: effectiveSkillQuery,
+      codexHomePath: settings.providers.codex.homePath,
+      extraRoots: [],
+      enabled: isSkillTrigger,
+      limit: 40,
+    }),
+  );
   const workspaceEntries = workspaceEntriesQuery.data?.entries ?? EMPTY_PROJECT_ENTRIES;
+  const discoveredSkills = skillSearchResultQuery.data?.skills ?? EMPTY_SKILLS;
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
@@ -1436,6 +1458,27 @@ export default function ChatView({ threadId }: ChatViewProps) {
         .filter((item) => item !== undefined);
     }
 
+    if (composerTrigger.kind === "skill") {
+      return discoveredSkills.map((skill) => ({
+        id: `skill:${skill.source}:${skill.name}:${skill.skillPath}`,
+        type: "skill",
+        name: skill.name,
+        source: skill.source,
+        label: `$${skill.name}`,
+        description:
+          [
+            skill.source === "workspace"
+              ? "Workspace"
+              : skill.source === "extra-root"
+                ? "Extra root"
+                : "Codex home",
+            skill.description,
+          ]
+            .filter(Boolean)
+            .join(" · ") || "Skill",
+      }));
+    }
+
     return searchableModelOptions
       .filter(({ searchSlug, searchName, searchProvider }) => {
         const query = composerTrigger.query.trim().toLowerCase();
@@ -1452,7 +1495,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         label: name,
         description: `${providerLabel} · ${slug}`,
       }));
-  }, [composerTrigger, searchableModelOptions, workspaceEntries]);
+  }, [composerTrigger, discoveredSkills, searchableModelOptions, workspaceEntries]);
   const composerMenuOpen = Boolean(composerTrigger);
   const activeComposerMenuItem = useMemo(
     () =>
@@ -4140,6 +4183,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
         }
         return;
       }
+      if (item.type === "skill") {
+        const applied = applyPromptReplacement(
+          trigger.rangeStart,
+          trigger.rangeEnd,
+          `$${item.name} `,
+          { expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd) },
+        );
+        if (applied) {
+          setComposerHighlightedItemId(null);
+        }
+        return;
+      }
       if (item.type === "slash-command") {
         if (item.command === "model") {
           const replacement = "/model ";
@@ -4216,10 +4271,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [composerHighlightedItemId, composerMenuItems],
   );
   const isComposerMenuLoading =
-    composerTriggerKind === "path" &&
-    ((pathTriggerQuery.length > 0 && composerPathQueryDebouncer.state.isPending) ||
-      workspaceEntriesQuery.isLoading ||
-      workspaceEntriesQuery.isFetching);
+    (composerTriggerKind === "path" &&
+      ((pathTriggerQuery.length > 0 && composerPathQueryDebouncer.state.isPending) ||
+        workspaceEntriesQuery.isLoading ||
+        workspaceEntriesQuery.isFetching)) ||
+    (composerTriggerKind === "skill" &&
+      ((skillTriggerQuery.length > 0 && composerSkillQueryDebouncer.state.isPending) ||
+        skillSearchResultQuery.isLoading ||
+        skillSearchResultQuery.isFetching));
 
   const onPromptChange = useCallback(
     (

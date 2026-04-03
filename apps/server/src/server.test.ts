@@ -686,6 +686,48 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("routes websocket rpc skills.search", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-skills-search-" });
+      const codexHomeDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-skills-home-" });
+      const skillPath = path.join(workspaceDir, ".codex", "skills", "agent-browser", "SKILL.md");
+      yield* fs.makeDirectory(path.dirname(skillPath), { recursive: true });
+      yield* fs.writeFileString(
+        skillPath,
+        "---\nname: agent-browser\ndescription: Browser automation\n---\n# Agent Browser\n",
+      );
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.skillsSearch]({
+            cwd: workspaceDir,
+            query: "agent",
+            limit: 10,
+            codexHomePath: codexHomeDir,
+          }),
+        ),
+      );
+
+      assert.deepEqual(response, {
+        skills: [
+          {
+            name: "agent-browser",
+            description: "Browser automation",
+            skillPath,
+            rootPath: path.join(workspaceDir, ".codex", "skills"),
+            source: "workspace",
+          },
+        ],
+        truncated: false,
+      });
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("routes websocket rpc projects.searchEntries errors", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();

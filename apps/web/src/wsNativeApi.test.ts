@@ -49,6 +49,9 @@ const rpcClientMock = {
     searchEntries: vi.fn(),
     writeFile: vi.fn(),
   },
+  skills: {
+    search: vi.fn(),
+  },
   shell: {
     openInEditor: vi.fn(),
   },
@@ -203,6 +206,40 @@ describe("wsNativeApi", () => {
     expect(rpcClientMock.server.getConfig).toHaveBeenCalledWith();
     expect(rpcClientMock.server.subscribeConfig).not.toHaveBeenCalled();
     expect(rpcClientMock.server.subscribeLifecycle).not.toHaveBeenCalled();
+  });
+
+  it("forwards skill search directly to the RPC client", async () => {
+    const searchResult = {
+      skills: [
+        {
+          name: "agent-browser",
+          description: "Browser automation skill",
+          skillPath: "/Users/test/.codex/skills/agent-browser/SKILL.md",
+          rootPath: "/Users/test/.codex/skills",
+          source: "codex-home" as const,
+        },
+      ],
+      truncated: false,
+    };
+    rpcClientMock.skills.search.mockResolvedValue(searchResult);
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+
+    await expect(
+      api.skills.search({
+        cwd: "/repo",
+        query: "agent",
+        limit: 40,
+        codexHomePath: "/Users/test/.codex",
+      }),
+    ).resolves.toEqual(searchResult);
+    expect(rpcClientMock.skills.search).toHaveBeenCalledWith({
+      cwd: "/repo",
+      query: "agent",
+      limit: 40,
+      codexHomePath: "/Users/test/.codex",
+    });
   });
 
   it("forwards terminal and orchestration stream events", async () => {

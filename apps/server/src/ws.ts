@@ -12,6 +12,7 @@ import {
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
   type TerminalEvent,
+  SkillSearchError,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -32,6 +33,7 @@ import { ProviderRegistry } from "./provider/Services/ProviderRegistry";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup";
 import { ServerSettingsService } from "./serverSettings";
+import { searchSkills } from "./skills";
 import { TerminalManager } from "./terminal/Services/Manager";
 import { WorkspaceEntries } from "./workspace/Services/WorkspaceEntries";
 import { WorkspaceFileSystem } from "./workspace/Services/WorkspaceFileSystem";
@@ -220,6 +222,14 @@ const WsRpcLayer = WsRpcGroup.toLayer(
             });
           }),
         ),
+      [WS_METHODS.skillsSearch]: (input) =>
+        Effect.tryPromise({
+          try: () => searchSkills(input),
+          catch: (cause) =>
+            new SkillSearchError({
+              message: `Failed to search skills: ${String(cause)}`,
+            }),
+        }),
       [WS_METHODS.shellOpenInEditor]: (input) => open.openInEditor(input),
       [WS_METHODS.gitStatus]: (input) => gitManager.status(input),
       [WS_METHODS.gitPull]: (input) => git.pullCurrentBranch(input.cwd),

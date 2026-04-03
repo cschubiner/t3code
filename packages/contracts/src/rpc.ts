@@ -49,6 +49,7 @@ import {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project";
+import { SkillSearchError, SkillSearchInput, SkillSearchResult } from "./skills";
 import {
   TerminalClearInput,
   TerminalCloseInput,
@@ -77,6 +78,7 @@ export const WS_METHODS = {
   projectsRemove: "projects.remove",
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
+  skillsSearch: "skills.search",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -155,6 +157,12 @@ export const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
   payload: ProjectWriteFileInput,
   success: ProjectWriteFileResult,
   error: ProjectWriteFileError,
+});
+
+export const WsSkillsSearchRpc = Rpc.make(WS_METHODS.skillsSearch, {
+  payload: SkillSearchInput,
+  success: SkillSearchResult,
+  error: SkillSearchError,
 });
 
 export const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {
@@ -329,6 +337,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerUpdateSettingsRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsWriteFileRpc,
+  WsSkillsSearchRpc,
   WsShellOpenInEditorRpc,
   WsGitStatusRpc,
   WsGitPullRpc,
