@@ -33,7 +33,7 @@ data sources.
 - `936b5e03` add project folder fuzzy search shortcut -> restored in `17e6583d`
 - `db6fb355` dedupe global thread search results -> restored in `f45f31aa`
 - `fd55d0bb` show relative time in thread search -> restored in `82d83ad4`
-- `58e9fac3` add browser coverage for thread search timestamps
+- `58e9fac3` add browser coverage for thread search timestamps -> restored in `6407be86`
 - `9b55f906` fix merged thread search validation
 - `6d6b35b0` fix slash command ranking -> restored in `9bbf39f2`
 - `e56d17af` add delete slash command -> folded into `9bbf39f2`
