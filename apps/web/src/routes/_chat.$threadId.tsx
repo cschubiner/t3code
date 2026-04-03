@@ -166,7 +166,7 @@ const DiffPanelInlineSidebar = (props: {
   );
 };
 
-function ChatThreadRouteView() {
+export function ChatThreadRouteView() {
   const bootstrapComplete = useStore((store) => store.bootstrapComplete);
   const navigate = useNavigate();
   const { isMobile, openMobile, setOpenMobile } = useSidebar();

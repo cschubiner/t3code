@@ -5,6 +5,8 @@ import { page } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
+let mockedSidebarProjectSortOrder: "updated_at" | "manual" = "updated_at";
+
 vi.mock("@tanstack/react-router", async () => {
   const actual =
     await vi.importActual<typeof import("@tanstack/react-router")>("@tanstack/react-router");
@@ -28,7 +30,7 @@ vi.mock("@tanstack/react-query", async () => {
 
 vi.mock("../hooks/useSettings", () => ({
   useSettings: () => ({
-    sidebarProjectSortOrder: "updated_at",
+    sidebarProjectSortOrder: mockedSidebarProjectSortOrder,
     sidebarThreadSortOrder: "updated_at",
     defaultThreadEnvMode: "local",
     confirmThreadArchive: true,
@@ -217,7 +219,7 @@ function buildThreads(): Thread[] {
   ];
 }
 
-async function mountSidebar() {
+async function mountSidebar(options?: { projectOrder?: ProjectId[] }) {
   const projects = [
     makeProject(PROJECT_ALPHA, "Alpha", "/repo/alpha"),
     makeProject(PROJECT_BETA, "Beta", "/repo/beta"),
@@ -246,7 +248,7 @@ async function mountSidebar() {
       [PROJECT_ALPHA]: true,
       [PROJECT_BETA]: true,
     },
-    projectOrder: [PROJECT_ALPHA, PROJECT_BETA],
+    projectOrder: options?.projectOrder ?? [PROJECT_ALPHA, PROJECT_BETA],
     threadLastVisitedAtById: {},
   });
   useComposerDraftStore.setState({
@@ -284,6 +286,7 @@ describe("Sidebar", () => {
     vi.restoreAllMocks();
     document.body.innerHTML = "";
     localStorage.clear();
+    mockedSidebarProjectSortOrder = "updated_at";
     useStore.setState({
       projects: [],
       threads: [],
@@ -356,6 +359,27 @@ describe("Sidebar", () => {
         expect(
           document.querySelector('button[aria-label="Create new thread in Beta"]'),
         ).toBeTruthy();
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("renders grouped projects in manual order when manual sorting is enabled", async () => {
+    mockedSidebarProjectSortOrder = "manual";
+    const mounted = await mountSidebar({ projectOrder: [PROJECT_BETA, PROJECT_ALPHA] });
+
+    try {
+      await page.getByRole("button", { name: "Grouped threads" }).click();
+
+      await vi.waitFor(() => {
+        const projectButtons = Array.from(
+          document.querySelectorAll<HTMLButtonElement>(
+            'button[aria-label^="Create new thread in "]',
+          ),
+        ).map((button) => button.getAttribute("aria-label"));
+
+        expect(projectButtons).toEqual(["Create new thread in Beta", "Create new thread in Alpha"]);
       });
     } finally {
       await mounted.cleanup();
