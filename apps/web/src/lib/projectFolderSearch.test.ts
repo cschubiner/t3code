@@ -56,4 +56,25 @@ describe("buildProjectFolderSearchResults", () => {
 
     expect(results.results.map((result) => result.project.id)).toContain("project-beta");
   });
+
+  it("matches against project folder paths as well as names", () => {
+    const results = buildProjectFolderSearchResults({
+      projects: PROJECTS,
+      query: "team/beta",
+    });
+
+    expect(results.results[0]?.project.id).toBe("project-beta");
+  });
+
+  it("reports truncation when a limit is applied", () => {
+    const results = buildProjectFolderSearchResults({
+      projects: PROJECTS,
+      query: "",
+      limit: 1,
+    });
+
+    expect(results.results).toHaveLength(1);
+    expect(results.totalResults).toBe(3);
+    expect(results.truncated).toBe(true);
+  });
 });

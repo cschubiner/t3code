@@ -27,6 +27,7 @@ import type { ServerConfigShape } from "./config.ts";
 import { deriveServerPaths, ServerConfig } from "./config.ts";
 import { makeRoutesLayer } from "./server.ts";
 import { resolveAttachmentRelativePath } from "./attachmentPaths.ts";
+import { CodexImport, type CodexImportShape } from "./codexImport/Services/CodexImport.ts";
 import {
   CheckpointDiffQuery,
   type CheckpointDiffQueryShape,
@@ -136,6 +137,7 @@ const buildAppUnderTest = (options?: {
     serverLifecycleEvents?: Partial<ServerLifecycleEventsShape>;
     serverRuntimeStartup?: Partial<ServerRuntimeStartupShape>;
     snippetRepository?: Partial<SnippetRepositoryShape>;
+    codexImport?: Partial<CodexImportShape>;
   };
 }) =>
   Effect.gen(function* () {
@@ -283,6 +285,30 @@ const buildAppUnderTest = (options?: {
           markHttpListening: Effect.void,
           enqueueCommand: (effect) => effect,
           ...options?.layers?.serverRuntimeStartup,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(CodexImport)({
+          listSessions: () => Effect.succeed([]),
+          peekSession: (input) =>
+            Effect.succeed({
+              sessionId: input.sessionId,
+              title: "Mock Codex Session",
+              cwd: null,
+              createdAt: null,
+              updatedAt: null,
+              model: null,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              kind: "direct",
+              transcriptAvailable: false,
+              transcriptError: null,
+              alreadyImported: false,
+              importedThreadId: null,
+              messages: [],
+            }),
+          importSessions: () => Effect.succeed({ results: [] }),
+          ...options?.layers?.codexImport,
         }),
       ),
       Layer.provide(

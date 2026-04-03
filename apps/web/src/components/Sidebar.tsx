@@ -1,5 +1,6 @@
 import {
   ArchiveIcon,
+  ArrowDownToLineIcon,
   ArrowUpDownIcon,
   ChevronRightIcon,
   FolderIcon,
@@ -95,6 +96,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { Toggle, ToggleGroup } from "./ui/toggle-group";
 import { GlobalThreadSearchDialog } from "./GlobalThreadSearchDialog";
 import { ProjectFolderSearchDialog } from "./ProjectFolderSearchDialog";
+import { ImportFromCodexDialog } from "./ImportFromCodexDialog";
 import {
   SidebarContent,
   SidebarFooter,
@@ -820,6 +822,7 @@ export default function Sidebar() {
   const [globalThreadSearchFocusRequestId, setGlobalThreadSearchFocusRequestId] = useState(0);
   const [isProjectFolderSearchOpen, setIsProjectFolderSearchOpen] = useState(false);
   const [projectFolderSearchFocusRequestId, setProjectFolderSearchFocusRequestId] = useState(0);
+  const [isImportFromCodexOpen, setIsImportFromCodexOpen] = useState(false);
   const selectedThreadIds = useThreadSelectionStore((s) => s.selectedThreadIds);
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
   const rangeSelectTo = useThreadSelectionStore((s) => s.rangeSelectTo);
@@ -2575,9 +2578,24 @@ export default function Sidebar() {
             focusRequestId={projectFolderSearchFocusRequestId}
             onSelectProject={handleProjectFolderSearchSelect}
           />
+          <ImportFromCodexDialog
+            open={isImportFromCodexOpen}
+            codexHomePath={appSettings.providers.codex.homePath}
+            onOpenChange={setIsImportFromCodexOpen}
+          />
           <SidebarFooter className="p-2">
             <SidebarUpdatePill />
             <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  size="sm"
+                  className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+                  onClick={() => setIsImportFromCodexOpen(true)}
+                >
+                  <ArrowDownToLineIcon className="size-3.5" />
+                  <span className="text-xs">Import from Codex</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
               <SidebarMenuItem>
                 <SidebarMenuButton
                   size="sm"

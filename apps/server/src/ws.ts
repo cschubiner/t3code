@@ -23,6 +23,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstab
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery";
+import { CodexImport } from "./codexImport/Services/CodexImport";
 import { ServerConfig } from "./config";
 import { GitCore } from "./git/Services/GitCore";
 import { GitManager } from "./git/Services/GitManager";
@@ -60,6 +61,7 @@ const WsRpcLayer = WsRpcGroup.toLayer(
     const startup = yield* ServerRuntimeStartup;
     const workspaceEntries = yield* WorkspaceEntries;
     const workspaceFileSystem = yield* WorkspaceFileSystem;
+    const codexImport = yield* CodexImport;
     const snippetsUpdatedPubSub = yield* Effect.acquireRelease(
       PubSub.unbounded<SnippetLibraryUpdatedPayload>(),
       (pubsub) => PubSub.shutdown(pubsub),
@@ -289,6 +291,9 @@ const WsRpcLayer = WsRpcGroup.toLayer(
             updatedAt: new Date().toISOString(),
           });
         }),
+      [WS_METHODS.codexImportListSessions]: (input) => codexImport.listSessions(input),
+      [WS_METHODS.codexImportPeekSession]: (input) => codexImport.peekSession(input),
+      [WS_METHODS.codexImportImportSessions]: (input) => codexImport.importSessions(input),
       [WS_METHODS.shellOpenInEditor]: (input) => open.openInEditor(input),
       [WS_METHODS.gitStatus]: (input) => gitManager.status(input),
       [WS_METHODS.gitPull]: (input) => git.pullCurrentBranch(input.cwd),

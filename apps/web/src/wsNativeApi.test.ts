@@ -63,6 +63,11 @@ const rpcClientMock = {
       registerListener(snippetUpdatedListeners, listener),
     ),
   },
+  codexImport: {
+    listSessions: vi.fn(),
+    peekSession: vi.fn(),
+    importSessions: vi.fn(),
+  },
   shell: {
     openInEditor: vi.fn(),
   },
@@ -296,6 +301,83 @@ describe("wsNativeApi", () => {
     });
 
     unsubscribe();
+  });
+
+  it("forwards codex import RPC directly to the RPC client", async () => {
+    const listResult = [
+      {
+        sessionId: "session-1",
+        title: "Imported session",
+        cwd: "/repo",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:10:00.000Z",
+        model: "gpt-5-codex",
+        kind: "direct" as const,
+        transcriptAvailable: true,
+        transcriptError: null,
+        alreadyImported: false,
+        importedThreadId: null,
+        lastUserMessage: "hello",
+        lastAssistantMessage: "hi",
+      },
+    ] as const;
+    const peekResult = {
+      sessionId: "session-1",
+      title: "Imported session",
+      cwd: "/repo",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:10:00.000Z",
+      model: "gpt-5-codex",
+      runtimeMode: "full-access" as const,
+      interactionMode: "default" as const,
+      kind: "direct" as const,
+      transcriptAvailable: true,
+      transcriptError: null,
+      alreadyImported: false,
+      importedThreadId: null,
+      messages: [],
+    };
+    const importResult = {
+      results: [
+        {
+          sessionId: "session-1",
+          status: "imported" as const,
+          threadId: ThreadId.makeUnsafe("thread-imported"),
+          projectId: ProjectId.makeUnsafe("project-imported"),
+          error: null,
+        },
+      ],
+    };
+
+    rpcClientMock.codexImport.listSessions.mockResolvedValue(listResult);
+    rpcClientMock.codexImport.peekSession.mockResolvedValue(peekResult);
+    rpcClientMock.codexImport.importSessions.mockResolvedValue(importResult);
+
+    const { createWsNativeApi } = await import("./wsNativeApi");
+    const api = createWsNativeApi();
+
+    await expect(
+      api.codexImport.listSessions({ kind: "direct", limit: 5, query: "import" }),
+    ).resolves.toEqual(listResult);
+    await expect(
+      api.codexImport.peekSession({ sessionId: "session-1", messageCount: 3 }),
+    ).resolves.toEqual(peekResult);
+    await expect(api.codexImport.importSessions({ sessionIds: ["session-1"] })).resolves.toEqual(
+      importResult,
+    );
+
+    expect(rpcClientMock.codexImport.listSessions).toHaveBeenCalledWith({
+      kind: "direct",
+      limit: 5,
+      query: "import",
+    });
+    expect(rpcClientMock.codexImport.peekSession).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      messageCount: 3,
+    });
+    expect(rpcClientMock.codexImport.importSessions).toHaveBeenCalledWith({
+      sessionIds: ["session-1"],
+    });
   });
 
   it("forwards terminal and orchestration stream events", async () => {

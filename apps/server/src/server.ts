@@ -48,6 +48,7 @@ import { ProjectFaviconResolverLive } from "./project/Layers/ProjectFaviconResol
 import { WorkspaceEntriesLive } from "./workspace/Layers/WorkspaceEntries";
 import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem";
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths";
+import { CodexImportLive } from "./codexImport/Layers/CodexImport";
 
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {
@@ -130,6 +131,12 @@ const CheckpointingLayerLive = Layer.empty.pipe(
   Layer.provideMerge(CheckpointStoreLive),
 );
 
+const ProviderSessionDirectoryLayerLive = ProviderSessionDirectoryLive.pipe(
+  Layer.provide(
+    ProviderSessionRuntimeRepositoryLive.pipe(Layer.provide(SqlitePersistenceLayerLive)),
+  ),
+);
+
 const ProviderLayerLive = Layer.unwrap(
   Effect.gen(function* () {
     const { providerEventLogPath } = yield* ServerConfig;
@@ -139,9 +146,7 @@ const ProviderLayerLive = Layer.unwrap(
     const canonicalEventLogger = yield* makeEventNdjsonLogger(providerEventLogPath, {
       stream: "canonical",
     });
-    const providerSessionDirectoryLayer = ProviderSessionDirectoryLive.pipe(
-      Layer.provide(ProviderSessionRuntimeRepositoryLive),
-    );
+    const providerSessionDirectoryLayer = ProviderSessionDirectoryLayerLive;
     const codexAdapterLayer = makeCodexAdapterLive(
       nativeEventLogger ? { nativeEventLogger } : undefined,
     );
@@ -186,6 +191,12 @@ const WorkspaceLayerLive = Layer.mergeAll(
   ),
 );
 
+const CodexImportLayerLive = CodexImportLive.pipe(
+  Layer.provide(GitCoreLive),
+  Layer.provide(OrchestrationLayerLive.pipe(Layer.provide(PersistenceLayerLive))),
+  Layer.provide(ProviderSessionDirectoryLayerLive),
+);
+
 const RuntimeServicesLive = Layer.empty.pipe(
   Layer.provideMerge(ServerRuntimeStartupLive),
   Layer.provideMerge(ReactorLayerLive),
@@ -194,6 +205,7 @@ const RuntimeServicesLive = Layer.empty.pipe(
   Layer.provideMerge(CheckpointingLayerLive),
   Layer.provideMerge(OrchestrationLayerLive),
   Layer.provideMerge(ProviderLayerLive),
+  Layer.provideMerge(ProviderSessionDirectoryLayerLive),
   Layer.provideMerge(GitLayerLive),
   Layer.provideMerge(TerminalLayerLive),
   Layer.provideMerge(PersistenceLayerLive),
@@ -201,6 +213,7 @@ const RuntimeServicesLive = Layer.empty.pipe(
   Layer.provideMerge(ProviderRegistryLive),
   Layer.provideMerge(ServerSettingsLive),
   Layer.provideMerge(WorkspaceLayerLive),
+  Layer.provideMerge(CodexImportLayerLive),
   Layer.provideMerge(ProjectFaviconResolverLive),
 
   // Misc.
