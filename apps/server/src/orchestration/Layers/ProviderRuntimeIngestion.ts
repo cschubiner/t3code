@@ -77,6 +77,17 @@ function truncateDetail(value: string, limit = 180): string {
   return value.length > limit ? `${value.slice(0, limit - 3)}...` : value;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
 function normalizeProposedPlanMarkdown(planMarkdown: string | undefined): string | undefined {
   const trimmed = planMarkdown?.trim();
   if (!trimmed) {
@@ -158,6 +169,10 @@ function requestKindFromCanonicalRequestType(
     default:
       return undefined;
   }
+}
+
+function runtimeErrorClassFromEvent(event: ProviderRuntimeEvent): string | undefined {
+  return asString(asRecord(event.payload)?.class);
 }
 
 function runtimeEventToActivities(
@@ -1158,10 +1173,18 @@ const make = Effect.fn("make")(function* () {
 
     if (event.type === "runtime.error") {
       const runtimeErrorMessage = event.payload.message;
+      const fatalProviderRuntimeError = runtimeErrorClassFromEvent(event) === "provider_error";
+      const preservesActiveTurn =
+        !fatalProviderRuntimeError &&
+        activeTurnId !== null &&
+        (eventTurnId === undefined || sameId(activeTurnId, eventTurnId));
 
       const shouldApplyRuntimeError = !STRICT_PROVIDER_LIFECYCLE_GUARD
         ? true
-        : activeTurnId === null || eventTurnId === undefined || sameId(activeTurnId, eventTurnId);
+        : fatalProviderRuntimeError ||
+          activeTurnId === null ||
+          eventTurnId === undefined ||
+          sameId(activeTurnId, eventTurnId);
 
       if (shouldApplyRuntimeError) {
         yield* orchestrationEngine.dispatch({
@@ -1170,10 +1193,14 @@ const make = Effect.fn("make")(function* () {
           threadId: thread.id,
           session: {
             threadId: thread.id,
-            status: "error",
+            status: preservesActiveTurn ? "running" : "error",
             providerName: event.provider,
             runtimeMode: thread.session?.runtimeMode ?? "full-access",
-            activeTurnId: eventTurnId ?? null,
+            activeTurnId: preservesActiveTurn
+              ? activeTurnId
+              : fatalProviderRuntimeError
+                ? null
+                : (eventTurnId ?? null),
             lastError: runtimeErrorMessage,
             updatedAt: now,
           },

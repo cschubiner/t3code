@@ -940,7 +940,19 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
                     : null,
                 sourceProposedPlan: thread.pendingSourceProposedPlan,
               })
-            : thread.latestTurn,
+            : event.payload.session.status === "error" && thread.latestTurn?.state === "running"
+              ? buildLatestTurn({
+                  previous: thread.latestTurn,
+                  turnId: thread.latestTurn.turnId,
+                  state: "error",
+                  requestedAt: thread.latestTurn.requestedAt,
+                  startedAt: thread.latestTurn.startedAt ?? event.payload.session.updatedAt,
+                  completedAt: thread.latestTurn.completedAt ?? event.payload.session.updatedAt,
+                  assistantMessageId: thread.latestTurn.assistantMessageId,
+                  sourceProposedPlan:
+                    thread.latestTurn.sourceProposedPlan ?? thread.pendingSourceProposedPlan,
+                })
+              : thread.latestTurn,
         updatedAt: event.occurredAt,
       }));
     }

@@ -24,6 +24,7 @@ import {
   TerminalOpenInput,
 } from "@t3tools/contracts";
 import { applyClaudePromptEffortPrefix, normalizeModelSlug } from "@t3tools/shared/model";
+import { isCodexAuthErrorMessage } from "@t3tools/shared/providerAuth";
 import { truncate } from "@t3tools/shared/String";
 import {
   useCallback,
@@ -1569,6 +1570,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
     () => providerStatuses.find((status) => status.provider === selectedProvider) ?? null,
     [selectedProvider, providerStatuses],
   );
+  const hasActiveCodexAuthFailure =
+    selectedProvider === "codex" &&
+    isCodexAuthErrorMessage(activeThread?.session?.lastError ?? null);
+  const isProviderBlockedForSend =
+    activeProviderStatus?.status === "error" || hasActiveCodexAuthFailure;
   const activeProjectCwd = activeProject?.cwd ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const threadTerminalRuntimeEnv = useMemo(() => {
@@ -3422,6 +3428,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
         expiredTerminalContextCount,
         interactionMode,
       });
+      return;
+    }
+    if (isProviderBlockedForSend) {
+      setStoreThreadError(
+        activeThread.id,
+        activeProviderStatus?.message ??
+          activeThread.session?.lastError ??
+          `${selectedProvider} is unavailable right now.`,
+      );
       return;
     }
     if (isSendBusy || isConnecting || sendInFlightRef.current) return;

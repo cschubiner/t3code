@@ -20,6 +20,7 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { isCodexAuthErrorMessage } from "@t3tools/shared/providerAuth";
 
 import {
   buildServerProvider,
@@ -188,13 +189,7 @@ export function parseAuthStatusFromOutput(result: CommandResult): {
     };
   }
 
-  if (
-    lowerOutput.includes("not logged in") ||
-    lowerOutput.includes("login required") ||
-    lowerOutput.includes("authentication required") ||
-    lowerOutput.includes("run `codex login`") ||
-    lowerOutput.includes("run codex login")
-  ) {
+  if (isCodexAuthErrorMessage(lowerOutput)) {
     return {
       status: "error",
       auth: { status: "unauthenticated" },
@@ -298,12 +293,15 @@ const probeCodexCapabilities = (input: {
   readonly homePath?: string;
 }) =>
   Effect.tryPromise((signal) => probeCodexAccount({ ...input, signal })).pipe(
+    Effect.mapError((cause) =>
+      cause instanceof Error ? cause : new Error(`Codex account probe failed: ${String(cause)}.`),
+    ),
     Effect.timeoutOption(CAPABILITIES_PROBE_TIMEOUT_MS),
-    Effect.result,
-    Effect.map((result) => {
-      if (Result.isFailure(result)) return undefined;
-      return Option.isSome(result.success) ? result.success.value : undefined;
-    }),
+    Effect.flatMap((result) =>
+      Option.isSome(result)
+        ? Effect.succeed(result.value)
+        : Effect.fail(new Error("Codex account probe timed out.")),
+    ),
   );
 
 const runCodexCommand = Effect.fn("runCodexCommand")(function* (args: ReadonlyArray<string>) {
@@ -325,7 +323,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   resolveAccount?: (input: {
     readonly binaryPath: string;
     readonly homePath?: string;
-  }) => Effect.Effect<CodexAccountSnapshot | undefined>,
+  }) => Effect.Effect<CodexAccountSnapshot | undefined, Error>,
 ): Effect.fn.Return<
   ServerProvider,
   ServerSettingsError,
@@ -456,12 +454,23 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
     Effect.result,
   );
-  const account = resolveAccount
-    ? yield* resolveAccount({
-        binaryPath: codexSettings.binaryPath,
-        homePath: codexSettings.homePath,
-      })
-    : undefined;
+  let account: CodexAccountSnapshot | undefined;
+  let accountProbeAuthFailed = false;
+  if (resolveAccount) {
+    const accountProbe = yield* resolveAccount({
+      binaryPath: codexSettings.binaryPath,
+      homePath: codexSettings.homePath,
+    }).pipe(Effect.result);
+    if (Result.isFailure(accountProbe)) {
+      const detail =
+        accountProbe.failure instanceof Error
+          ? accountProbe.failure.message
+          : String(accountProbe.failure);
+      accountProbeAuthFailed = isCodexAuthErrorMessage(detail);
+    } else {
+      account = accountProbe.success;
+    }
+  }
   const resolvedModels = adjustCodexModelsForAccount(models, account);
 
   if (Result.isFailure(authProbe)) {
@@ -501,6 +510,21 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   }
 
   const parsed = parseAuthStatusFromOutput(authProbe.success.value);
+  if (parsed.auth.status !== "unauthenticated" && accountProbeAuthFailed) {
+    return buildServerProvider({
+      provider: PROVIDER,
+      enabled: codexSettings.enabled,
+      checkedAt,
+      models: resolvedModels,
+      probe: {
+        installed: true,
+        version: parsedVersion,
+        status: "error",
+        auth: { status: "unauthenticated" },
+        message: "Codex CLI is not authenticated. Run `codex login` and try again.",
+      },
+    });
+  }
   const authType = codexAuthSubType(account);
   const authLabel = codexAuthSubLabel(account);
   return buildServerProvider({

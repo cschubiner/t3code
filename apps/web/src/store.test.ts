@@ -234,6 +234,52 @@ describe("store read model sync", () => {
     expect(next.threads[0]?.updatedAt).toBe("2026-02-27T00:05:00.000Z");
   });
 
+  it("marks a running latest turn errored when the session flips to error", () => {
+    const initialState = makeState(
+      makeThread({
+        latestTurn: {
+          turnId: TurnId.makeUnsafe("turn-1"),
+          state: "running",
+          requestedAt: "2026-02-25T12:28:00.000Z",
+          startedAt: "2026-02-25T12:28:30.000Z",
+          completedAt: null,
+          assistantMessageId: null,
+        },
+        session: {
+          provider: "codex",
+          status: "running",
+          orchestrationStatus: "running",
+          createdAt: "2026-02-25T12:28:30.000Z",
+          updatedAt: "2026-02-25T12:28:30.000Z",
+        },
+      }),
+    );
+
+    const next = applyOrchestrationEvent(initialState, {
+      type: "thread.session-set",
+      occurredAt: "2026-02-25T12:29:00.000Z",
+      payload: {
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        session: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          status: "error",
+          providerName: "codex",
+          runtimeMode: DEFAULT_RUNTIME_MODE,
+          activeTurnId: null,
+          lastError: "Provider runtime error",
+          updatedAt: "2026-02-25T12:29:00.000Z",
+        },
+      },
+    } as never);
+
+    expect(next.threads[0]?.latestTurn).toMatchObject({
+      turnId: TurnId.makeUnsafe("turn-1"),
+      state: "error",
+      completedAt: "2026-02-25T12:29:00.000Z",
+    });
+    expect(next.threads[0]?.error).toBe("Provider runtime error");
+  });
+
   it("maps archivedAt from the read model", () => {
     const initialState = makeState(makeThread());
     const archivedAt = "2026-02-28T00:00:00.000Z";

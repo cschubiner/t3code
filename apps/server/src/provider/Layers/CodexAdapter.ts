@@ -112,7 +112,12 @@ function asNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-const FATAL_CODEX_STDERR_SNIPPETS = ["failed to connect to websocket"];
+const FATAL_CODEX_STDERR_SNIPPETS = [
+  "failed to connect to websocket",
+  "worker quit with fatal",
+  "authrequired(",
+  "www_authenticate_header",
+];
 
 function isFatalCodexProcessStderrMessage(message: string): boolean {
   const normalized = message.toLowerCase();
