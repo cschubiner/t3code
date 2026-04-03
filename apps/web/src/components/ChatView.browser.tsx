@@ -3200,4 +3200,32 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await mounted.cleanup();
     }
   });
+
+  it("keeps the inline diff sidebar provider layout-less while the diff is closed", async () => {
+    const mounted = await mountChatView({
+      viewport: {
+        name: "wide-desktop",
+        width: 1440,
+        height: 1100,
+        textTolerancePx: 44,
+        attachmentTolerancePx: 56,
+      },
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-inline-diff-wrapper" as MessageId,
+        targetText: "wide desktop thread",
+      }),
+    });
+
+    try {
+      const wrappers = Array.from(
+        document.querySelectorAll<HTMLElement>("[data-slot='sidebar-wrapper']"),
+      );
+      const displays = wrappers.map((wrapper) => getComputedStyle(wrapper).display);
+
+      expect(wrappers).toHaveLength(2);
+      expect(displays).toEqual(["flex", "contents"]);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
 });
