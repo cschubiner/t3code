@@ -115,6 +115,42 @@ describe("buildGlobalThreadSearchResults", () => {
     ]);
     expect(results.results[0]?.projectName).toBe("Alpha");
     expect(results.results[1]?.projectName).toBe("Beta");
+    expect(results.results[0]?.matchCount).toBe(1);
+    expect(results.results[1]?.matchCount).toBe(1);
+  });
+
+  it("returns at most one result per thread and counts all matches", () => {
+    const threads: Thread[] = [
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-1"),
+        projectId: projectA.id,
+        title: "Needle thread",
+        latestTurn: makeLatestTurn({
+          startedAt: "2026-03-02T00:00:00.000Z",
+          completedAt: "2026-03-02T00:00:01.000Z",
+        }),
+        messages: [
+          {
+            id: MessageId.makeUnsafe("message-1"),
+            role: "assistant",
+            text: "needle once, needle twice",
+            createdAt: "2026-03-02T00:00:00.000Z",
+            streaming: false,
+          },
+        ],
+      }),
+    ];
+
+    const results = buildGlobalThreadSearchResults({
+      threads,
+      projects: [projectA],
+      query: "needle",
+    });
+
+    expect(results.totalResults).toBe(1);
+    expect(results.results).toHaveLength(1);
+    expect(results.results[0]?.threadId).toBe("thread-1");
+    expect(results.results[0]?.matchCount).toBe(3);
   });
 
   it("includes title matches but not project-name-only matches", () => {
@@ -198,21 +234,25 @@ describe("buildGlobalThreadSearchResults", () => {
   });
 
   it("caps the rendered result list", () => {
-    const thread = makeThread({
-      id: ThreadId.makeUnsafe("thread-1"),
-      projectId: projectA.id,
-      title: "Needle",
-      messages: Array.from({ length: GLOBAL_THREAD_SEARCH_RESULT_LIMIT + 20 }, (_, index) => ({
-        id: MessageId.makeUnsafe(`message-${index}`),
-        role: "user" as const,
-        text: `needle ${index}`,
-        createdAt: `2026-03-${String((index % 9) + 1).padStart(2, "0")}T00:00:00.000Z`,
-        streaming: false,
-      })),
-    });
+    const threads = Array.from({ length: GLOBAL_THREAD_SEARCH_RESULT_LIMIT + 20 }, (_, index) =>
+      makeThread({
+        id: ThreadId.makeUnsafe(`thread-${index}`),
+        projectId: projectA.id,
+        title: `Needle ${index}`,
+        messages: [
+          {
+            id: MessageId.makeUnsafe(`message-${index}`),
+            role: "user" as const,
+            text: `needle ${index}`,
+            createdAt: `2026-03-${String((index % 9) + 1).padStart(2, "0")}T00:00:00.000Z`,
+            streaming: false,
+          },
+        ],
+      }),
+    );
 
     const results = buildGlobalThreadSearchResults({
-      threads: [thread],
+      threads,
       projects: [projectA],
       query: "needle",
     });
