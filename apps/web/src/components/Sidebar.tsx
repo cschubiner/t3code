@@ -791,6 +791,7 @@ export default function Sidebar() {
   const dragInProgressRef = useRef(false);
   const suppressProjectClickAfterDragRef = useRef(false);
   const suppressProjectClickForContextMenuRef = useRef(false);
+  const visibleSidebarThreadIdsRef = useRef<readonly ThreadId[]>([]);
   const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
   const [isGlobalThreadSearchOpen, setIsGlobalThreadSearchOpen] = useState(false);
   const [globalThreadSearchFocusRequestId, setGlobalThreadSearchFocusRequestId] = useState(0);
@@ -1251,7 +1252,9 @@ export default function Sidebar() {
           return;
         }
       }
-      await deleteThread(threadId);
+      await deleteThread(threadId, {
+        getOrderedThreadIdsForNavigation: () => visibleSidebarThreadIdsRef.current,
+      });
     },
     [
       appSettings.confirmThreadDelete,
@@ -1304,7 +1307,10 @@ export default function Sidebar() {
 
       const deletedIds = new Set<ThreadId>(ids);
       for (const id of ids) {
-        await deleteThread(id, { deletedThreadIds: deletedIds });
+        await deleteThread(id, {
+          deletedThreadIds: deletedIds,
+          getOrderedThreadIdsForNavigation: () => visibleSidebarThreadIdsRef.current,
+        });
       }
       removeFromSelection(ids);
     },
@@ -1600,6 +1606,9 @@ export default function Sidebar() {
     () => getVisibleSidebarThreadIds(renderedProjects),
     [renderedProjects],
   );
+  useEffect(() => {
+    visibleSidebarThreadIdsRef.current = visibleSidebarThreadIds;
+  }, [visibleSidebarThreadIds]);
   const threadJumpCommandById = useMemo(() => {
     const mapping = new Map<ThreadId, NonNullable<ReturnType<typeof threadJumpCommandForIndex>>>();
     for (const [visibleThreadIndex, threadId] of visibleSidebarThreadIds.entries()) {

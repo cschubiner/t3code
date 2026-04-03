@@ -7,6 +7,7 @@ import { getFallbackThreadIdAfterDelete } from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useHandleNewThread } from "./useHandleNewThread";
 import { gitRemoveWorktreeMutationOptions } from "../lib/gitReactQuery";
+import { resolveThreadDeletionNavigationTarget } from "../lib/threadDeletion";
 import { newCommandId } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
 import { useStore } from "../store";
@@ -65,7 +66,13 @@ export function useThreadActions() {
   }, []);
 
   const deleteThread = useCallback(
-    async (threadId: ThreadId, opts: { deletedThreadIds?: ReadonlySet<ThreadId> } = {}) => {
+    async (
+      threadId: ThreadId,
+      opts: {
+        deletedThreadIds?: ReadonlySet<ThreadId>;
+        getOrderedThreadIdsForNavigation?: () => readonly ThreadId[];
+      } = {},
+    ) => {
       const api = readNativeApi();
       if (!api) return;
       const { projects, threads } = useStore.getState();
@@ -110,14 +117,23 @@ export function useThreadActions() {
         // Terminal may already be closed.
       }
 
+      const orderedThreadIdsForNavigation = opts.getOrderedThreadIdsForNavigation?.();
       const deletedThreadIds = opts.deletedThreadIds ?? new Set<ThreadId>();
       const shouldNavigateToFallback = routeThreadId === threadId;
-      const fallbackThreadId = getFallbackThreadIdAfterDelete({
-        threads,
-        deletedThreadId: threadId,
-        deletedThreadIds,
-        sortOrder: appSettings.sidebarThreadSortOrder,
-      });
+      const fallbackThreadId = shouldNavigateToFallback
+        ? orderedThreadIdsForNavigation
+          ? resolveThreadDeletionNavigationTarget({
+              deletedThreadId: threadId,
+              orderedThreadIds: orderedThreadIdsForNavigation,
+              deletedThreadIds,
+            })
+          : getFallbackThreadIdAfterDelete({
+              threads,
+              deletedThreadId: threadId,
+              deletedThreadIds,
+              sortOrder: appSettings.sidebarThreadSortOrder,
+            })
+        : null;
       await api.orchestration.dispatchCommand({
         type: "thread.delete",
         commandId: newCommandId(),
