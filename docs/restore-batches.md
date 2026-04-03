@@ -83,8 +83,8 @@ These commits likely need adaptation rather than blind cherry-picks.
 - `9b56879f` fix stale runtime working state (#82)
 - `0e5c9f02` fix stuck working state (#80)
 - `1e5ee7f4` fix stale working session state
-- `58c7fbef` fix missing sidebar working status
-- `7d6f03a6` integrate sidebar working fix with main
+- `58c7fbef` fix missing sidebar working status -> restored in `a94bc45a`
+- `7d6f03a6` integrate sidebar working fix with main -> restored in `a94bc45a`
 - `fd574794` reconcile imported worktree projects
 - `c60b7667` fix CI typing for imported worktree reconciliation
 - `31d78042` fix desktop rename shortcut -> restored in `a3ed91dc`
