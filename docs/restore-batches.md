@@ -50,7 +50,7 @@ Restore contracts and RPC first, then composer integration and tests.
 - `e2d093b8` fix skill autocomplete title layout -> restored in `beb70920`
 - `5315ae87` prioritize full skill autocomplete titles -> restored in `beb70920`
 - `3c76d535` stabilize skills search websocket test -> restored in `beb70920`
-- `6624de80` add global snippets library
+- `6624de80` add global snippets library -> restored in `95d3ea75`
 
 ## Batch 3: Sidebar and Thread UX
 
