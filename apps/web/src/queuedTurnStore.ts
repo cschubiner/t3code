@@ -36,11 +36,7 @@ export const QueuedTurnPauseReason = Schema.Literals([
 ]);
 export type QueuedTurnPauseReason = typeof QueuedTurnPauseReason.Type;
 
-export type QueuedTurnDispatchBlockReason =
-  | "disconnected"
-  | "connecting"
-  | "running"
-  | "local-dispatch";
+export type QueuedTurnDispatchBlockReason = "connecting" | "running" | "local-dispatch";
 
 export interface QueuedTurnDispatchGate {
   canDispatch: boolean;
@@ -97,14 +93,6 @@ export function deriveQueuedTurnDispatchGate(
       canDispatch: false,
       pauseReason: "pending-user-input",
       blockReason: null,
-    };
-  }
-
-  if (input.phase === "disconnected") {
-    return {
-      canDispatch: false,
-      pauseReason: null,
-      blockReason: "disconnected",
     };
   }
 

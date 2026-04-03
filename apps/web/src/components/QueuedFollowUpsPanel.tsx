@@ -72,8 +72,6 @@ function formatPauseReason(reason: QueuedTurnPauseReason): string {
 
 function formatBlockReason(reason: QueuedTurnDispatchBlockReason | null): string | null {
   switch (reason) {
-    case "disconnected":
-      return "Waiting for the thread to reconnect";
     case "connecting":
       return "Waiting for the session to finish connecting";
     case "running":
