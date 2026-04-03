@@ -31,13 +31,13 @@ data sources.
 - `eb736396` fix browser test setup for branch selector shortcut
 - `a89a9820` add thread search shortcuts -> restored in `27e804de`
 - `936b5e03` add project folder fuzzy search shortcut -> restored in `17e6583d`
-- `db6fb355` dedupe global thread search results
-- `fd55d0bb` show relative time in thread search
+- `db6fb355` dedupe global thread search results -> restored in `f45f31aa`
+- `fd55d0bb` show relative time in thread search -> restored in `82d83ad4`
 - `58e9fac3` add browser coverage for thread search timestamps
 - `9b55f906` fix merged thread search validation
-- `6d6b35b0` fix slash command ranking
-- `e56d17af` add delete slash command
-- `5db9583a` add delete slash command
+- `6d6b35b0` fix slash command ranking -> restored in `9bbf39f2`
+- `e56d17af` add delete slash command -> folded into `9bbf39f2`
+- `5db9583a` add delete slash command -> restored in `9bbf39f2`
 - `dbf3b0a9` add composer env toggle hotkey
 - `8bbf907b` Fix composer-focused sidebar hotkeys
 - `8cfc8879` docs: add main-state desktop boot shortcut
