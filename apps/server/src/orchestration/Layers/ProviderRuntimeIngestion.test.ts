@@ -416,6 +416,61 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBeNull();
   });
 
+  it("ignores a late turn.started after the same turn already completed", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-1");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-initial"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      createdAt: new Date().toISOString(),
+      turnId,
+    });
+
+    await waitForThread(
+      harness.engine,
+      (thread) => thread.session?.status === "running" && thread.session?.activeTurnId === turnId,
+    );
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-initial"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      createdAt: new Date().toISOString(),
+      turnId,
+      payload: {
+        state: "completed",
+      },
+    });
+
+    await waitForThread(
+      harness.engine,
+      (thread) => thread.session?.status === "ready" && thread.session?.activeTurnId === null,
+    );
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-late-duplicate"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      createdAt: new Date().toISOString(),
+      turnId,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === asThreadId("thread-1"));
+    expect(thread?.session).toMatchObject({
+      status: "ready",
+      activeTurnId: null,
+      lastError: null,
+    });
+  });
+
   it("does not clear active turn when session/thread started arrives mid-turn", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();

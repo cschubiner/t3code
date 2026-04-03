@@ -2771,14 +2771,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
       : "local";
 
   useEffect(() => {
-    if (phase !== "running") return;
+    if (!isWorking) return;
     const timer = window.setInterval(() => {
       setNowTick(Date.now());
     }, 1000);
     return () => {
       window.clearInterval(timer);
     };
-  }, [phase]);
+  }, [isWorking]);
 
   useEffect(() => {
     if (!activeThreadId) return;
