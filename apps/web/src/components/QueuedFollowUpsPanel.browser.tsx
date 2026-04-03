@@ -90,7 +90,7 @@ describe("QueuedFollowUpsPanel", () => {
       await page.getByRole("button", { name: "Edit" }).first().click();
       const editor = page.getByRole("textbox");
       await editor.fill("Updated first queued follow-up");
-      await page.getByRole("button", { name: "Save" }).click();
+      await page.getByRole("button", { name: "Save", exact: true }).click();
 
       expect(mounted.onSaveEdit).toHaveBeenCalledWith("turn-1", "Updated first queued follow-up");
 

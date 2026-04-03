@@ -1,6 +1,7 @@
 import "../index.css";
 
 import { ProjectId, ThreadId } from "@t3tools/contracts";
+import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { page } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
@@ -31,6 +32,7 @@ vi.mock("@tanstack/react-query", async () => {
 
 vi.mock("../hooks/useSettings", () => ({
   useSettings: () => ({
+    ...DEFAULT_UNIFIED_SETTINGS,
     sidebarProjectSortOrder: mockedSidebarProjectSortOrder,
     sidebarThreadSortOrder: "updated_at",
     defaultThreadEnvMode: "local",
@@ -79,6 +81,10 @@ vi.mock("./GlobalThreadSearchDialog", () => ({
 
 vi.mock("./ProjectFolderSearchDialog", () => ({
   ProjectFolderSearchDialog: () => null,
+}));
+
+vi.mock("./ImportFromCodexDialog", () => ({
+  ImportFromCodexDialog: () => null,
 }));
 
 vi.mock("./sidebar/SidebarUpdatePill", () => ({
