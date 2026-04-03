@@ -47,7 +47,7 @@ data sources.
 
 Restore contracts and RPC first, then composer integration and tests.
 
-- `71aa0098` add skill autocomplete -> core restore in `beb70920`; extra skill roots settings surface still pending
+- `71aa0098` add skill autocomplete -> fully restored across `beb70920` and `695f67ec`
 - `e2d093b8` fix skill autocomplete title layout -> restored in `beb70920`
 - `5315ae87` prioritize full skill autocomplete titles -> restored in `beb70920`
 - `3c76d535` stabilize skills search websocket test -> restored in `beb70920`
