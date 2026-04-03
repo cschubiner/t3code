@@ -277,6 +277,25 @@ export function isContextMenuPointerDown(input: {
   return input.isMac && input.button === 0 && input.ctrlKey;
 }
 
+export function isTypingInSidebarTextEntry(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+
+  const editableTarget =
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    target.isContentEditable
+      ? target
+      : target.closest<HTMLElement>("input, textarea, select, [contenteditable]");
+
+  if (!editableTarget) return false;
+
+  return (
+    editableTarget.closest("[data-sidebar='sidebar']") !== null ||
+    editableTarget.closest("[data-slot='sidebar']") !== null
+  );
+}
+
 export function resolveThreadRowClassName(input: {
   isActive: boolean;
   isSelected: boolean;

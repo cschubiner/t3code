@@ -116,6 +116,7 @@ import {
   getVisibleThreadsForProject,
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
+  isTypingInSidebarTextEntry,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
@@ -1529,6 +1530,9 @@ export default function Sidebar() {
       );
 
       if (event.defaultPrevented || event.repeat) {
+        return;
+      }
+      if (isTypingInSidebarTextEntry(event.target)) {
         return;
       }
 

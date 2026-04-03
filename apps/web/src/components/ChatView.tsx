@@ -114,7 +114,7 @@ import {
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Separator } from "./ui/separator";
-import { cn, randomUUID } from "~/lib/utils";
+import { cn, isMacPlatform, randomUUID } from "~/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
@@ -356,6 +356,17 @@ interface PendingPullRequestSetupRequest {
   threadId: ThreadId;
   worktreePath: string;
   scriptId: string;
+}
+
+function isComposerTextboxFocused(target: EventTarget | null): boolean {
+  const activeElement =
+    target instanceof HTMLElement
+      ? target
+      : document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+  if (!activeElement) return false;
+  return activeElement.closest('[data-testid="composer-editor"]') !== null;
 }
 
 function useLocalDispatchState(input: {
@@ -4001,6 +4012,31 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [isLocalDraftThread, scheduleComposerFocus, setDraftThreadContext, threadId],
   );
+  const canToggleComposerEnvMode =
+    isLocalDraftThread && !envLocked && !activeWorktreePath && !isComposerApprovalState;
+
+  useEffect(() => {
+    const handleComposerEnvModeShortcut = (event: globalThis.KeyboardEvent) => {
+      if (event.defaultPrevented || !canToggleComposerEnvMode) {
+        return;
+      }
+      if (!isComposerTextboxFocused(event.target)) {
+        return;
+      }
+
+      const usesMod = isMacPlatform(navigator.platform) ? event.metaKey : event.ctrlKey;
+      if (event.key.toLowerCase() !== "w" || !usesMod || !event.shiftKey || event.altKey) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      onEnvModeChange(envMode === "local" ? "worktree" : "local");
+    };
+
+    window.addEventListener("keydown", handleComposerEnvModeShortcut);
+    return () => window.removeEventListener("keydown", handleComposerEnvModeShortcut);
+  }, [canToggleComposerEnvMode, envMode, onEnvModeChange]);
 
   const applyPromptReplacement = useCallback(
     (

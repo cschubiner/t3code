@@ -9,6 +9,7 @@ import {
   getProjectSortTimestamp,
   hasUnseenCompletion,
   isContextMenuPointerDown,
+  isTypingInSidebarTextEntry,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadSeedContext,
@@ -164,6 +165,104 @@ describe("resolveSidebarNewThreadEnvMode", () => {
         defaultEnvMode: "worktree",
       }),
     ).toBe("local");
+  });
+});
+
+describe("isTypingInSidebarTextEntry", () => {
+  class FakeHTMLElement {
+    parent: FakeHTMLElement | null = null;
+    isContentEditable = false;
+
+    constructor(
+      readonly tagName: string,
+      readonly attributes: Record<string, string> = {},
+    ) {}
+
+    closest(selector: string): FakeHTMLElement | null {
+      return this.findAncestor((node) => {
+        switch (selector) {
+          case "[data-sidebar='sidebar']":
+            return node.attributes["data-sidebar"] === "sidebar";
+          case "[data-slot='sidebar']":
+            return node.attributes["data-slot"] === "sidebar";
+          case "input, textarea, select, [contenteditable]":
+            return (
+              node.tagName === "INPUT" ||
+              node.tagName === "TEXTAREA" ||
+              node.tagName === "SELECT" ||
+              node.isContentEditable
+            );
+          default:
+            return false;
+        }
+      });
+    }
+
+    private findAncestor(predicate: (node: FakeHTMLElement) => boolean): FakeHTMLElement | null {
+      if (predicate(this)) {
+        return this;
+      }
+      return this.parent?.findAncestor(predicate) ?? null;
+    }
+  }
+
+  class FakeHTMLInputElement extends FakeHTMLElement {
+    constructor() {
+      super("INPUT");
+    }
+  }
+
+  class FakeHTMLTextAreaElement extends FakeHTMLElement {
+    constructor() {
+      super("TEXTAREA");
+    }
+  }
+
+  class FakeHTMLSelectElement extends FakeHTMLElement {
+    constructor() {
+      super("SELECT");
+    }
+  }
+
+  function withMockedElementGlobals(run: () => void) {
+    const originals = {
+      HTMLElement: globalThis.HTMLElement,
+      HTMLInputElement: globalThis.HTMLInputElement,
+      HTMLTextAreaElement: globalThis.HTMLTextAreaElement,
+      HTMLSelectElement: globalThis.HTMLSelectElement,
+    };
+
+    Object.assign(globalThis, {
+      HTMLElement: FakeHTMLElement,
+      HTMLInputElement: FakeHTMLInputElement,
+      HTMLTextAreaElement: FakeHTMLTextAreaElement,
+      HTMLSelectElement: FakeHTMLSelectElement,
+    });
+
+    try {
+      run();
+    } finally {
+      Object.assign(globalThis, originals);
+    }
+  }
+
+  it("returns true for editable elements inside the sidebar", () => {
+    withMockedElementGlobals(() => {
+      const sidebar = new FakeHTMLElement("DIV", { "data-sidebar": "sidebar" });
+      const input = new FakeHTMLInputElement();
+      input.parent = sidebar;
+
+      expect(isTypingInSidebarTextEntry(input as unknown as EventTarget)).toBe(true);
+    });
+  });
+
+  it("returns false for the composer contenteditable outside the sidebar", () => {
+    withMockedElementGlobals(() => {
+      const composer = new FakeHTMLElement("DIV");
+      composer.isContentEditable = true;
+
+      expect(isTypingInSidebarTextEntry(composer as unknown as EventTarget)).toBe(false);
+    });
   });
 });
 
