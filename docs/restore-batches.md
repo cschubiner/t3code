@@ -34,7 +34,7 @@ data sources.
 - `db6fb355` dedupe global thread search results -> restored in `f45f31aa`
 - `fd55d0bb` show relative time in thread search -> restored in `82d83ad4`
 - `58e9fac3` add browser coverage for thread search timestamps -> restored in `6407be86`
-- `9b55f906` fix merged thread search validation
+- `9b55f906` fix merged thread search validation -> superseded by current main timeline/compiler state; thread-search assertions already restored
 - `6d6b35b0` fix slash command ranking -> restored in `9bbf39f2`
 - `e56d17af` add delete slash command -> folded into `9bbf39f2`
 - `5db9583a` add delete slash command -> restored in `9bbf39f2`
@@ -87,18 +87,18 @@ These commits likely need adaptation rather than blind cherry-picks.
 - `1e5ee7f4` fix stale working session state -> restored in `a309843b`
 - `58c7fbef` fix missing sidebar working status -> restored in `a94bc45a`
 - `7d6f03a6` integrate sidebar working fix with main -> restored in `a94bc45a`
-- `fd574794` reconcile imported worktree projects
-- `c60b7667` fix CI typing for imported worktree reconciliation
+- `fd574794` reconcile imported worktree projects -> restored in `60a1d3d3`
+- `c60b7667` fix CI typing for imported worktree reconciliation -> restored in `60a1d3d3`
 - `31d78042` fix desktop rename shortcut -> restored in `a3ed91dc`
 
 ## Batch 5: Codex Import
 
 Restore only after the RPC/runtime layers above are in place.
 
-- `5d6bd166` import from codex
-- `fe45f62a` fix codex import timestamp normalization
-- `c7e554ff` fix codex import dialog scrolling
-- `94e7fcb9` fix: repair legacy projection schema for codex import
+- `5d6bd166` import from codex -> restored in `60a1d3d3`
+- `fe45f62a` fix codex import timestamp normalization -> folded into `60a1d3d3`
+- `c7e554ff` fix codex import dialog scrolling -> folded into `60a1d3d3`
+- `94e7fcb9` fix: repair legacy projection schema for codex import -> already present on current main
 
 ## Batch Q: Queue History
 
