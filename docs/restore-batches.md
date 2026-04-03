@@ -10,8 +10,8 @@ Start here so later restores land on a stable base.
 
 - `4b33147d` Restore MessagesTimeline virtualization row markers
 - `8b9ce137` Fix sync migration registry and snapshot expectations
-- `fb7547fd` fix browser rpc harness bootstrapping
-- `552405b4` fix browser rpc harness bootstrapping
+- `fb7547fd` fix browser rpc harness bootstrapping -> restored in `31dd6802`
+- `552405b4` fix browser rpc harness bootstrapping -> restored in `31dd6802`
 - `8eb3c648` stabilize keybindings toast replay test -> restored in `aa25bc91`
 - `4956345b` stabilize keybindings toast browser test -> restored in `aa25bc91`
 - `c4bed798` stabilize chatview browser checks -> restored in `1882ff95`
