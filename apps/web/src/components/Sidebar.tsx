@@ -998,6 +998,20 @@ export default function Sidebar() {
     renamingInputRef.current = null;
   }, []);
 
+  const startRenameThread = useCallback(
+    (threadId: ThreadId) => {
+      const thread = sidebarThreadsById[threadId];
+      if (!thread) {
+        return false;
+      }
+      setRenamingThreadId(threadId);
+      setRenamingTitle(thread.title);
+      renamingCommittedRef.current = false;
+      return true;
+    },
+    [sidebarThreadsById],
+  );
+
   const commitRename = useCallback(
     async (threadId: ThreadId, newTitle: string, originalTitle: string) => {
       const finishRename = () => {
@@ -1101,9 +1115,7 @@ export default function Sidebar() {
       );
 
       if (clicked === "rename") {
-        setRenamingThreadId(threadId);
-        setRenamingTitle(thread.title);
-        renamingCommittedRef.current = false;
+        startRenameThread(threadId);
         return;
       }
 
@@ -1149,6 +1161,7 @@ export default function Sidebar() {
       markThreadUnread,
       projectCwdById,
       sidebarThreadsById,
+      startRenameThread,
     ],
   );
 
@@ -1532,14 +1545,21 @@ export default function Sidebar() {
       if (event.defaultPrevented || event.repeat) {
         return;
       }
-      if (isTypingInSidebarTextEntry(event.target)) {
-        return;
-      }
 
       const command = resolveShortcutCommand(event, keybindings, {
         platform,
         context: getShortcutContext(),
       });
+      if (
+        isTypingInSidebarTextEntry(event.target) &&
+        command !== "sidebar.rename" &&
+        command !== "sidebar.thread.previous" &&
+        command !== "sidebar.thread.next" &&
+        command !== "sidebar.project.previous" &&
+        command !== "sidebar.project.next"
+      ) {
+        return;
+      }
       if (command === "projects.search") {
         if (
           document.querySelector("[data-slot='dialog-popup']") !== null ||
@@ -1564,6 +1584,18 @@ export default function Sidebar() {
         event.stopPropagation();
         setIsGlobalThreadSearchOpen(true);
         setGlobalThreadSearchFocusRequestId((current) => current + 1);
+        return;
+      }
+      if (command === "sidebar.rename") {
+        const selectedIds = [...selectedThreadIds];
+        const renameTargetThreadId =
+          selectedIds.length === 1 ? selectedIds[0] : (routeThreadId ?? null);
+        if (!renameTargetThreadId) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        startRenameThread(renameTargetThreadId);
         return;
       }
       const traversalDirection = threadTraversalDirectionFromCommand(command);
@@ -1627,6 +1659,8 @@ export default function Sidebar() {
     platform,
     routeTerminalOpen,
     routeThreadId,
+    selectedThreadIds,
+    startRenameThread,
     threadJumpThreadIds,
     updateThreadJumpHintsVisibility,
   ]);

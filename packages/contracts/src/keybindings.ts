@@ -42,6 +42,7 @@ const STATIC_KEYBINDING_COMMANDS = [
   "sidebar.thread.next",
   "sidebar.project.previous",
   "sidebar.project.next",
+  "sidebar.rename",
   "chat.new",
   "chat.newLocal",
   "chat.branchSelector.focus",

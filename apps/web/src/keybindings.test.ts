@@ -134,6 +134,11 @@ const DEFAULT_BINDINGS = compile([
     command: "snippets.open",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
+  {
+    shortcut: modShortcut("r", { shiftKey: true }),
+    command: "sidebar.rename",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
   { shortcut: modShortcut("["), command: "sidebar.history.previous" },
   { shortcut: modShortcut("]"), command: "sidebar.history.next" },
   {
@@ -207,6 +212,16 @@ describe("split/new/close terminal shortcuts", () => {
         context: { terminalFocus: false },
       }),
       "snippets.open",
+    );
+  });
+
+  it("resolves the sidebar rename shortcut while terminalFocus is false", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "r", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+      "sidebar.rename",
     );
   });
 
@@ -350,6 +365,10 @@ describe("shortcutLabelForCommand", () => {
     assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "chat.branchSelector.focus", "MacIntel"),
       "⇧⌘E",
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "sidebar.rename", "Linux"),
+      "Ctrl+Shift+R",
     );
     assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "editor.openFavorite", "Linux"),
