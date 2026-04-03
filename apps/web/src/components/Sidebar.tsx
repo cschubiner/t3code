@@ -112,6 +112,7 @@ import {
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 import {
+  deriveThreadSidebarPullRequestReferences,
   getVisibleSidebarThreadIds,
   getVisibleThreadsForProject,
   resolveAdjacentThreadId,
@@ -166,6 +167,23 @@ interface PrStatusIndicator {
 }
 
 type ThreadPr = GitStatusResult["pr"];
+type ReferencedPrState = NonNullable<ThreadPr>["state"] | null;
+type SidebarReferencedPr = ReturnType<typeof deriveThreadSidebarPullRequestReferences>[number] & {
+  state: ReferencedPrState;
+};
+
+function referencedPrPillClassName(state: ReferencedPrState): string {
+  if (state === "open") {
+    return "border-emerald-200/90 bg-emerald-50 text-emerald-700 hover:bg-emerald-100/90 hover:text-emerald-800 dark:border-emerald-500/25 dark:bg-emerald-500/12 dark:text-emerald-300";
+  }
+  if (state === "merged") {
+    return "border-violet-200/90 bg-violet-50 text-violet-700 hover:bg-violet-100/90 hover:text-violet-800 dark:border-violet-500/25 dark:bg-violet-500/12 dark:text-violet-300";
+  }
+  if (state === "closed") {
+    return "border-zinc-200/90 bg-zinc-100/90 text-zinc-600 hover:bg-zinc-200/90 hover:text-zinc-700 dark:border-zinc-500/20 dark:bg-zinc-500/10 dark:text-zinc-300/85";
+  }
+  return "border-border/70 bg-secondary/75 text-muted-foreground/88 hover:bg-accent hover:text-foreground";
+}
 
 function ThreadStatusLabel({
   status,
@@ -248,6 +266,10 @@ function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
   return null;
 }
 
+function formatSidebarPullRequestBadgeLabel(input: { number: string }): string {
+  return `#${input.number}`;
+}
+
 interface SidebarThreadRowProps {
   threadId: ThreadId;
   orderedProjectThreadIds: readonly ThreadId[];
@@ -281,6 +303,7 @@ interface SidebarThreadRowProps {
   attemptArchiveThread: (threadId: ThreadId) => Promise<void>;
   openPrLink: (event: MouseEvent<HTMLElement>, prUrl: string) => void;
   pr: ThreadPr | null;
+  referencedPrs: readonly SidebarReferencedPr[];
 }
 
 function SidebarThreadRow(props: SidebarThreadRowProps) {
@@ -307,6 +330,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
     },
   });
   const prStatus = prStatusIndicator(props.pr);
+  const hasSecondaryContent = props.referencedPrs.length > 0;
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
   const isConfirmingArchive = props.confirmingArchiveThreadId === thread.id && !isThreadRunning;
   const threadMetaClassName = isConfirmingArchive
@@ -340,6 +364,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
         className={`${resolveThreadRowClassName({
           isActive,
           isSelected,
+          hasSecondaryContent,
         })} relative isolate`}
         onClick={(event) => {
           props.handleThreadClick(event, thread.id, props.orderedProjectThreadIds);
@@ -367,61 +392,86 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
           }
         }}
       >
-        <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
-          {prStatus && (
-            <Tooltip>
-              <TooltipTrigger
-                render={
+        <div className="flex min-w-0 flex-1 items-start gap-1.5 text-left">
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <div className="flex min-w-0 items-center gap-1.5">
+              {prStatus && (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        aria-label={prStatus.tooltip}
+                        className={`inline-flex items-center justify-center ${prStatus.colorClass} cursor-pointer rounded-sm outline-hidden focus-visible:ring-1 focus-visible:ring-ring`}
+                        onClick={(event) => {
+                          props.openPrLink(event, prStatus.url);
+                        }}
+                      >
+                        <GitPullRequestIcon className="size-3" />
+                      </button>
+                    }
+                  />
+                  <TooltipPopup side="top">{prStatus.tooltip}</TooltipPopup>
+                </Tooltip>
+              )}
+              {threadStatus && <ThreadStatusLabel status={threadStatus} />}
+              {props.renamingThreadId === thread.id ? (
+                <input
+                  ref={(element) => {
+                    if (element && props.renamingInputRef.current !== element) {
+                      props.renamingInputRef.current = element;
+                      element.focus();
+                      element.select();
+                    }
+                  }}
+                  className="min-w-0 flex-1 truncate text-xs bg-transparent outline-none border border-ring rounded px-0.5"
+                  value={props.renamingTitle}
+                  onChange={(event) => props.setRenamingTitle(event.target.value)}
+                  onKeyDown={(event) => {
+                    event.stopPropagation();
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      props.renamingCommittedRef.current = true;
+                      void props.commitRename(thread.id, props.renamingTitle, thread.title);
+                    } else if (event.key === "Escape") {
+                      event.preventDefault();
+                      props.renamingCommittedRef.current = true;
+                      props.cancelRename();
+                    }
+                  }}
+                  onBlur={() => {
+                    if (!props.renamingCommittedRef.current) {
+                      void props.commitRename(thread.id, props.renamingTitle, thread.title);
+                    }
+                  }}
+                  onClick={(event) => event.stopPropagation()}
+                />
+              ) : (
+                <span className="min-w-0 flex-1 truncate text-xs">{thread.title}</span>
+              )}
+            </div>
+            {props.referencedPrs.length > 0 ? (
+              <div className="flex min-w-0 items-center gap-1 overflow-hidden whitespace-nowrap pl-[3px]">
+                {props.referencedPrs.map((reference) => (
                   <button
+                    key={reference.url}
                     type="button"
-                    aria-label={prStatus.tooltip}
-                    className={`inline-flex items-center justify-center ${prStatus.colorClass} cursor-pointer rounded-sm outline-hidden focus-visible:ring-1 focus-visible:ring-ring`}
+                    className={`inline-flex max-w-full shrink-0 items-center rounded-sm border px-1.5 py-0 text-[10px] leading-4 transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring ${referencedPrPillClassName(reference.state)}`}
                     onClick={(event) => {
-                      props.openPrLink(event, prStatus.url);
+                      props.openPrLink(event, reference.url);
                     }}
+                    title={
+                      reference.state ? `#${reference.number} PR ${reference.state}` : reference.url
+                    }
                   >
-                    <GitPullRequestIcon className="size-3" />
+                    <span className="truncate">
+                      {formatSidebarPullRequestBadgeLabel(reference)}
+                    </span>
                   </button>
-                }
-              />
-              <TooltipPopup side="top">{prStatus.tooltip}</TooltipPopup>
-            </Tooltip>
-          )}
-          {threadStatus && <ThreadStatusLabel status={threadStatus} />}
-          {props.renamingThreadId === thread.id ? (
-            <input
-              ref={(element) => {
-                if (element && props.renamingInputRef.current !== element) {
-                  props.renamingInputRef.current = element;
-                  element.focus();
-                  element.select();
-                }
-              }}
-              className="min-w-0 flex-1 truncate text-xs bg-transparent outline-none border border-ring rounded px-0.5"
-              value={props.renamingTitle}
-              onChange={(event) => props.setRenamingTitle(event.target.value)}
-              onKeyDown={(event) => {
-                event.stopPropagation();
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  props.renamingCommittedRef.current = true;
-                  void props.commitRename(thread.id, props.renamingTitle, thread.title);
-                } else if (event.key === "Escape") {
-                  event.preventDefault();
-                  props.renamingCommittedRef.current = true;
-                  props.cancelRename();
-                }
-              }}
-              onBlur={() => {
-                if (!props.renamingCommittedRef.current) {
-                  void props.commitRename(thread.id, props.renamingTitle, thread.title);
-                }
-              }}
-              onClick={(event) => event.stopPropagation()}
-            />
-          ) : (
-            <span className="min-w-0 flex-1 truncate text-xs">{thread.title}</span>
-          )}
+                ))}
+              </div>
+            ) : null}
+          </div>
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
           {terminalStatus && (
@@ -689,6 +739,7 @@ function SortableProjectItem({
 
 export default function Sidebar() {
   const projects = useStore((store) => store.projects);
+  const threads = useStore((store) => store.threads);
   const sidebarThreadsById = useStore((store) => store.sidebarThreadsById);
   const threadIdsByProjectId = useStore((store) => store.threadIdsByProjectId);
   const { projectExpandedById, projectOrder, threadLastVisitedAtById } = useUiStateStore(
@@ -835,6 +886,55 @@ export default function Sidebar() {
     }
     return map;
   }, [threadGitStatusCwds, threadGitStatusQueries, threadGitTargets]);
+  const referencedPrsByThreadId = useMemo(() => {
+    const map = new Map<ThreadId, ReturnType<typeof deriveThreadSidebarPullRequestReferences>>();
+    for (const thread of threads) {
+      map.set(thread.id, deriveThreadSidebarPullRequestReferences(thread));
+    }
+    return map;
+  }, [threads]);
+  const referencedPrTargets = useMemo(
+    () => [
+      ...new Map(
+        threads.flatMap((thread) => {
+          const cwd = thread.worktreePath ?? projectCwdById.get(thread.projectId) ?? null;
+          if (!cwd) {
+            return [];
+          }
+          return (referencedPrsByThreadId.get(thread.id) ?? []).map(
+            (reference) => [`${cwd}::${reference.url}`, { cwd, url: reference.url }] as const,
+          );
+        }),
+      ).values(),
+    ],
+    [projectCwdById, referencedPrsByThreadId, threads],
+  );
+  const referencedPrStatusQueries = useQueries({
+    queries: referencedPrTargets.map((target) => ({
+      queryKey: ["github-pr-status", target.cwd, target.url] as const,
+      queryFn: async (): Promise<ReferencedPrState> => {
+        const response = await fetch(
+          `/api/github-pr-status?cwd=${encodeURIComponent(target.cwd)}&url=${encodeURIComponent(target.url)}`,
+        );
+        if (!response.ok) {
+          return null;
+        }
+        const data = (await response.json()) as { state?: ReferencedPrState };
+        return data.state ?? null;
+      },
+      staleTime: 5 * 60_000,
+      refetchInterval: 10 * 60_000,
+    })),
+  });
+  const referencedPrStateByUrl = useMemo(() => {
+    const map = new Map<string, ReferencedPrState>();
+    for (let index = 0; index < referencedPrTargets.length; index += 1) {
+      const target = referencedPrTargets[index];
+      if (!target) continue;
+      map.set(target.url, referencedPrStatusQueries[index]?.data ?? null);
+    }
+    return map;
+  }, [referencedPrStatusQueries, referencedPrTargets]);
 
   const openPrLink = useCallback((event: MouseEvent<HTMLElement>, prUrl: string) => {
     event.preventDefault();
@@ -1831,6 +1931,13 @@ export default function Sidebar() {
                 attemptArchiveThread={attemptArchiveThread}
                 openPrLink={openPrLink}
                 pr={prByThreadId.get(threadId) ?? null}
+                referencedPrs={(referencedPrsByThreadId.get(threadId) ?? []).map((reference) => ({
+                  url: reference.url,
+                  owner: reference.owner,
+                  repo: reference.repo,
+                  number: reference.number,
+                  state: referencedPrStateByUrl.get(reference.url) ?? null,
+                }))}
               />
             ))}
 

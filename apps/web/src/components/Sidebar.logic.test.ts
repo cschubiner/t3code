@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   createThreadJumpHintVisibilityController,
+  deriveThreadSidebarPullRequestReferences,
+  extractSidebarPullRequestReferences,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
   getFallbackThreadIdAfterDelete,
@@ -165,6 +167,87 @@ describe("resolveSidebarNewThreadEnvMode", () => {
         defaultEnvMode: "worktree",
       }),
     ).toBe("local");
+  });
+});
+
+describe("extractSidebarPullRequestReferences", () => {
+  it("extracts GitHub PR links and dedupes url variants for the same PR", () => {
+    expect(
+      extractSidebarPullRequestReferences(`
+        https://github.com/pingdotgg/t3code/pull/88
+        https://github.com/pingdotgg/t3code/pull/88/files
+        https://github.com/pingdotgg/t3code/pull/91
+      `),
+    ).toEqual([
+      {
+        url: "https://github.com/pingdotgg/t3code/pull/88",
+        owner: "pingdotgg",
+        repo: "t3code",
+        number: "88",
+      },
+      {
+        url: "https://github.com/pingdotgg/t3code/pull/91",
+        owner: "pingdotgg",
+        repo: "t3code",
+        number: "91",
+      },
+    ]);
+  });
+});
+
+describe("deriveThreadSidebarPullRequestReferences", () => {
+  it("returns deduped PR references from thread messages for worktree threads", () => {
+    expect(
+      deriveThreadSidebarPullRequestReferences({
+        worktreePath: "/tmp/worktree",
+        messages: [
+          {
+            id: "message-1" as never,
+            role: "assistant",
+            text: "See https://github.com/pingdotgg/t3code/pull/88",
+            createdAt: "2026-03-12T10:00:00.000Z",
+            streaming: false,
+          },
+          {
+            id: "message-2" as never,
+            role: "user",
+            text: "And also https://github.com/pingdotgg/t3code/pull/88/files plus https://github.com/openai/codex/pull/7",
+            createdAt: "2026-03-12T10:01:00.000Z",
+            streaming: false,
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        url: "https://github.com/pingdotgg/t3code/pull/88",
+        owner: "pingdotgg",
+        repo: "t3code",
+        number: "88",
+      },
+      {
+        url: "https://github.com/openai/codex/pull/7",
+        owner: "openai",
+        repo: "codex",
+        number: "7",
+      },
+    ]);
+  });
+
+  it("ignores PR references for local threads without a worktree", () => {
+    expect(
+      deriveThreadSidebarPullRequestReferences({
+        worktreePath: null,
+        messages: [
+          {
+            id: "message-1" as never,
+            role: "assistant",
+            text: "https://github.com/pingdotgg/t3code/pull/88",
+            createdAt: "2026-03-12T10:00:00.000Z",
+            streaming: false,
+          },
+        ],
+      }),
+    ).toEqual([]);
   });
 });
 

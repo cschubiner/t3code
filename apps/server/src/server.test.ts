@@ -32,6 +32,7 @@ import {
   type CheckpointDiffQueryShape,
 } from "./checkpointing/Services/CheckpointDiffQuery.ts";
 import { GitCore, type GitCoreShape } from "./git/Services/GitCore.ts";
+import { GitHubCli, type GitHubCliShape } from "./git/Services/GitHubCli.ts";
 import { GitManager, type GitManagerShape } from "./git/Services/GitManager.ts";
 import { Keybindings, type KeybindingsShape } from "./keybindings.ts";
 import { Open, type OpenShape } from "./open.ts";
@@ -126,6 +127,7 @@ const buildAppUnderTest = (options?: {
     serverSettings?: Partial<ServerSettingsShape>;
     open?: Partial<OpenShape>;
     gitCore?: Partial<GitCoreShape>;
+    githubCli?: Partial<GitHubCliShape>;
     gitManager?: Partial<GitManagerShape>;
     terminalManager?: Partial<TerminalManagerShape>;
     orchestrationEngine?: Partial<OrchestrationEngineShape>;
@@ -196,6 +198,31 @@ const buildAppUnderTest = (options?: {
       Layer.provide(
         Layer.mock(GitCore)({
           ...options?.layers?.gitCore,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(GitHubCli)({
+          execute: () => Effect.die("Unexpected GitHub CLI execution in server test"),
+          listOpenPullRequests: () => Effect.succeed([]),
+          getPullRequest: (input) =>
+            Effect.succeed({
+              number: 1,
+              title: "Mock Pull Request",
+              url: input.reference,
+              baseRefName: "main",
+              headRefName: "mock-branch",
+              state: "open",
+            }),
+          getRepositoryCloneUrls: (input) =>
+            Effect.succeed({
+              nameWithOwner: input.repository,
+              url: `https://github.com/${input.repository}`,
+              sshUrl: `git@github.com:${input.repository}.git`,
+            }),
+          createPullRequest: () => Effect.void,
+          getDefaultBranch: () => Effect.succeed("main"),
+          checkoutPullRequest: () => Effect.void,
+          ...options?.layers?.githubCli,
         }),
       ),
       Layer.provide(

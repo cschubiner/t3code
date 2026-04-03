@@ -33,6 +33,13 @@ export interface ThreadStatusPill {
   pulse: boolean;
 }
 
+export interface SidebarPullRequestReference {
+  url: string;
+  owner: string;
+  repo: string;
+  number: string;
+}
+
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
   "Pending Approval": 5,
   "Awaiting Input": 4,
@@ -53,6 +60,11 @@ type ThreadStatusInput = Pick<
 > & {
   lastVisitedAt?: string | undefined;
 };
+
+type ThreadPullRequestReferenceInput = Pick<Thread, "messages" | "worktreePath">;
+
+const GITHUB_PULL_REQUEST_URL_GLOBAL_PATTERN =
+  /https:\/\/github\.com\/(?<owner>[^/\s]+)\/(?<repo>[^/\s]+)\/pull\/(?<number>\d+)(?:[/?#][^\s)\]}>]*)?/gi;
 
 export interface ThreadJumpHintVisibilityController {
   sync: (shouldShow: boolean) => void;
@@ -299,9 +311,12 @@ export function isTypingInSidebarTextEntry(target: EventTarget | null): boolean 
 export function resolveThreadRowClassName(input: {
   isActive: boolean;
   isSelected: boolean;
+  hasSecondaryContent?: boolean;
 }): string {
-  const baseClassName =
-    "h-7 w-full translate-x-0 cursor-pointer justify-start px-2 text-left select-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
+  const baseClassName = cn(
+    "w-full translate-x-0 cursor-pointer justify-start px-2 text-left select-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
+    input.hasSecondaryContent ? "min-h-9 py-1" : "h-7",
+  );
 
   if (input.isSelected && input.isActive) {
     return cn(
@@ -325,6 +340,64 @@ export function resolveThreadRowClassName(input: {
   }
 
   return cn(baseClassName, "text-muted-foreground hover:bg-accent hover:text-foreground");
+}
+
+function sidebarPullRequestReferenceKey(
+  reference: Pick<SidebarPullRequestReference, "owner" | "repo" | "number">,
+): string {
+  return `${reference.owner.toLowerCase()}/${reference.repo.toLowerCase()}#${reference.number}`;
+}
+
+export function extractSidebarPullRequestReferences(text: string): SidebarPullRequestReference[] {
+  const matches = text.matchAll(GITHUB_PULL_REQUEST_URL_GLOBAL_PATTERN);
+  const references: SidebarPullRequestReference[] = [];
+  const seenReferences = new Set<string>();
+
+  for (const match of matches) {
+    const url = match[0];
+    const owner = match.groups?.owner;
+    const repo = match.groups?.repo;
+    const number = match.groups?.number;
+    if (!url || !owner || !repo || !number) {
+      continue;
+    }
+
+    const reference = { url, owner, repo, number };
+    const referenceKey = sidebarPullRequestReferenceKey(reference);
+    if (seenReferences.has(referenceKey)) {
+      continue;
+    }
+
+    seenReferences.add(referenceKey);
+    references.push(reference);
+  }
+
+  return references;
+}
+
+export function deriveThreadSidebarPullRequestReferences(
+  thread: ThreadPullRequestReferenceInput,
+): SidebarPullRequestReference[] {
+  if (thread.worktreePath === null) {
+    return [];
+  }
+
+  const references: SidebarPullRequestReference[] = [];
+  const seenReferences = new Set<string>();
+
+  for (const message of thread.messages) {
+    for (const reference of extractSidebarPullRequestReferences(message.text)) {
+      const referenceKey = sidebarPullRequestReferenceKey(reference);
+      if (seenReferences.has(referenceKey)) {
+        continue;
+      }
+
+      seenReferences.add(referenceKey);
+      references.push(reference);
+    }
+  }
+
+  return references;
 }
 
 export function resolveThreadStatusPill(input: {
