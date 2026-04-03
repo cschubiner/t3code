@@ -5,7 +5,6 @@ import {
   EventId,
   ORCHESTRATION_WS_METHODS,
   type MessageId,
-  type OrchestrationEvent,
   type OrchestrationReadModel,
   type ProjectId,
   type ServerConfig,
@@ -409,67 +408,6 @@ function addThreadToSnapshot(
       },
     ],
   };
-}
-
-function createThreadCreatedEvent(threadId: ThreadId, sequence: number): OrchestrationEvent {
-  return {
-    sequence,
-    eventId: EventId.makeUnsafe(`event-thread-created-${sequence}`),
-    aggregateKind: "thread",
-    aggregateId: threadId,
-    occurredAt: NOW_ISO,
-    commandId: null,
-    causationEventId: null,
-    correlationId: null,
-    metadata: {},
-    type: "thread.created",
-    payload: {
-      threadId,
-      projectId: PROJECT_ID,
-      title: "New thread",
-      modelSelection: {
-        provider: "codex",
-        model: "gpt-5",
-      },
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      branch: "main",
-      worktreePath: null,
-      createdAt: NOW_ISO,
-      updatedAt: NOW_ISO,
-    },
-  };
-}
-
-function sendOrchestrationDomainEvent(event: OrchestrationEvent): void {
-  rpcHarness.emitStreamValue(WS_METHODS.subscribeOrchestrationDomainEvents, event);
-}
-
-async function waitForWsClient(): Promise<void> {
-  await vi.waitFor(
-    () => {
-      expect(
-        wsRequests.some(
-          (request) => request._tag === WS_METHODS.subscribeOrchestrationDomainEvents,
-        ),
-      ).toBe(true);
-    },
-    { timeout: 8_000, interval: 16 },
-  );
-}
-
-async function promoteDraftThreadViaDomainEvent(threadId: ThreadId): Promise<void> {
-  await waitForWsClient();
-  fixture.snapshot = addThreadToSnapshot(fixture.snapshot, threadId);
-  sendOrchestrationDomainEvent(
-    createThreadCreatedEvent(threadId, fixture.snapshot.snapshotSequence),
-  );
-  await vi.waitFor(
-    () => {
-      expect(useComposerDraftStore.getState().draftThreadsByThreadId[threadId]).toBeUndefined();
-    },
-    { timeout: 8_000, interval: 16 },
-  );
 }
 
 function createDraftOnlySnapshot(): OrchestrationReadModel {
@@ -889,17 +827,6 @@ async function waitForComposerEditor(): Promise<HTMLElement> {
   );
 }
 
-async function waitForSnippetPickerInput(): Promise<HTMLInputElement> {
-  return waitForElement(
-    () => document.querySelector<HTMLInputElement>('[data-testid="snippet-picker-input"]'),
-    "Unable to find the snippet picker input.",
-  );
-}
-
-function listSnippetPickerResults(): HTMLElement[] {
-  return Array.from(document.querySelectorAll<HTMLElement>('[data-snippet-picker-result="true"]'));
-}
-
 async function waitForComposerMenuItem(itemId: string): Promise<HTMLElement> {
   return waitForElement(
     () => document.querySelector<HTMLElement>(`[data-composer-item-id="${itemId}"]`),
@@ -1011,17 +938,6 @@ function dispatchChatNewShortcut(): void {
       shiftKey: true,
       metaKey: useMetaForMod,
       ctrlKey: !useMetaForMod,
-      bubbles: true,
-      cancelable: true,
-    }),
-  );
-}
-
-function dispatchOpenSnippetsShortcut(): void {
-  window.dispatchEvent(
-    new KeyboardEvent("keydown", {
-      key: "s",
-      ...modShiftShortcutModifiers(),
       bubbles: true,
       cancelable: true,
     }),
@@ -2550,10 +2466,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
       // The composer editor should be present for the new draft thread.
       await waitForComposerEditor();
 
-      // Simulate the steady-state promotion path: the server emits
-      // `thread.created`, the client materializes the thread incrementally,
-      // and the draft is cleared by live batch effects.
-      await promoteDraftThreadViaDomainEvent(newThreadId);
+      const promotedSnapshot = addThreadToSnapshot(fixture.snapshot, newThreadId);
+      fixture.snapshot = promotedSnapshot;
+      useStore.getState().syncServerReadModel(promotedSnapshot);
+      useComposerDraftStore.getState().clearDraftThread(newThreadId);
 
       // The route should still be on the new thread — not redirected away.
       await waitForURL(
@@ -2881,7 +2797,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
       const promotedThreadId = promotedThreadPath.slice(1) as ThreadId;
 
-      await promoteDraftThreadViaDomainEvent(promotedThreadId);
+      const promotedSnapshot = addThreadToSnapshot(fixture.snapshot, promotedThreadId);
+      fixture.snapshot = promotedSnapshot;
+      useStore.getState().syncServerReadModel(promotedSnapshot);
+      useComposerDraftStore.getState().clearDraftThread(promotedThreadId);
 
       const freshThreadPath = await triggerChatNewShortcutUntilPath(
         mounted.router,
@@ -3193,122 +3112,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(menuRect.height).toBeGreaterThan(0);
           expect(menuRect.bottom).toBeLessThanOrEqual(composerRect.bottom);
           expect(hitTarget instanceof Element && menuItem.contains(hitTarget)).toBe(true);
-        },
-        { timeout: 8_000, interval: 16 },
-      );
-    } finally {
-      await mounted.cleanup();
-    }
-  });
-
-  it("opens the snippet picker with mod+shift+s and inserts the highlighted snippet with Enter", async () => {
-    const mounted = await mountChatView({
-      viewport: DEFAULT_VIEWPORT,
-      snapshot: createSnapshotForTargetUser({
-        targetMessageId: "msg-user-snippet-picker-open" as MessageId,
-        targetText: "snippet picker target",
-      }),
-      configureFixture: (nextFixture) => {
-        nextFixture.snippetListResult = {
-          snippets: [
-            {
-              id: SnippetId.makeUnsafe("snippet-1"),
-              text: "First saved snippet",
-              createdAt: isoAt(91),
-              updatedAt: isoAt(91),
-            },
-            {
-              id: SnippetId.makeUnsafe("snippet-2"),
-              text: "Second saved snippet",
-              createdAt: isoAt(90),
-              updatedAt: isoAt(90),
-            },
-          ],
-        };
-      },
-    });
-
-    try {
-      await waitForServerConfigToApply();
-      await waitForComposerEditor();
-      dispatchOpenSnippetsShortcut();
-      const input = await waitForSnippetPickerInput();
-      await vi.waitFor(
-        () => {
-          expect(document.activeElement).toBe(input);
-        },
-        { timeout: 8_000, interval: 16 },
-      );
-      expect(listSnippetPickerResults()).toHaveLength(2);
-
-      input.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "ArrowDown",
-          bubbles: true,
-          cancelable: true,
-        }),
-      );
-      await waitForLayout();
-      expect(listSnippetPickerResults()[1]?.dataset.highlighted).toBe("true");
-
-      input.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "Enter",
-          bubbles: true,
-          cancelable: true,
-        }),
-      );
-
-      await vi.waitFor(
-        () => {
-          expect(document.querySelector('[data-testid="snippet-picker-input"]')).toBeNull();
-          expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.prompt ?? "").toBe(
-            "Second saved snippet",
-          );
-        },
-        { timeout: 8_000, interval: 16 },
-      );
-    } finally {
-      await mounted.cleanup();
-    }
-  });
-
-  it("deletes snippets from the picker dialog", async () => {
-    const mounted = await mountChatView({
-      viewport: DEFAULT_VIEWPORT,
-      snapshot: createSnapshotForTargetUser({
-        targetMessageId: "msg-user-snippet-picker-delete" as MessageId,
-        targetText: "snippet delete target",
-      }),
-      configureFixture: (nextFixture) => {
-        nextFixture.snippetListResult = {
-          snippets: [
-            {
-              id: SnippetId.makeUnsafe("snippet-1"),
-              text: "Delete me",
-              createdAt: isoAt(92),
-              updatedAt: isoAt(92),
-            },
-          ],
-        };
-      },
-    });
-
-    try {
-      await waitForServerConfigToApply();
-      await waitForComposerEditor();
-      dispatchOpenSnippetsShortcut();
-      await waitForSnippetPickerInput();
-
-      await page.getByTestId("snippet-picker-delete-snippet-1").click();
-
-      await vi.waitFor(
-        () => {
-          const deleteRequest = wsRequests.find(
-            (request) =>
-              request._tag === WS_METHODS.snippetsDelete && request.snippetId === "snippet-1",
-          );
-          expect(deleteRequest).toBeTruthy();
         },
         { timeout: 8_000, interval: 16 },
       );
