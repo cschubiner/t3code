@@ -12,8 +12,8 @@ Start here so later restores land on a stable base.
 - `8b9ce137` Fix sync migration registry and snapshot expectations
 - `fb7547fd` fix browser rpc harness bootstrapping
 - `552405b4` fix browser rpc harness bootstrapping
-- `8eb3c648` stabilize keybindings toast replay test
-- `4956345b` stabilize keybindings toast browser test
+- `8eb3c648` stabilize keybindings toast replay test -> restored in `aa25bc91`
+- `4956345b` stabilize keybindings toast browser test -> restored in `aa25bc91`
 - `c4bed798` stabilize chatview browser checks
 - `edcf6a1e` Fix git test timeouts and process cleanup
 - `9ac3a320` run CI quality job on ubuntu runner
