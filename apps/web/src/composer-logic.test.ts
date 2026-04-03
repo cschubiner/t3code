@@ -5,6 +5,7 @@ import {
   collapseExpandedComposerCursor,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
+  getMatchingComposerSlashCommands,
   isCollapsedCursorAdjacentToInlineToken,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
@@ -244,7 +245,25 @@ describe("parseStandaloneComposerSlashCommand", () => {
     expect(parseStandaloneComposerSlashCommand("/default")).toBe("default");
   });
 
+  it("parses standalone /delete command", () => {
+    expect(parseStandaloneComposerSlashCommand(" /delete ")).toBe("delete");
+  });
+
   it("ignores slash commands with extra message text", () => {
     expect(parseStandaloneComposerSlashCommand("/plan explain this")).toBeNull();
+  });
+});
+
+describe("getMatchingComposerSlashCommands", () => {
+  it("returns all commands in default order for an empty query", () => {
+    expect(getMatchingComposerSlashCommands("")).toEqual(["model", "plan", "default", "delete"]);
+  });
+
+  it("ranks prefix matches ahead of substring matches", () => {
+    expect(getMatchingComposerSlashCommands("del")).toEqual(["delete", "model"]);
+  });
+
+  it("returns exact matches first", () => {
+    expect(getMatchingComposerSlashCommands("delete")).toEqual(["delete"]);
   });
 });
