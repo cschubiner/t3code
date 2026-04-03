@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   createThreadJumpHintVisibilityController,
+  deriveSidebarThreadProjectName,
   deriveThreadSidebarPullRequestReferences,
   extractSidebarPullRequestReferences,
   getVisibleSidebarThreadIds,
@@ -20,8 +21,11 @@ import {
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
+  sortThreadsForRecentSidebar,
   sortThreadsForSidebar,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
+  visibleRecentThreadsForSidebar,
+  visibleThreadIdsForRecentSidebar,
 } from "./Sidebar.logic";
 import { OrchestrationLatestTurn, ProjectId, ThreadId } from "@t3tools/contracts";
 import {
@@ -974,6 +978,97 @@ describe("sortThreadsForSidebar", () => {
       ThreadId.makeUnsafe("thread-1"),
       ThreadId.makeUnsafe("thread-2"),
     ]);
+  });
+});
+
+describe("sortThreadsForRecentSidebar", () => {
+  it("sorts recent threads globally by updatedAt with createdAt and id tie-breakers", () => {
+    const threadA = makeThread({
+      id: ThreadId.makeUnsafe("thread-a"),
+      projectId: ProjectId.makeUnsafe("project-a"),
+      createdAt: "2026-03-09T10:00:00.000Z",
+      updatedAt: "2026-03-09T11:00:00.000Z",
+    });
+    const threadB = makeThread({
+      id: ThreadId.makeUnsafe("thread-b"),
+      projectId: ProjectId.makeUnsafe("project-a"),
+      createdAt: "2026-03-09T10:01:00.000Z",
+      updatedAt: undefined,
+    });
+    const threadC = makeThread({
+      id: ThreadId.makeUnsafe("thread-c"),
+      projectId: ProjectId.makeUnsafe("project-b"),
+      createdAt: "2026-03-09T10:02:00.000Z",
+      updatedAt: "2026-03-09T11:00:00.000Z",
+    });
+    const threadD = makeThread({
+      id: ThreadId.makeUnsafe("thread-d"),
+      projectId: ProjectId.makeUnsafe("project-b"),
+      createdAt: "2026-03-09T10:02:00.000Z",
+      updatedAt: "2026-03-09T11:00:00.000Z",
+    });
+
+    expect(
+      sortThreadsForRecentSidebar([threadA, threadB, threadC, threadD]).map((thread) => thread.id),
+    ).toEqual([
+      ThreadId.makeUnsafe("thread-d"),
+      ThreadId.makeUnsafe("thread-c"),
+      ThreadId.makeUnsafe("thread-a"),
+      ThreadId.makeUnsafe("thread-b"),
+    ]);
+  });
+});
+
+describe("recent sidebar helpers", () => {
+  const projectAlpha = ProjectId.makeUnsafe("project-alpha");
+  const projectBeta = ProjectId.makeUnsafe("project-beta");
+  const threadA1 = makeThread({
+    id: ThreadId.makeUnsafe("thread-a1"),
+    projectId: projectAlpha,
+    createdAt: "2026-03-09T10:01:00.000Z",
+  });
+  const threadA2 = makeThread({
+    id: ThreadId.makeUnsafe("thread-a2"),
+    projectId: projectAlpha,
+    createdAt: "2026-03-09T10:02:00.000Z",
+    updatedAt: "2026-03-09T10:05:00.000Z",
+  });
+  const threadB1 = makeThread({
+    id: ThreadId.makeUnsafe("thread-b1"),
+    projectId: projectBeta,
+    createdAt: "2026-03-09T10:03:00.000Z",
+    updatedAt: "2026-03-09T10:06:00.000Z",
+  });
+  const threads = [threadA1, threadA2, threadB1];
+
+  it("limits recent threads without considering project expansion state", () => {
+    expect(
+      visibleRecentThreadsForSidebar({
+        threads,
+        isExpanded: false,
+        threadPreviewLimit: 2,
+      }).map((thread) => thread.id),
+    ).toEqual([threadB1.id, threadA2.id]);
+
+    expect(
+      visibleThreadIdsForRecentSidebar({
+        threads,
+        isExpanded: true,
+        threadPreviewLimit: 2,
+      }),
+    ).toEqual([threadB1.id, threadA2.id, threadA1.id]);
+  });
+
+  it("derives project labels for recent rows", () => {
+    expect(
+      deriveSidebarThreadProjectName({
+        thread: threadA1,
+        projects: [
+          { id: projectAlpha, name: "Alpha" },
+          { id: projectBeta, name: "Beta" },
+        ],
+      }),
+    ).toBe("Alpha");
   });
 });
 

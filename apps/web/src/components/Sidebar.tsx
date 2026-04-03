@@ -92,6 +92,7 @@ import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
 import { Button } from "./ui/button";
 import { Menu, MenuGroup, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { Toggle, ToggleGroup } from "./ui/toggle-group";
 import { GlobalThreadSearchDialog } from "./GlobalThreadSearchDialog";
 import { ProjectFolderSearchDialog } from "./ProjectFolderSearchDialog";
 import {
@@ -112,6 +113,7 @@ import {
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 import {
+  deriveSidebarThreadProjectName,
   deriveThreadSidebarPullRequestReferences,
   getVisibleSidebarThreadIds,
   getVisibleThreadsForProject,
@@ -126,8 +128,11 @@ import {
   orderItemsByPreferredIds,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
+  sortThreadsForRecentSidebar,
   sortThreadsForSidebar,
   useThreadJumpHintVisibility,
+  visibleRecentThreadsForSidebar,
+  visibleThreadIdsForRecentSidebar,
 } from "./Sidebar.logic";
 import { SidebarUpdatePill } from "./sidebar/SidebarUpdatePill";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
@@ -302,6 +307,7 @@ interface SidebarThreadRowProps {
   cancelRename: () => void;
   attemptArchiveThread: (threadId: ThreadId) => Promise<void>;
   openPrLink: (event: MouseEvent<HTMLElement>, prUrl: string) => void;
+  projectName?: string | null;
   pr: ThreadPr | null;
   referencedPrs: readonly SidebarReferencedPr[];
 }
@@ -330,7 +336,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
     },
   });
   const prStatus = prStatusIndicator(props.pr);
-  const hasSecondaryContent = props.referencedPrs.length > 0;
+  const hasSecondaryContent = Boolean(props.projectName) || props.referencedPrs.length > 0;
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
   const isConfirmingArchive = props.confirmingArchiveThreadId === thread.id && !isThreadRunning;
   const threadMetaClassName = isConfirmingArchive
@@ -450,8 +456,16 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
                 <span className="min-w-0 flex-1 truncate text-xs">{thread.title}</span>
               )}
             </div>
-            {props.referencedPrs.length > 0 ? (
+            {hasSecondaryContent ? (
               <div className="flex min-w-0 items-center gap-1 overflow-hidden whitespace-nowrap pl-[3px]">
+                {props.projectName ? (
+                  <span className="truncate text-[10px] text-muted-foreground/58">
+                    {props.projectName}
+                  </span>
+                ) : null}
+                {props.projectName && props.referencedPrs.length > 0 ? (
+                  <span className="text-[10px] text-muted-foreground/35">•</span>
+                ) : null}
                 {props.referencedPrs.map((reference) => (
                   <button
                     key={reference.url}
@@ -742,6 +756,8 @@ export default function Sidebar() {
   const threads = useStore((store) => store.threads);
   const sidebarThreadsById = useStore((store) => store.sidebarThreadsById);
   const threadIdsByProjectId = useStore((store) => store.threadIdsByProjectId);
+  const sidebarThreadListMode = useStore((store) => store.sidebarThreadListMode);
+  const setSidebarThreadListMode = useStore((store) => store.setSidebarThreadListMode);
   const { projectExpandedById, projectOrder, threadLastVisitedAtById } = useUiStateStore(
     useShallow((store) => ({
       projectExpandedById: store.projectExpandedById,
@@ -784,6 +800,7 @@ export default function Sidebar() {
   const [expandedThreadListsByProject, setExpandedThreadListsByProject] = useState<
     ReadonlySet<ProjectId>
   >(() => new Set());
+  const [isRecentListExpanded, setIsRecentListExpanded] = useState(false);
   const { showThreadJumpHints, updateThreadJumpHintsVisibility } = useThreadJumpHintVisibility();
   const renamingCommittedRef = useRef(false);
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
@@ -1602,9 +1619,31 @@ export default function Sidebar() {
       threadLastVisitedAtById,
     ],
   );
+  const recentVisibleThreads = useMemo(
+    () =>
+      visibleRecentThreadsForSidebar({
+        threads: visibleThreads,
+        isExpanded: isRecentListExpanded,
+        threadPreviewLimit: THREAD_PREVIEW_LIMIT,
+      }),
+    [isRecentListExpanded, visibleThreads],
+  );
+  const recentHasOverflow = visibleThreads.length > THREAD_PREVIEW_LIMIT;
+  const recentVisibleThreadIds = useMemo(
+    () =>
+      visibleThreadIdsForRecentSidebar({
+        threads: visibleThreads,
+        isExpanded: isRecentListExpanded,
+        threadPreviewLimit: THREAD_PREVIEW_LIMIT,
+      }),
+    [isRecentListExpanded, visibleThreads],
+  );
   const visibleSidebarThreadIds = useMemo(
-    () => getVisibleSidebarThreadIds(renderedProjects),
-    [renderedProjects],
+    () =>
+      sidebarThreadListMode === "recent"
+        ? recentVisibleThreadIds
+        : getVisibleSidebarThreadIds(renderedProjects),
+    [recentVisibleThreadIds, renderedProjects, sidebarThreadListMode],
   );
   useEffect(() => {
     visibleSidebarThreadIdsRef.current = visibleSidebarThreadIds;
@@ -1636,6 +1675,10 @@ export default function Sidebar() {
     return mapping;
   }, [keybindings, sidebarShortcutLabelOptions, threadJumpCommandById]);
   const orderedSidebarThreadIds = visibleSidebarThreadIds;
+  const recentRenderedThreads = useMemo(
+    () => sortThreadsForRecentSidebar(recentVisibleThreads),
+    [recentVisibleThreads],
+  );
 
   useEffect(() => {
     const getShortcutContext = () => ({
@@ -2249,6 +2292,26 @@ export default function Sidebar() {
                   Projects
                 </span>
                 <div className="flex items-center gap-1">
+                  <ToggleGroup
+                    aria-label="Sidebar thread list mode"
+                    className="shrink-0 sm:[&_[data-slot=toggle]]:h-4 sm:[&_[data-slot=toggle]]:rounded-[5px] sm:[&_[data-slot=toggle]]:px-1 sm:[&_[data-slot=toggle]]:text-[10px] sm:[&_[data-slot=toggle]]:font-medium"
+                    variant="outline"
+                    size="xs"
+                    value={[sidebarThreadListMode]}
+                    onValueChange={(value) => {
+                      const nextMode = value[0];
+                      if (nextMode === "grouped" || nextMode === "recent") {
+                        setSidebarThreadListMode(nextMode);
+                      }
+                    }}
+                  >
+                    <Toggle aria-label="Grouped threads" value="grouped">
+                      Grouped
+                    </Toggle>
+                    <Toggle aria-label="Recent threads" value="recent">
+                      Recent
+                    </Toggle>
+                  </ToggleGroup>
                   <ProjectSortMenu
                     projectSortOrder={appSettings.sidebarProjectSortOrder}
                     threadSortOrder={appSettings.sidebarThreadSortOrder}
@@ -2338,46 +2401,130 @@ export default function Sidebar() {
                 </div>
               )}
 
-              {isManualProjectSorting ? (
-                <DndContext
-                  sensors={projectDnDSensors}
-                  collisionDetection={projectCollisionDetection}
-                  modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
-                  onDragStart={handleProjectDragStart}
-                  onDragEnd={handleProjectDragEnd}
-                  onDragCancel={handleProjectDragCancel}
-                >
-                  <SidebarMenu>
-                    <SortableContext
-                      items={renderedProjects.map((renderedProject) => renderedProject.project.id)}
-                      strategy={verticalListSortingStrategy}
-                    >
-                      {renderedProjects.map((renderedProject) => (
-                        <SortableProjectItem
-                          key={renderedProject.project.id}
-                          projectId={renderedProject.project.id}
-                        >
-                          {(dragHandleProps) => renderProjectItem(renderedProject, dragHandleProps)}
-                        </SortableProjectItem>
-                      ))}
-                    </SortableContext>
+              {sidebarThreadListMode === "grouped" ? (
+                isManualProjectSorting ? (
+                  <DndContext
+                    sensors={projectDnDSensors}
+                    collisionDetection={projectCollisionDetection}
+                    modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
+                    onDragStart={handleProjectDragStart}
+                    onDragEnd={handleProjectDragEnd}
+                    onDragCancel={handleProjectDragCancel}
+                  >
+                    <SidebarMenu>
+                      <SortableContext
+                        items={renderedProjects.map(
+                          (renderedProject) => renderedProject.project.id,
+                        )}
+                        strategy={verticalListSortingStrategy}
+                      >
+                        {renderedProjects.map((renderedProject) => (
+                          <SortableProjectItem
+                            key={renderedProject.project.id}
+                            projectId={renderedProject.project.id}
+                          >
+                            {(dragHandleProps) =>
+                              renderProjectItem(renderedProject, dragHandleProps)
+                            }
+                          </SortableProjectItem>
+                        ))}
+                      </SortableContext>
+                    </SidebarMenu>
+                  </DndContext>
+                ) : (
+                  <SidebarMenu ref={attachProjectListAutoAnimateRef}>
+                    {renderedProjects.map((renderedProject) => (
+                      <SidebarMenuItem key={renderedProject.project.id} className="rounded-md">
+                        {renderProjectItem(renderedProject, null)}
+                      </SidebarMenuItem>
+                    ))}
                   </SidebarMenu>
-                </DndContext>
-              ) : (
-                <SidebarMenu ref={attachProjectListAutoAnimateRef}>
-                  {renderedProjects.map((renderedProject) => (
-                    <SidebarMenuItem key={renderedProject.project.id} className="rounded-md">
-                      {renderProjectItem(renderedProject, null)}
-                    </SidebarMenuItem>
-                  ))}
+                )
+              ) : recentRenderedThreads.length > 0 ? (
+                <SidebarMenu>
+                  <SidebarMenuSub
+                    ref={attachThreadListAutoAnimateRef}
+                    className="mx-1 my-0 w-full translate-x-0 gap-0.5 px-1.5 py-0"
+                  >
+                    {recentRenderedThreads.map((thread) => {
+                      const referencedPrs = referencedPrsByThreadId.get(thread.id) ?? [];
+                      const referencedPrStates = referencedPrs.map((reference) => ({
+                        url: reference.url,
+                        owner: reference.owner,
+                        repo: reference.repo,
+                        number: reference.number,
+                        state: referencedPrStateByUrl.get(reference.url) ?? null,
+                      }));
+
+                      return (
+                        <SidebarThreadRow
+                          key={thread.id}
+                          threadId={thread.id}
+                          orderedProjectThreadIds={orderedSidebarThreadIds}
+                          routeThreadId={routeThreadId}
+                          selectedThreadIds={selectedThreadIds}
+                          showThreadJumpHints={showThreadJumpHints}
+                          jumpLabel={threadJumpLabelById.get(thread.id) ?? null}
+                          appSettingsConfirmThreadArchive={appSettings.confirmThreadArchive}
+                          renamingThreadId={renamingThreadId}
+                          renamingTitle={renamingTitle}
+                          setRenamingTitle={setRenamingTitle}
+                          renamingInputRef={renamingInputRef}
+                          renamingCommittedRef={renamingCommittedRef}
+                          confirmingArchiveThreadId={confirmingArchiveThreadId}
+                          setConfirmingArchiveThreadId={setConfirmingArchiveThreadId}
+                          confirmArchiveButtonRefs={confirmArchiveButtonRefs}
+                          handleThreadClick={handleThreadClick}
+                          navigateToThread={navigateToThread}
+                          handleMultiSelectContextMenu={handleMultiSelectContextMenu}
+                          handleThreadContextMenu={handleThreadContextMenu}
+                          clearSelection={clearSelection}
+                          commitRename={commitRename}
+                          cancelRename={cancelRename}
+                          attemptArchiveThread={attemptArchiveThread}
+                          openPrLink={openPrLink}
+                          projectName={deriveSidebarThreadProjectName({
+                            thread,
+                            projects,
+                          })}
+                          pr={prByThreadId.get(thread.id) ?? null}
+                          referencedPrs={referencedPrStates}
+                        />
+                      );
+                    })}
+
+                    {recentHasOverflow ? (
+                      <SidebarMenuSubItem className="w-full">
+                        <SidebarMenuSubButton
+                          render={<button type="button" />}
+                          data-thread-selection-safe
+                          size="sm"
+                          className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
+                          onClick={() => {
+                            setIsRecentListExpanded((current) => !current);
+                          }}
+                        >
+                          <span>{isRecentListExpanded ? "Show less" : "Show more"}</span>
+                        </SidebarMenuSubButton>
+                      </SidebarMenuSubItem>
+                    ) : null}
+                  </SidebarMenuSub>
                 </SidebarMenu>
-              )}
+              ) : null}
 
               {projects.length === 0 && !shouldShowProjectPathEntry && (
                 <div className="px-2 pt-4 text-center text-xs text-muted-foreground/60">
                   No projects yet
                 </div>
               )}
+              {projects.length > 0 &&
+              visibleThreads.length === 0 &&
+              sidebarThreadListMode === "recent" &&
+              !shouldShowProjectPathEntry ? (
+                <div className="px-2 pt-4 text-center text-xs text-muted-foreground/60">
+                  No threads yet
+                </div>
+              ) : null}
             </SidebarGroup>
           </SidebarContent>
 

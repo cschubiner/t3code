@@ -67,6 +67,7 @@ function makeState(thread: Thread): AppState {
     sidebarThreadsById: {},
     threadIdsByProjectId,
     bootstrapComplete: true,
+    sidebarThreadListMode: "grouped",
   };
 }
 
@@ -279,6 +280,7 @@ describe("store read model sync", () => {
       sidebarThreadsById: {},
       threadIdsByProjectId: {},
       bootstrapComplete: true,
+      sidebarThreadListMode: "grouped",
     };
     const readModel: OrchestrationReadModel = {
       snapshotSequence: 2,
@@ -371,6 +373,7 @@ describe("incremental orchestration updates", () => {
       sidebarThreadsById: {},
       threadIdsByProjectId: {},
       bootstrapComplete: true,
+      sidebarThreadListMode: "grouped",
     };
 
     const next = applyOrchestrationEvent(
@@ -432,6 +435,7 @@ describe("incremental orchestration updates", () => {
         [originalProjectId]: [threadId],
       },
       bootstrapComplete: true,
+      sidebarThreadListMode: "grouped",
     };
 
     const next = applyOrchestrationEvent(

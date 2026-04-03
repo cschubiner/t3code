@@ -19,6 +19,7 @@ import {
   derivePendingApprovals,
   derivePendingUserInputs,
 } from "./session-logic";
+import type { SidebarThreadListMode } from "./components/Sidebar.logic";
 import { type ChatMessage, type Project, type SidebarThreadSummary, type Thread } from "./types";
 
 // ── State ────────────────────────────────────────────────────────────
@@ -29,6 +30,28 @@ export interface AppState {
   sidebarThreadsById: Record<string, SidebarThreadSummary>;
   threadIdsByProjectId: Record<string, ThreadId[]>;
   bootstrapComplete: boolean;
+  sidebarThreadListMode: SidebarThreadListMode;
+}
+
+const SIDEBAR_THREAD_LIST_MODE_STORAGE_KEY = "t3code:sidebar-thread-list-mode:v1";
+
+function readPersistedSidebarThreadListMode(): SidebarThreadListMode {
+  if (typeof window === "undefined") return "grouped";
+  try {
+    const raw = window.localStorage.getItem(SIDEBAR_THREAD_LIST_MODE_STORAGE_KEY);
+    return raw === "recent" ? "recent" : "grouped";
+  } catch {
+    return "grouped";
+  }
+}
+
+function persistSidebarThreadListMode(mode: SidebarThreadListMode): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(SIDEBAR_THREAD_LIST_MODE_STORAGE_KEY, mode);
+  } catch {
+    // Ignore storage errors to avoid breaking the app.
+  }
 }
 
 const initialState: AppState = {
@@ -37,6 +60,7 @@ const initialState: AppState = {
   sidebarThreadsById: {},
   threadIdsByProjectId: {},
   bootstrapComplete: false,
+  sidebarThreadListMode: readPersistedSidebarThreadListMode(),
 };
 const MAX_THREAD_MESSAGES = 2_000;
 const MAX_THREAD_CHECKPOINTS = 500;
@@ -1147,6 +1171,7 @@ interface AppStore extends AppState {
   applyOrchestrationEvents: (events: ReadonlyArray<OrchestrationEvent>) => void;
   setError: (threadId: ThreadId, error: string | null) => void;
   setThreadBranch: (threadId: ThreadId, branch: string | null, worktreePath: string | null) => void;
+  setSidebarThreadListMode: (mode: SidebarThreadListMode) => void;
 }
 
 export const useStore = create<AppStore>((set) => ({
@@ -1157,4 +1182,12 @@ export const useStore = create<AppStore>((set) => ({
   setError: (threadId, error) => set((state) => setError(state, threadId, error)),
   setThreadBranch: (threadId, branch, worktreePath) =>
     set((state) => setThreadBranch(state, threadId, branch, worktreePath)),
+  setSidebarThreadListMode: (mode) =>
+    set((state) => {
+      if (state.sidebarThreadListMode === mode) {
+        return state;
+      }
+      persistSidebarThreadListMode(mode);
+      return { ...state, sidebarThreadListMode: mode };
+    }),
 }));

@@ -19,7 +19,13 @@ import {
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useStore } from "../store";
 import { Sheet, SheetPopup } from "../components/ui/sheet";
-import { Sidebar, SidebarInset, SidebarProvider, SidebarRail } from "~/components/ui/sidebar";
+import {
+  Sidebar,
+  SidebarInset,
+  SidebarProvider,
+  SidebarRail,
+  useSidebar,
+} from "~/components/ui/sidebar";
 
 const DiffPanel = lazy(() => import("../components/DiffPanel"));
 const DIFF_INLINE_LAYOUT_MEDIA_QUERY = "(max-width: 1180px)";
@@ -163,6 +169,7 @@ const DiffPanelInlineSidebar = (props: {
 function ChatThreadRouteView() {
   const bootstrapComplete = useStore((store) => store.bootstrapComplete);
   const navigate = useNavigate();
+  const { isMobile, openMobile, setOpenMobile } = useSidebar();
   const threadId = Route.useParams({
     select: (params) => ThreadId.makeUnsafe(params.threadId),
   });
@@ -200,6 +207,14 @@ function ChatThreadRouteView() {
       setHasOpenedDiff(true);
     }
   }, [diffOpen]);
+
+  useEffect(() => {
+    if (!isMobile || !openMobile) {
+      return;
+    }
+
+    setOpenMobile(false);
+  }, [isMobile, openMobile, setOpenMobile, threadId]);
 
   useEffect(() => {
     if (!bootstrapComplete) {

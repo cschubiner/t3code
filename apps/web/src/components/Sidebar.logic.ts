@@ -1,4 +1,5 @@
 import * as React from "react";
+import type { ThreadId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { SidebarThreadSummary, Thread } from "../types";
 import { cn } from "../lib/utils";
@@ -7,6 +8,7 @@ import { isLatestTurnSettled } from "../session-logic";
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
 export type SidebarNewThreadEnvMode = "local" | "worktree";
+export type SidebarThreadListMode = "grouped" | "recent";
 type SidebarProject = {
   id: string;
   name: string;
@@ -174,6 +176,16 @@ export function resolveSidebarNewThreadEnvMode(input: {
   return input.requestedEnvMode ?? input.defaultEnvMode;
 }
 
+export function visibleRecentThreadsForSidebar<
+  T extends Pick<SidebarThreadSummary, "id" | "projectId" | "createdAt" | "updatedAt">,
+>(input: { threads: readonly T[]; isExpanded: boolean; threadPreviewLimit: number }): T[] {
+  const orderedThreads = sortThreadsForRecentSidebar(input.threads);
+  if (orderedThreads.length <= input.threadPreviewLimit || input.isExpanded) {
+    return orderedThreads;
+  }
+  return orderedThreads.slice(0, input.threadPreviewLimit);
+}
+
 export function resolveSidebarNewThreadSeedContext(input: {
   projectId: string;
   defaultEnvMode: SidebarNewThreadEnvMode;
@@ -253,6 +265,12 @@ export function getVisibleSidebarThreadIds<TThreadId>(
   );
 }
 
+export function visibleThreadIdsForRecentSidebar<
+  T extends Pick<SidebarThreadSummary, "id" | "projectId" | "createdAt" | "updatedAt">,
+>(input: { threads: readonly T[]; isExpanded: boolean; threadPreviewLimit: number }): ThreadId[] {
+  return visibleRecentThreadsForSidebar(input).map((thread) => thread.id);
+}
+
 export function resolveAdjacentThreadId<T>(input: {
   threadIds: readonly T[];
   currentThreadId: T | null;
@@ -278,6 +296,13 @@ export function resolveAdjacentThreadId<T>(input: {
   }
 
   return currentIndex < threadIds.length - 1 ? (threadIds[currentIndex + 1] ?? null) : null;
+}
+
+export function deriveSidebarThreadProjectName(input: {
+  thread: Pick<SidebarThreadSummary, "projectId">;
+  projects: readonly Pick<SidebarProject, "id" | "name">[];
+}): string {
+  return input.projects.find((project) => project.id === input.thread.projectId)?.name ?? "Unknown";
 }
 
 export function isContextMenuPointerDown(input: {
@@ -573,6 +598,12 @@ function getThreadSortTimestamp(
   return getLatestUserMessageTimestamp(thread);
 }
 
+function threadRecentSortTimestamp(
+  thread: Pick<SidebarThreadSummary, "createdAt" | "updatedAt">,
+): number {
+  return toSortableTimestamp(thread.updatedAt ?? thread.createdAt) ?? Number.NEGATIVE_INFINITY;
+}
+
 export function sortThreadsForSidebar<
   T extends Pick<Thread, "id" | "createdAt" | "updatedAt"> & SidebarThreadSortInput,
 >(threads: readonly T[], sortOrder: SidebarThreadSortOrder): T[] {
@@ -582,6 +613,20 @@ export function sortThreadsForSidebar<
     const byTimestamp =
       rightTimestamp === leftTimestamp ? 0 : rightTimestamp > leftTimestamp ? 1 : -1;
     if (byTimestamp !== 0) return byTimestamp;
+    return right.id.localeCompare(left.id);
+  });
+}
+
+export function sortThreadsForRecentSidebar<
+  T extends Pick<SidebarThreadSummary, "id" | "createdAt" | "updatedAt">,
+>(threads: readonly T[]): T[] {
+  return threads.toSorted((left, right) => {
+    const byUpdatedAt = threadRecentSortTimestamp(right) - threadRecentSortTimestamp(left);
+    if (byUpdatedAt !== 0) return byUpdatedAt;
+
+    const byCreatedAt = Date.parse(right.createdAt) - Date.parse(left.createdAt);
+    if (byCreatedAt !== 0) return byCreatedAt;
+
     return right.id.localeCompare(left.id);
   });
 }
