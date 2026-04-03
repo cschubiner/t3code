@@ -59,7 +59,7 @@ Restore non-queue sidebar UX after the shortcut substrate is back.
 - `5a0f3ee4` add sidebar thread navigation keybindings
 - `97d8ac89` update sidebar navigation hotkeys
 - `8bcfffb5` update sidebar navigation hotkeys
-- `ed8555f6` add sidebar rename hotkey
+- `ed8555f6` add sidebar rename hotkey -> restored in `402cdcaa`
 - `c93359cd` add sidebar referenced PR pills
 - `3c7a97a1` fix sidebar PR pill formatting
 - `8c7af835` dedupe sidebar pr mentions
