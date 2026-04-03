@@ -38,8 +38,8 @@ data sources.
 - `6d6b35b0` fix slash command ranking -> restored in `9bbf39f2`
 - `e56d17af` add delete slash command -> folded into `9bbf39f2`
 - `5db9583a` add delete slash command -> restored in `9bbf39f2`
-- `dbf3b0a9` add composer env toggle hotkey
-- `8bbf907b` Fix composer-focused sidebar hotkeys
+- `dbf3b0a9` add composer env toggle hotkey -> restored in `4feef38f`
+- `8bbf907b` Fix composer-focused sidebar hotkeys -> restored in `4feef38f`
 - `8cfc8879` docs: add main-state desktop boot shortcut
 
 ## Batch 2: Skills and Snippets

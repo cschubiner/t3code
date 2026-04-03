@@ -11,8 +11,8 @@ Statuses:
 
 Current tally:
 
-- `56` `replay_clean`
-- `18` `replay_adapted`
+- `54` `replay_clean`
+- `20` `replay_adapted`
 - `32` `superseded`
 - `3` `already_present`
 
@@ -110,7 +110,7 @@ Restore batches:
 | replay_adapted  | `a89a9820` | add thread search shortcuts                                      | Restored on current ChatView/Sidebar architecture while preserving the rebuilt local queue flow.                     | `27e804de`                             |
 | replay_adapted  | `c7e554ff` | fix codex import dialog scrolling                                | Restore feature on current RPC/server/UI architecture.                                                               |                                        |
 | superseded      | `e3e88907` | fix queued send-now reactor test                                 | Old queue implementation should not be replayed verbatim; superseded by rebuilt local queue architecture.            | f675f438 and follow-up rebuild commits |
-| replay_clean    | `8bbf907b` | Fix composer-focused sidebar hotkeys                             | Fork UX feature missing from current main; likely replay or small port.                                              |                                        |
+| replay_adapted  | `8bbf907b` | Fix composer-focused sidebar hotkeys                             | Restored by allowing composer-focused sidebar shortcuts while ignoring true sidebar text-entry editing targets.      | `4feef38f`                             |
 | replay_adapted  | `e2d093b8` | fix skill autocomplete title layout                              | Restore skills RPC and composer integration on current composer architecture.                                        |                                        |
 | superseded      | `cc26a3a8` | fix replay integration after second upstream sync                | Historical sync glue commit; superseded by this new ledger-driven restore.                                           | docs/missing-commit-ledger.md          |
 | superseded      | `7a41a65d` | fix send now dispatch and desktop launch                         | Old queue implementation should not be replayed verbatim; superseded by rebuilt local queue architecture.            | f675f438 and follow-up rebuild commits |
@@ -118,7 +118,7 @@ Restore batches:
 | superseded      | `e56d17af` | add delete slash command                                         | Folded into the current composer `/delete` restore instead of replaying the older Sidebar-specific follow-up.        | `9bbf39f2`                             |
 | replay_clean    | `8bcfffb5` | update sidebar navigation hotkeys                                | Fork UX feature missing from current main; likely replay or small port.                                              |                                        |
 | superseded      | `e1232670` | fix upstream replay integration                                  | Historical sync glue commit; superseded by this new ledger-driven restore.                                           | docs/missing-commit-ledger.md          |
-| replay_clean    | `dbf3b0a9` | add composer env toggle hotkey                                   | Fork UX feature missing from current main; likely replay or small port.                                              |                                        |
+| replay_adapted  | `dbf3b0a9` | add composer env toggle hotkey                                   | Restored on the current draft-thread env toggle flow with browser coverage on the rebuilt ChatView test surface.     | `4feef38f`                             |
 | replay_adapted  | `5db9583a` | add delete slash command                                         | Restored `/delete` on top of the current `useThreadActions` flow instead of replaying the old deletion helper stack. | `9bbf39f2`                             |
 | replay_clean    | `97d8ac89` | update sidebar navigation hotkeys                                | Fork UX feature missing from current main; likely replay or small port.                                              |                                        |
 | replay_clean    | `edcf6a1e` | Fix git test timeouts and process cleanup                        | Replayed with a small test-helper merge in `GitManager.test.ts`.                                                     | `314e9a89`                             |

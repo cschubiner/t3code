@@ -31,6 +31,7 @@
     "dev:desktop": "node scripts/dev-runner.ts dev:desktop",
     "start": "turbo run start --filter=t3",
     "start:desktop": "turbo run start --filter=@t3tools/desktop",
+    "start:desktop:main-state": "cd apps/desktop && T3CODE_STATE_DIR=\"$HOME/.t3/userdata\" bun run start",
     "start:marketing": "turbo run preview --filter=@t3tools/marketing",
     "start:mock-update-server": "bun run scripts/mock-update-server.ts",
     "build": "turbo run build",

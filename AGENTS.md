@@ -5,6 +5,11 @@
 - All of `bun fmt`, `bun lint`, and `bun typecheck` must pass before considering tasks completed.
 - NEVER run `bun test`. Always use `bun run test` (runs Vitest).
 
+## Local Desktop Boot
+
+- When the user wants the desktop app running against the main local persisted desktop database, use `bun run start:desktop:main-state` from the repo root.
+- That script explicitly sets `T3CODE_STATE_DIR="$HOME/.t3/userdata"` before launching the desktop app, which avoids accidentally booting against a different state directory.
+
 ## Project Snapshot
 
 T3 Code is a minimal web GUI for using coding agents like Codex and Claude.
