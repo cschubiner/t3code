@@ -215,6 +215,24 @@ function toOrchestrationSessionFromRuntime(
   };
 }
 
+function shouldPreferProjectedSessionOverRuntime(
+  projectedSession: OrchestrationSession,
+  runtimeSession: OrchestrationSession,
+): boolean {
+  if (projectedSession.updatedAt > runtimeSession.updatedAt) {
+    return true;
+  }
+
+  // A stale runtime row can still look "running" after the projected turn has
+  // already failed. Normalizing that stale row yields a synthetic "ready"
+  // session, which would incorrectly hide the real error state in snapshots.
+  return (
+    projectedSession.status === "error" &&
+    runtimeSession.status === "ready" &&
+    runtimeSession.lastError === null
+  );
+}
+
 function computeSnapshotSequence(
   stateRows: ReadonlyArray<Schema.Schema.Type<typeof ProjectionStateDbRowSchema>>,
 ): number {
@@ -769,7 +787,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             const projectedSession = sessionsByThread.get(row.threadId);
             if (
               projectedSession === undefined ||
-              projectedSession.updatedAt <= runtimeSession.updatedAt
+              !shouldPreferProjectedSessionOverRuntime(projectedSession, runtimeSession)
             ) {
               sessionsByThread.set(row.threadId, runtimeSession);
             }
