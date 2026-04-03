@@ -77,6 +77,7 @@ import {
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
 import { useStore } from "../store";
+import { useThreadActivityStore } from "../threadActivityStore";
 import { useProjectById, useThreadById } from "../storeSelectors";
 import { useUiStateStore } from "../uiStateStore";
 import { useChatToolbarFocusStore } from "../chatToolbarFocusStore";
@@ -557,6 +558,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
   optimisticUserMessagesRef.current = optimisticUserMessages;
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>(composerTerminalContexts);
+  const setTransientWorking = useThreadActivityStore((state) => state.setTransientWorking);
   const [localDraftErrorsByThreadId, setLocalDraftErrorsByThreadId] = useState<
     Record<ThreadId, string | null>
   >({});
@@ -1086,6 +1088,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const canResumeQueuedTurns =
     queuedTurnPauseReason !== null && queuedTurnDispatchGate.pauseReason === null;
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  useEffect(() => {
+    const hasTransientWork = isSendBusy || isConnecting || isRevertingCheckpoint;
+    setTransientWorking(threadId, hasTransientWork);
+    return () => {
+      setTransientWorking(threadId, false);
+    };
+  }, [isConnecting, isRevertingCheckpoint, isSendBusy, setTransientWorking, threadId]);
   const nowIso = new Date(nowTick).toISOString();
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,

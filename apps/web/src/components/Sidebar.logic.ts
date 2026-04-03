@@ -60,6 +60,7 @@ type ThreadStatusInput = Pick<
   | "latestTurn"
   | "session"
 > & {
+  hasTransientWork?: boolean;
   lastVisitedAt?: string | undefined;
 };
 
@@ -448,7 +449,13 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (thread.session?.status === "running") {
+  const hasActiveRunningTurn =
+    thread.hasTransientWork === true ||
+    thread.session?.status === "running" ||
+    thread.session?.orchestrationStatus === "running" ||
+    thread.latestTurn?.state === "running";
+
+  if (hasActiveRunningTurn) {
     return {
       label: "Working",
       colorClass: "text-sky-600 dark:text-sky-300/80",

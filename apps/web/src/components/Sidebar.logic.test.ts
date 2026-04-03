@@ -38,10 +38,11 @@ import {
 function makeLatestTurn(overrides?: {
   completedAt?: string | null;
   startedAt?: string | null;
+  state?: "completed" | "running" | "interrupted" | "error";
 }): OrchestrationLatestTurn {
   return {
     turnId: "turn-1" as never,
-    state: "completed",
+    state: overrides?.state ?? "completed",
     assistantMessageId: null,
     requestedAt: "2026-03-09T10:00:00.000Z",
     startedAt: overrides?.startedAt ?? "2026-03-09T10:00:00.000Z",
@@ -624,6 +625,38 @@ describe("resolveThreadStatusPill", () => {
     expect(
       resolveThreadStatusPill({
         thread: baseThread,
+      }),
+    ).toMatchObject({ label: "Working", pulse: true });
+  });
+
+  it("shows working while the latest turn is still running even after the session flips ready", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          latestTurn: makeLatestTurn({ completedAt: null, state: "running" }),
+          session: {
+            ...baseThread.session,
+            status: "ready",
+            orchestrationStatus: "ready",
+          },
+        },
+      }),
+    ).toMatchObject({ label: "Working", pulse: true });
+  });
+
+  it("shows working while transient local send state is active before the session flips running", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          hasTransientWork: true,
+          session: {
+            ...baseThread.session,
+            status: "ready",
+            orchestrationStatus: "ready",
+          },
+        },
       }),
     ).toMatchObject({ label: "Working", pulse: true });
   });

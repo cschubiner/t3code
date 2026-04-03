@@ -111,6 +111,7 @@ import {
   SidebarTrigger,
 } from "./ui/sidebar";
 import { useThreadSelectionStore } from "../threadSelectionStore";
+import { useThreadActivityStore } from "../threadActivityStore";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 import {
   deriveSidebarThreadProjectName,
@@ -319,6 +320,9 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
     (state) =>
       selectThreadTerminalState(state.terminalStateByThreadId, props.threadId).runningTerminalIds,
   );
+  const hasTransientWork = useThreadActivityStore(
+    (state) => state.transientWorkByThreadId[props.threadId] === true,
+  );
 
   if (!thread) {
     return null;
@@ -332,6 +336,7 @@ function SidebarThreadRow(props: SidebarThreadRowProps) {
   const threadStatus = resolveThreadStatusPill({
     thread: {
       ...thread,
+      hasTransientWork,
       lastVisitedAt,
     },
   });
@@ -776,6 +781,7 @@ export default function Sidebar() {
   const clearProjectDraftThreadId = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadId,
   );
+  const transientWorkByThreadId = useThreadActivityStore((state) => state.transientWorkByThreadId);
   const navigate = useNavigate();
   const pathname = useLocation({ select: (loc) => loc.pathname });
   const isOnSettings = pathname.startsWith("/settings");
@@ -1571,6 +1577,7 @@ export default function Sidebar() {
           resolveThreadStatusPill({
             thread: {
               ...thread,
+              hasTransientWork: transientWorkByThreadId[thread.id] === true,
               lastVisitedAt: threadLastVisitedAtById[thread.id],
             },
           });
@@ -1628,6 +1635,7 @@ export default function Sidebar() {
       routeThreadId,
       sortedProjects,
       sidebarThreadsById,
+      transientWorkByThreadId,
       threadIdsByProjectId,
       threadLastVisitedAtById,
     ],
