@@ -440,7 +440,10 @@ describe("thread navigation helpers", () => {
   it("maps traversal commands to directions", () => {
     assert.strictEqual(threadTraversalDirectionFromCommand("thread.previous"), "previous");
     assert.strictEqual(threadTraversalDirectionFromCommand("thread.next"), "next");
+    assert.strictEqual(threadTraversalDirectionFromCommand("sidebar.thread.previous"), "previous");
+    assert.strictEqual(threadTraversalDirectionFromCommand("sidebar.thread.next"), "next");
     assert.isNull(threadTraversalDirectionFromCommand("thread.jump.1"));
+    assert.isNull(threadTraversalDirectionFromCommand("sidebar.project.previous"));
     assert.isNull(threadTraversalDirectionFromCommand(null));
   });
 

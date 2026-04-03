@@ -261,6 +261,8 @@ export function threadTraversalDirectionFromCommand(
 ): "previous" | "next" | null {
   if (command === "thread.previous") return "previous";
   if (command === "thread.next") return "next";
+  if (command === "sidebar.thread.previous") return "previous";
+  if (command === "sidebar.thread.next") return "next";
   return null;
 }
 
