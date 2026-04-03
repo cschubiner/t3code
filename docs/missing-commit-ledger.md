@@ -11,10 +11,10 @@ Statuses:
 
 Current tally:
 
-- `50` `replay_clean`
+- `48` `replay_clean`
 - `23` `replay_adapted`
-- `32` `superseded`
-- `4` `already_present`
+- `33` `superseded`
+- `5` `already_present`
 
 Restore batches:
 
@@ -45,9 +45,9 @@ Restore batches:
 | superseded      | `74040eba` | fix send-now queue state                                         | Old queue implementation should not be replayed verbatim; superseded by rebuilt local queue architecture.                                                                                                                          | f675f438 and follow-up rebuild commits |
 | replay_clean    | `ccb60370` | fix inline diff sidebar wrapper whitespace                       | Restored the layout-less inline diff sidebar wrapper mode on the current route shell and locked it with sidebar unit coverage plus a targeted ChatView browser regression.                                                         | `175795b8`                             |
 | replay_adapted  | `c4bed798` | stabilize chatview browser checks                                | Restored on the current browser architecture by fixing stale draft-promotion expectations, removing dead ChatView-only snippet dialog coverage from the monolithic harness, and adding a dedicated `SnippetPickerDialog.browser.tsx` spec for insert/delete behavior. | `1882ff95`                             |
-| replay_clean    | `4b0f3ad8` | Revert "fix chat whitespace virtualization"                      |                                                                                                                                                                                                                                    |                                        |
+| already_present | `4b0f3ad8` | Revert "fix chat whitespace virtualization"                      | The backup branch ultimately kept the reverted timeline-height state, and current `timelineHeight.ts` plus its tests already match that post-revert result.                                                                       | current main                           |
 | replay_adapted  | `36c949a7` | widen chat timeline layout                                       | Folded into the wider chat-thread layout restore, which now uses the full available width instead of the earlier `max-w-6xl` intermediate step.                                                                                    | `65f3966e`                             |
-| replay_clean    | `59c945d2` | fix chat whitespace virtualization                               |                                                                                                                                                                                                                                    |                                        |
+| superseded      | `59c945d2` | fix chat whitespace virtualization                               | This whitespace-virtualization experiment was later backed out by `4b0f3ad8`; current `timelineHeight` code already reflects the post-revert behavior, so replaying the intermediate change would be churn.                      | `4b0f3ad8` / current main              |
 | superseded      | `e8607763` | fix queued state                                                 | Old queue implementation should not be replayed verbatim; superseded by rebuilt local queue architecture.                                                                                                                          | f675f438 and follow-up rebuild commits |
 | superseded      | `7b4963d2` | fix initial-message queue promotion race                         | Old queue implementation should not be replayed verbatim; superseded by rebuilt local queue architecture.                                                                                                                          | f675f438 and follow-up rebuild commits |
 | superseded      | `c3ff2017` | shrink queued follow-up panel                                    | Old queue implementation should not be replayed verbatim; superseded by rebuilt local queue architecture.                                                                                                                          | f675f438 and follow-up rebuild commits |
