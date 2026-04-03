@@ -64,15 +64,15 @@ Restore non-queue sidebar UX after the shortcut substrate is back.
 - `3c7a97a1` fix sidebar PR pill formatting -> restored in `412d14cc`
 - `8c7af835` dedupe sidebar pr mentions -> restored in `412d14cc`
 - `23529a62` fix pr pill merge status lookup -> restored in `412d14cc`
-- `f1e49e60` polish sidebar thread rows
+- `f1e49e60` polish sidebar thread rows -> restored in `9d2c2e12`
 - `ff24a79e` match delete navigation to sidebar next thread -> restored in `bc4c34fc`
-- `d54ecdad` shrink sidebar project toggle further
-- `246a9aa3` shrink sidebar project toggle
+- `d54ecdad` shrink sidebar project toggle further -> restored in `9d2c2e12`
+- `246a9aa3` shrink sidebar project toggle -> restored in `9d2c2e12`
 - `c590e6c0` test sidebar navigation with manual project sort
-- `0c4160ef` fix sidebar browser test settings seeding
-- `a3ba826e` fix sidebar browser settings fixture
+- `0c4160ef` fix sidebar browser test settings seeding -> restored in `9d2c2e12`
+- `a3ba826e` fix sidebar browser settings fixture -> restored in `9d2c2e12`
 - `c9624009` add browser regression test for mobile thread drawer
-- `d3c38b69` hide mobile thread drawer after selection
+- `d3c38b69` hide mobile thread drawer after selection -> restored in `9d2c2e12`
 
 ## Batch 4: Auth, Runtime, and Worktree Robustness
 
