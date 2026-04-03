@@ -78,8 +78,8 @@ Restore non-queue sidebar UX after the shortcut substrate is back.
 
 These commits likely need adaptation rather than blind cherry-picks.
 
-- `cbef4b51` fix codex auth state recovery
-- `dce81e88` downgrade codex provider noise
+- `cbef4b51` fix codex auth state recovery -> restored in `1be875e6`
+- `dce81e88` downgrade codex provider noise -> restored in `1be875e6`
 - `9b56879f` fix stale runtime working state (#82) -> restored in `a309843b`
 - `0e5c9f02` fix stuck working state (#80) -> restored in `a309843b`
 - `1e5ee7f4` fix stale working session state -> restored in `a309843b`
