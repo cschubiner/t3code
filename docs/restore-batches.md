@@ -40,16 +40,16 @@ data sources.
 - `5db9583a` add delete slash command -> restored in `9bbf39f2`
 - `dbf3b0a9` add composer env toggle hotkey -> restored in `4feef38f`
 - `8bbf907b` Fix composer-focused sidebar hotkeys -> restored in `4feef38f`
-- `8cfc8879` docs: add main-state desktop boot shortcut
+- `8cfc8879` docs: add main-state desktop boot shortcut -> restored in `06cae40e`
 
 ## Batch 2: Skills and Snippets
 
 Restore contracts and RPC first, then composer integration and tests.
 
-- `71aa0098` add skill autocomplete
-- `e2d093b8` fix skill autocomplete title layout
-- `5315ae87` prioritize full skill autocomplete titles
-- `3c76d535` stabilize skills search websocket test
+- `71aa0098` add skill autocomplete -> core restore in `beb70920`; extra skill roots settings surface still pending
+- `e2d093b8` fix skill autocomplete title layout -> restored in `beb70920`
+- `5315ae87` prioritize full skill autocomplete titles -> restored in `beb70920`
+- `3c76d535` stabilize skills search websocket test -> restored in `beb70920`
 - `6624de80` add global snippets library
 
 ## Batch 3: Sidebar and Thread UX
