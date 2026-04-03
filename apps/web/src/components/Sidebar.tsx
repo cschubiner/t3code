@@ -1130,6 +1130,19 @@ export default function Sidebar() {
     [sidebarThreadsById],
   );
 
+  const triggerRename = useCallback(() => {
+    const selectedIds = [...selectedThreadIds];
+    const renameTargetThreadId =
+      selectedIds.length === 1 ? selectedIds[0] : (routeThreadId ?? null);
+    if (!renameTargetThreadId) {
+      return false;
+    }
+    if (!sidebarThreads.some((thread) => thread.id === renameTargetThreadId)) {
+      return false;
+    }
+    return startRenameThread(renameTargetThreadId);
+  }, [routeThreadId, selectedThreadIds, sidebarThreads, startRenameThread]);
+
   const commitRename = useCallback(
     async (threadId: ThreadId, newTitle: string, originalTitle: string) => {
       const finishRename = () => {
@@ -1739,15 +1752,9 @@ export default function Sidebar() {
         return;
       }
       if (command === "sidebar.rename") {
-        const selectedIds = [...selectedThreadIds];
-        const renameTargetThreadId =
-          selectedIds.length === 1 ? selectedIds[0] : (routeThreadId ?? null);
-        if (!renameTargetThreadId) {
-          return;
-        }
         event.preventDefault();
         event.stopPropagation();
-        startRenameThread(renameTargetThreadId);
+        triggerRename();
         return;
       }
       const traversalDirection = threadTraversalDirectionFromCommand(command);
@@ -1814,8 +1821,26 @@ export default function Sidebar() {
     selectedThreadIds,
     startRenameThread,
     threadJumpThreadIds,
+    triggerRename,
     updateThreadJumpHintsVisibility,
   ]);
+
+  useEffect(() => {
+    const bridge = window.desktopBridge;
+    if (!bridge || typeof bridge.onMenuAction !== "function") {
+      return;
+    }
+
+    return bridge.onMenuAction((action) => {
+      if (action !== "sidebar.rename") {
+        return;
+      }
+      if (isTypingInSidebarTextEntry(document.activeElement)) {
+        return;
+      }
+      triggerRename();
+    });
+  }, [triggerRename]);
 
   function renderProjectItem(
     renderedProject: (typeof renderedProjects)[number],

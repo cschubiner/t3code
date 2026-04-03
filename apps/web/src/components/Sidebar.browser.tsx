@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
 let mockedSidebarProjectSortOrder: "updated_at" | "manual" = "updated_at";
+let desktopMenuActionListener: ((action: string) => void) | null = null;
 
 vi.mock("@tanstack/react-router", async () => {
   const actual =
@@ -219,7 +220,10 @@ function buildThreads(): Thread[] {
   ];
 }
 
-async function mountSidebar(options?: { projectOrder?: ProjectId[] }) {
+async function mountSidebar(options?: {
+  projectOrder?: ProjectId[];
+  selectedThreadIds?: ReadonlySet<ThreadId>;
+}) {
   const projects = [
     makeProject(PROJECT_ALPHA, "Alpha", "/repo/alpha"),
     makeProject(PROJECT_BETA, "Beta", "/repo/beta"),
@@ -259,7 +263,7 @@ async function mountSidebar(options?: { projectOrder?: ProjectId[] }) {
     terminalStateByThreadId: {},
   });
   useThreadSelectionStore.setState({
-    selectedThreadIds: new Set(),
+    selectedThreadIds: new Set(options?.selectedThreadIds ?? []),
     anchorThreadId: null,
   });
 
@@ -287,6 +291,8 @@ describe("Sidebar", () => {
     document.body.innerHTML = "";
     localStorage.clear();
     mockedSidebarProjectSortOrder = "updated_at";
+    desktopMenuActionListener = null;
+    Reflect.deleteProperty(window, "desktopBridge");
     useStore.setState({
       projects: [],
       threads: [],
@@ -380,6 +386,40 @@ describe("Sidebar", () => {
         ).map((button) => button.getAttribute("aria-label"));
 
         expect(projectButtons).toEqual(["Create new thread in Beta", "Create new thread in Alpha"]);
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens rename from the desktop sidebar menu action", async () => {
+    Object.defineProperty(window, "desktopBridge", {
+      configurable: true,
+      value: {
+        onMenuAction: (listener: (action: string) => void) => {
+          desktopMenuActionListener = listener;
+          return () => {
+            if (desktopMenuActionListener === listener) {
+              desktopMenuActionListener = null;
+            }
+          };
+        },
+      },
+    });
+
+    const mounted = await mountSidebar({
+      selectedThreadIds: new Set([ThreadId.makeUnsafe("thread-2")]),
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(desktopMenuActionListener).toBeTypeOf("function");
+      });
+
+      desktopMenuActionListener?.("sidebar.rename");
+
+      await vi.waitFor(() => {
+        expect(document.querySelector('[data-testid="thread-row-thread-2"] input')).toBeTruthy();
       });
     } finally {
       await mounted.cleanup();
