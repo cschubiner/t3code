@@ -12,7 +12,12 @@ let desktopMenuActionListener: ((action: string) => void) | null = null;
 let mockedKeybindings: ResolvedKeybindingsConfig = [];
 let mockedGitStatusByCwd = new Map<string, GitStatusResult>();
 let mockedReferencedPrStateByUrl = new Map<string, "open" | "closed" | "merged" | null>();
+let mockedReferencedPrStateByTarget = new Map<string, "open" | "closed" | "merged" | null>();
 let mockedUseQueriesQueryKeys: Array<readonly unknown[]> = [];
+
+function referencedPrTargetKey(candidateCwds: readonly unknown[], url: string): string {
+  return `${candidateCwds.filter((cwd): cwd is string => typeof cwd === "string").join("::")}::${url}`;
+}
 
 vi.mock("@tanstack/react-router", async () => {
   const actual =
@@ -39,7 +44,12 @@ vi.mock("@tanstack/react-query", async () => {
           return { data: mockedGitStatusByCwd.get(third) };
         }
         if (scope === "github-pr-status" && Array.isArray(key) && typeof third === "string") {
-          return { data: mockedReferencedPrStateByUrl.get(third) ?? null };
+          return {
+            data:
+              mockedReferencedPrStateByTarget.get(referencedPrTargetKey(key, third)) ??
+              mockedReferencedPrStateByUrl.get(third) ??
+              null,
+          };
         }
         return { data: undefined };
       });
@@ -323,6 +333,7 @@ describe("Sidebar", () => {
     mockedKeybindings = [];
     mockedGitStatusByCwd = new Map();
     mockedReferencedPrStateByUrl = new Map();
+    mockedReferencedPrStateByTarget = new Map();
     mockedUseQueriesQueryKeys = [];
     desktopMenuActionListener = null;
     Reflect.deleteProperty(window, "desktopBridge");
@@ -621,6 +632,56 @@ describe("Sidebar", () => {
       expect(referencedPrQueryUrls).toContain("https://github.com/pingdotgg/t3code/pull/107");
       expect(referencedPrQueryUrls).toContain("https://github.com/pingdotgg/t3code/pull/102");
       expect(referencedPrQueryUrls).not.toContain("https://github.com/pingdotgg/t3code/pull/101");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("resolves referenced PR state from the project root when the worktree path is stale", async () => {
+    const prUrl = "https://github.com/pingdotgg/t3code/pull/222";
+    const staleWorktreePath = "/repo/alpha-stale-worktree";
+    const projectRootPath = "/repo/alpha";
+    mockedReferencedPrStateByTarget = new Map([
+      [referencedPrTargetKey([staleWorktreePath, projectRootPath], prUrl), "closed"],
+    ]);
+
+    const thread = makeThread({
+      id: ThreadId.makeUnsafe("thread-pr-stale-worktree"),
+      projectId: PROJECT_ALPHA,
+      title: "Stale worktree PR reference",
+      createdAt: "2026-04-02T11:12:00.000Z",
+      updatedAt: "2026-04-02T11:12:00.000Z",
+      branch: "feature/stale-worktree",
+      worktreePath: staleWorktreePath,
+      messages: [
+        {
+          id: "message-pr-stale-worktree" as never,
+          role: "assistant",
+          text: `${prUrl}/files`,
+          createdAt: "2026-04-02T11:12:00.000Z",
+          streaming: false,
+        },
+      ],
+    });
+
+    const mounted = await mountSidebar({
+      projects: [makeProject(PROJECT_ALPHA, "Alpha", projectRootPath)],
+      threads: [thread],
+    });
+
+    try {
+      await vi.waitFor(() => {
+        const closedPill = Array.from(document.querySelectorAll("button")).find(
+          (element) => element.textContent?.trim() === "#222",
+        );
+
+        expect(closedPill?.className).toContain("text-rose-700");
+        expect(mockedUseQueriesQueryKeys).toContainEqual([
+          "github-pr-status",
+          [staleWorktreePath, projectRootPath],
+          prUrl,
+        ]);
+      });
     } finally {
       await mounted.cleanup();
     }
