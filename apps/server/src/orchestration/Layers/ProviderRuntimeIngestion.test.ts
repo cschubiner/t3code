@@ -1825,6 +1825,78 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.activeTurnId).toBeNull();
   });
 
+  it("ignores late turn lifecycle events after a fatal provider runtime.error", async () => {
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-auth");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-runtime-error-latched-turn-started"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId,
+      turnId,
+    });
+
+    await waitForThread(
+      harness.engine,
+      (entry) => entry.session?.status === "running" && entry.session?.activeTurnId === turnId,
+    );
+
+    harness.emit({
+      type: "runtime.error",
+      eventId: asEventId("evt-runtime-error-latched-auth"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId,
+      turnId,
+      payload: {
+        message: "invalid_token Missing or invalid access token",
+        class: "provider_error",
+      },
+    });
+
+    await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.session?.status === "error" &&
+        entry.session?.activeTurnId === null &&
+        entry.session?.lastError === "invalid_token Missing or invalid access token",
+    );
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-runtime-error-latched-late-turn-started"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId,
+      turnId,
+    });
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-runtime-error-latched-late-turn-completed"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId,
+      turnId,
+      payload: {
+        state: "completed",
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === threadId);
+    expect(thread?.session).toMatchObject({
+      status: "error",
+      activeTurnId: null,
+      lastError: "invalid_token Missing or invalid access token",
+    });
+  });
+
   it("records runtime.error activities from the typed payload message", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();

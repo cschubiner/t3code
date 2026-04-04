@@ -232,6 +232,7 @@ function createSnapshotForTargetUser(options: {
   targetText: string;
   targetAttachmentCount?: number;
   sessionStatus?: OrchestrationSessionStatus;
+  sessionLastError?: string | null;
 }): OrchestrationReadModel {
   const messages: Array<OrchestrationReadModel["threads"][number]["messages"][number]> = [];
 
@@ -312,7 +313,7 @@ function createSnapshotForTargetUser(options: {
           providerName: "codex",
           runtimeMode: "full-access",
           activeTurnId: null,
-          lastError: null,
+          lastError: options.sessionLastError ?? null,
           updatedAt: NOW_ISO,
         },
       },
@@ -2303,6 +2304,309 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("sends directly instead of auto-pausing into the queue when an idle thread has a stale local error", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-stale-thread-error-send" as MessageId,
+        targetText: "stale thread error send target",
+      }),
+    });
+
+    try {
+      useStore.getState().setError(THREAD_ID, "Stale local error");
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Send past stale error");
+      await waitForLayout();
+
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          const turnStartRequest = listDispatchCommandsByType("thread.turn.start").at(-1);
+          const command = turnStartRequest as { message?: { text?: string } } | undefined;
+          expect(command?.message?.text).toBe("Send past stale error");
+          expect(useQueuedTurnStore.getState().threadsByThreadId[THREAD_ID]?.items ?? []).toEqual(
+            [],
+          );
+          expect(document.body.textContent).not.toContain("Paused after a thread error");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("sends directly from an idle thread with a stale codex auth error so the session can recover", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-stale-auth-error-send" as MessageId,
+        targetText: "stale auth error send target",
+        sessionStatus: "error",
+        sessionLastError:
+          'ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when AuthRequired(AuthRequiredError { www_authenticate_header: "Bearer realm=\\"OAuth\\", error=\\"invalid_token\\", error_description=\\"Missing or invalid access token\\"" })',
+      }),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Send past stale auth error");
+      await waitForLayout();
+
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          const turnStartRequest = listDispatchCommandsByType("thread.turn.start").at(-1);
+          const command = turnStartRequest as { message?: { text?: string } } | undefined;
+          expect(command?.message?.text).toBe("Send past stale auth error");
+          expect(document.body.textContent).not.toContain("Paused after a session error");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not let a recoverable codex provider auth banner block a fresh send", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-provider-banner-auth-error-send" as MessageId,
+        targetText: "provider banner auth error send target",
+      }),
+      configureFixture: (fixture) => {
+        fixture.serverConfig = {
+          ...fixture.serverConfig,
+          providers: fixture.serverConfig.providers.map((provider) =>
+            provider.provider !== "codex"
+              ? provider
+              : {
+                  ...provider,
+                  status: "error",
+                  auth: { status: "unauthenticated" },
+                  message:
+                    'ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when AuthRequired(AuthRequiredError { www_authenticate_header: "Bearer realm=\\"OAuth\\", error=\\"invalid_token\\", error_description=\\"Missing or invalid access token\\"" })',
+                },
+          ),
+        };
+      },
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Send past provider auth banner");
+      await waitForLayout();
+
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          const turnStartRequest = listDispatchCommandsByType("thread.turn.start").at(-1);
+          const command = turnStartRequest as { message?: { text?: string } } | undefined;
+          expect(command?.message?.text).toBe("Send past provider auth banner");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps a persisted paused queue paused after reload until resume is clicked", async () => {
+    localStorage.setItem(
+      "t3code:queued-turn-store:v1",
+      JSON.stringify({
+        version: 1,
+        state: {
+          threadsByThreadId: {
+            [THREAD_ID]: {
+              items: [
+                {
+                  id: "queued-resume-turn",
+                  text: "Resume exactly this queued follow-up",
+                  attachments: [],
+                  terminalContexts: [],
+                  modelSelection: null,
+                  runtimeMode: "full-access",
+                  interactionMode: "default",
+                  createdAt: isoAt(2_000),
+                  updatedAt: isoAt(2_001),
+                },
+              ],
+              pauseReason: "thread-error",
+              updatedAt: isoAt(2_001),
+            },
+          },
+        },
+      }),
+    );
+    await useQueuedTurnStore.persist.rehydrate();
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-paused-queue-rehydrate" as MessageId,
+        targetText: "paused queue rehydrate target",
+      }),
+    });
+
+    try {
+      await vi.waitFor(
+        () => {
+          const text = document.body.textContent ?? "";
+          expect(text).toContain("1 queued follow-up");
+          expect(text).toContain("Paused after a thread error");
+          expect(text).toContain("Resume exactly this queued follow-up");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await waitForLayout();
+      expect(listDispatchCommandsByType("thread.turn.start")).toEqual([]);
+
+      const resumeButton = await waitForButtonByText("Resume");
+      resumeButton.click();
+
+      await vi.waitFor(
+        () => {
+          const turnStartRequest = listDispatchCommandsByType("thread.turn.start").at(-1);
+          const command = turnStartRequest as { message?: { text?: string } } | undefined;
+          expect(command?.message?.text).toBe("Resume exactly this queued follow-up");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows queue actions when the latest turn is still in progress even if the session status drifted back to ready", async () => {
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-running-turn-drift" as MessageId,
+      targetText: "running turn drift target",
+    });
+    const thread = baseSnapshot.threads[0];
+    if (!thread?.session) {
+      throw new Error("Expected browser fixture thread session.");
+    }
+    const snapshot: OrchestrationReadModel = {
+      ...baseSnapshot,
+      threads: [
+        {
+          ...thread,
+          latestTurn: {
+            turnId: "turn-running-drift" as TurnId,
+            state: "running",
+            requestedAt: isoAt(1_000),
+            startedAt: isoAt(1_001),
+            completedAt: null,
+            assistantMessageId: null,
+          },
+          session: {
+            ...thread.session,
+            status: "ready",
+            activeTurnId: "turn-running-drift" as TurnId,
+            updatedAt: isoAt(1_002),
+          },
+        },
+      ],
+    };
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Queue this follow-up");
+      await waitForLayout();
+
+      const queueButton = await waitForButtonByText("Queue");
+      expect(queueButton.disabled).toBe(false);
+      expect(document.querySelector('button[aria-label="Send message"]')).toBeNull();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not auto-dispatch queued follow-ups while a stale session error still has an unsettled turn", async () => {
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-unsettled-error-queue" as MessageId,
+      targetText: "unsettled error queue target",
+    });
+    const thread = baseSnapshot.threads[0];
+    if (!thread?.session) {
+      throw new Error("Expected browser fixture thread session.");
+    }
+
+    useQueuedTurnStore.setState({
+      threadsByThreadId: {
+        [THREAD_ID]: {
+          items: [
+            {
+              id: "queued-after-auth-error",
+              text: "Do not auto-dispatch this yet",
+              attachments: [],
+              terminalContexts: [],
+              modelSelection: null,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              createdAt: isoAt(2_100),
+              updatedAt: isoAt(2_101),
+            },
+          ],
+          pauseReason: null,
+          updatedAt: isoAt(2_101),
+        },
+      },
+    });
+
+    const snapshot: OrchestrationReadModel = {
+      ...baseSnapshot,
+      threads: [
+        {
+          ...thread,
+          latestTurn: {
+            turnId: "turn-auth-error-still-running" as TurnId,
+            state: "running",
+            requestedAt: isoAt(2_000),
+            startedAt: isoAt(2_001),
+            completedAt: null,
+            assistantMessageId: null,
+          },
+          session: {
+            ...thread.session,
+            status: "error",
+            activeTurnId: null,
+            lastError:
+              'ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when AuthRequired(AuthRequiredError { www_authenticate_header: "Bearer realm=\\"OAuth\\", error=\\"invalid_token\\", error_description=\\"Missing or invalid access token\\"" })',
+            updatedAt: isoAt(2_002),
+          },
+        },
+      ],
+    };
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+    });
+
+    try {
+      await waitForLayout();
+      expect(document.body.textContent).toContain("1 queued follow-up");
+      expect(listDispatchCommandsByType("thread.turn.start")).toEqual([]);
     } finally {
       await mounted.cleanup();
     }

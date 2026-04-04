@@ -902,6 +902,11 @@ const make = Effect.fn("make")(function* () {
     const now = event.createdAt;
     const eventTurnId = toTurnId(event.turnId);
     const activeTurnId = thread.session?.activeTurnId ?? null;
+    const hasLatchedFatalSessionError =
+      STRICT_PROVIDER_LIFECYCLE_GUARD &&
+      thread.session?.status === "error" &&
+      activeTurnId === null &&
+      thread.session?.lastError !== null;
     const completedTurnAlreadyObserved =
       event.type === "turn.started" && eventTurnId !== undefined
         ? Option.isSome(
@@ -928,8 +933,14 @@ const make = Effect.fn("make")(function* () {
         case "thread.started":
           return true;
         case "turn.started":
+          if (hasLatchedFatalSessionError) {
+            return false;
+          }
           return !conflictsWithActiveTurn && !completedTurnAlreadyObserved;
         case "turn.completed":
+          if (hasLatchedFatalSessionError) {
+            return false;
+          }
           if (conflictsWithActiveTurn || missingTurnForActiveTurn) {
             return false;
           }

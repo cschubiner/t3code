@@ -6,6 +6,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { useEffect, useState } from "react";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
@@ -47,31 +48,15 @@ export interface QueuedTurnDispatchGate {
 export interface QueuedTurnDispatchGateInput {
   phase: SessionPhase;
   sessionOrchestrationStatus: typeof OrchestrationSessionStatus.Type | null | undefined;
+  hasActiveUnsettledTurn: boolean;
   isLocalDispatchInFlight: boolean;
   hasPendingApproval: boolean;
   hasPendingUserInput: boolean;
-  threadError: string | null | undefined;
 }
 
 export function deriveQueuedTurnDispatchGate(
   input: QueuedTurnDispatchGateInput,
 ): QueuedTurnDispatchGate {
-  if (typeof input.threadError === "string" && input.threadError.trim().length > 0) {
-    return {
-      canDispatch: false,
-      pauseReason: "thread-error",
-      blockReason: null,
-    };
-  }
-
-  if (input.sessionOrchestrationStatus === "error") {
-    return {
-      canDispatch: false,
-      pauseReason: "session-error",
-      blockReason: null,
-    };
-  }
-
   if (input.sessionOrchestrationStatus === "interrupted") {
     return {
       canDispatch: false,
@@ -104,7 +89,11 @@ export function deriveQueuedTurnDispatchGate(
     };
   }
 
-  if (input.phase === "running" || input.sessionOrchestrationStatus === "running") {
+  if (
+    input.phase === "running" ||
+    input.sessionOrchestrationStatus === "running" ||
+    input.hasActiveUnsettledTurn
+  ) {
     return {
       canDispatch: false,
       pauseReason: null,
@@ -404,4 +393,26 @@ export const useQueuedTurnStore = create<QueuedTurnStore>()(
 
 export function flushQueuedTurnStoreStorage(): void {
   queuedTurnDebouncedStorage.flush();
+}
+
+export function useQueuedTurnStoreHydrated(): boolean {
+  const [hydrated, setHydrated] = useState(() => useQueuedTurnStore.persist.hasHydrated());
+
+  useEffect(() => {
+    setHydrated(useQueuedTurnStore.persist.hasHydrated());
+
+    const unsubscribeHydrate = useQueuedTurnStore.persist.onHydrate(() => {
+      setHydrated(false);
+    });
+    const unsubscribeFinishHydration = useQueuedTurnStore.persist.onFinishHydration(() => {
+      setHydrated(true);
+    });
+
+    return () => {
+      unsubscribeHydrate();
+      unsubscribeFinishHydration();
+    };
+  }, []);
+
+  return hydrated;
 }

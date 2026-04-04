@@ -46,10 +46,27 @@ describe("deriveQueuedTurnDispatchGate", () => {
       deriveQueuedTurnDispatchGate({
         phase: "disconnected",
         sessionOrchestrationStatus: "stopped",
+        hasActiveUnsettledTurn: false,
         isLocalDispatchInFlight: false,
         hasPendingApproval: false,
         hasPendingUserInput: false,
-        threadError: null,
+      }),
+    ).toEqual({
+      canDispatch: true,
+      pauseReason: null,
+      blockReason: null,
+    });
+  });
+
+  it("allows dispatch from an idle errored session so the next send can recover", () => {
+    expect(
+      deriveQueuedTurnDispatchGate({
+        phase: "ready",
+        sessionOrchestrationStatus: "error",
+        hasActiveUnsettledTurn: false,
+        isLocalDispatchInFlight: false,
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
       }),
     ).toEqual({
       canDispatch: true,
@@ -63,10 +80,27 @@ describe("deriveQueuedTurnDispatchGate", () => {
       deriveQueuedTurnDispatchGate({
         phase: "running",
         sessionOrchestrationStatus: "running",
+        hasActiveUnsettledTurn: true,
         isLocalDispatchInFlight: false,
         hasPendingApproval: false,
         hasPendingUserInput: false,
-        threadError: null,
+      }),
+    ).toEqual({
+      canDispatch: false,
+      pauseReason: null,
+      blockReason: "running",
+    });
+  });
+
+  it("keeps the queue blocked while the latest turn is still unsettled after a session error", () => {
+    expect(
+      deriveQueuedTurnDispatchGate({
+        phase: "ready",
+        sessionOrchestrationStatus: "error",
+        hasActiveUnsettledTurn: true,
+        isLocalDispatchInFlight: false,
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
       }),
     ).toEqual({
       canDispatch: false,
@@ -80,10 +114,10 @@ describe("deriveQueuedTurnDispatchGate", () => {
       deriveQueuedTurnDispatchGate({
         phase: "ready",
         sessionOrchestrationStatus: "ready",
+        hasActiveUnsettledTurn: false,
         isLocalDispatchInFlight: false,
         hasPendingApproval: true,
         hasPendingUserInput: false,
-        threadError: null,
       }),
     ).toEqual({
       canDispatch: false,
@@ -97,10 +131,10 @@ describe("deriveQueuedTurnDispatchGate", () => {
       deriveQueuedTurnDispatchGate({
         phase: "ready",
         sessionOrchestrationStatus: "interrupted",
+        hasActiveUnsettledTurn: false,
         isLocalDispatchInFlight: false,
         hasPendingApproval: false,
         hasPendingUserInput: false,
-        threadError: null,
       }),
     ).toEqual({
       canDispatch: false,
@@ -114,10 +148,10 @@ describe("deriveQueuedTurnDispatchGate", () => {
       deriveQueuedTurnDispatchGate({
         phase: "ready",
         sessionOrchestrationStatus: "ready",
+        hasActiveUnsettledTurn: false,
         isLocalDispatchInFlight: false,
         hasPendingApproval: false,
         hasPendingUserInput: false,
-        threadError: null,
       }),
     ).toEqual({
       canDispatch: true,
