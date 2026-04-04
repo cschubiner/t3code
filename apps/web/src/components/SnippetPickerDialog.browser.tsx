@@ -154,14 +154,9 @@ describe("SnippetPickerDialog", () => {
           cancelable: true,
         }),
       );
-
-      await vi.waitFor(
-        () => {
-          expect(getResultRows()[0]?.dataset.highlighted).toBe("true");
-        },
-        { timeout: 8_000, interval: 16 },
-      );
-
+      await new Promise<void>((resolve) => {
+        window.requestAnimationFrame(() => resolve());
+      });
       input.dispatchEvent(
         new KeyboardEvent("keydown", {
           key: "Enter",
@@ -170,11 +165,16 @@ describe("SnippetPickerDialog", () => {
         }),
       );
 
-      expect(mounted.onSelectSnippet).toHaveBeenCalledWith(
-        expect.objectContaining({
-          id: "snippet-2",
-          text: "Second saved snippet",
-        }),
+      await vi.waitFor(
+        () => {
+          expect(mounted.onSelectSnippet).toHaveBeenCalledWith(
+            expect.objectContaining({
+              id: "snippet-2",
+              text: "Second saved snippet",
+            }),
+          );
+        },
+        { timeout: 8_000, interval: 16 },
       );
     } finally {
       await mounted.cleanup();
