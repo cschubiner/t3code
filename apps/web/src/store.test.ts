@@ -596,8 +596,53 @@ describe("incremental orchestration updates", () => {
     ]);
 
     expect(next.threads[0]?.session?.status).toBe("running");
-    expect(next.threads[0]?.latestTurn?.state).toBe("completed");
+    expect(next.threads[0]?.latestTurn?.state).toBe("running");
+    expect(next.threads[0]?.latestTurn?.completedAt).toBeNull();
     expect(next.threads[0]?.messages).toHaveLength(1);
+  });
+
+  it("keeps the active turn running when a non-streaming assistant message arrives mid-turn", () => {
+    const turnId = TurnId.makeUnsafe("turn-1");
+    const state = makeState(
+      makeThread({
+        session: {
+          provider: "codex",
+          status: "running",
+          orchestrationStatus: "running",
+          activeTurnId: turnId,
+          createdAt: "2026-02-27T00:00:02.000Z",
+          updatedAt: "2026-02-27T00:00:02.000Z",
+        },
+        latestTurn: {
+          turnId,
+          state: "running",
+          requestedAt: "2026-02-27T00:00:00.000Z",
+          startedAt: "2026-02-27T00:00:00.000Z",
+          completedAt: null,
+          assistantMessageId: null,
+        },
+      }),
+    );
+
+    const next = applyOrchestrationEvent(
+      state,
+      makeEvent("thread.message-sent", {
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        messageId: MessageId.makeUnsafe("assistant-midturn"),
+        role: "assistant",
+        text: "still working",
+        turnId,
+        streaming: false,
+        createdAt: "2026-02-27T00:00:03.000Z",
+        updatedAt: "2026-02-27T00:00:03.000Z",
+      }),
+    );
+
+    expect(next.threads[0]?.latestTurn?.state).toBe("running");
+    expect(next.threads[0]?.latestTurn?.completedAt).toBeNull();
+    expect(next.threads[0]?.latestTurn?.assistantMessageId).toBe(
+      MessageId.makeUnsafe("assistant-midturn"),
+    );
   });
 
   it("does not regress latestTurn when an older turn diff completes late", () => {

@@ -37,6 +37,10 @@ import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
 } from "../Services/OrchestrationEngine.ts";
+import {
+  ProjectionSnapshotQuery,
+  type ProjectionSnapshotQueryShape,
+} from "../Services/ProjectionSnapshotQuery.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
@@ -158,6 +162,28 @@ async function waitForThread(
   return poll();
 }
 
+async function waitForSnapshotThread(
+  snapshotQuery: ProjectionSnapshotQueryShape,
+  predicate: (thread: ProviderRuntimeTestThread) => boolean,
+  timeoutMs = 2000,
+  threadId: ThreadId = asThreadId("thread-1"),
+) {
+  const deadline = Date.now() + timeoutMs;
+  const poll = async (): Promise<ProviderRuntimeTestThread> => {
+    const snapshot = await Effect.runPromise(snapshotQuery.getSnapshot());
+    const thread = snapshot.threads.find((entry) => entry.id === threadId);
+    if (thread && predicate(thread)) {
+      return thread;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error("Timed out waiting for projected thread state");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    return poll();
+  };
+  return poll();
+}
+
 type ProviderRuntimeTestReadModel = OrchestrationReadModel;
 type ProviderRuntimeTestThread = ProviderRuntimeTestReadModel["threads"][number];
 type ProviderRuntimeTestMessage = ProviderRuntimeTestThread["messages"][number];
@@ -167,7 +193,7 @@ type ProviderRuntimeTestCheckpoint = ProviderRuntimeTestThread["checkpoints"][nu
 
 describe("ProviderRuntimeIngestion", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
-    OrchestrationEngineService | ProviderRuntimeIngestionService,
+    OrchestrationEngineService | ProviderRuntimeIngestionService | ProjectionSnapshotQuery,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -206,6 +232,7 @@ describe("ProviderRuntimeIngestion", () => {
     );
     const layer = ProviderRuntimeIngestionLive.pipe(
       Layer.provideMerge(orchestrationLayer),
+      Layer.provideMerge(OrchestrationProjectionSnapshotQueryLive),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(makeTestServerSettingsLayer(options?.serverSettings)),
@@ -215,6 +242,7 @@ describe("ProviderRuntimeIngestion", () => {
     runtime = ManagedRuntime.make(layer);
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const ingestion = await runtime.runPromise(Effect.service(ProviderRuntimeIngestionService));
+    const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(ingestion.start().pipe(Scope.provide(scope)));
     const drain = () => Effect.runPromise(ingestion.drain);
@@ -280,6 +308,7 @@ describe("ProviderRuntimeIngestion", () => {
 
     return {
       engine,
+      snapshotQuery,
       emit: provider.emit,
       setProviderSession: provider.setSession,
       drain,
@@ -1449,6 +1478,68 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(message?.text).toBe("buffer me");
     expect(message?.streaming).toBe(false);
+  });
+
+  it("keeps the projected turn running when an assistant message finalizes mid-turn", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-midturn-final-message"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-midturn-final-message"),
+    });
+
+    await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.session?.status === "running" &&
+        thread.session?.activeTurnId === "turn-midturn-final-message",
+    );
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-item-completed-midturn-final-message"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-midturn-final-message"),
+      itemId: asItemId("item-midturn-final-message"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+        detail: "still working",
+      },
+    });
+
+    const projectedThread = await waitForSnapshotThread(harness.snapshotQuery, (thread) => {
+      const assistantMessage = thread.messages.find(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-midturn-final-message" && !message.streaming,
+      );
+      return (
+        thread.session?.status === "running" &&
+        thread.session?.activeTurnId === "turn-midturn-final-message" &&
+        thread.latestTurn?.turnId === "turn-midturn-final-message" &&
+        thread.latestTurn.state === "running" &&
+        thread.latestTurn.completedAt === null &&
+        assistantMessage !== undefined
+      );
+    });
+
+    expect(projectedThread.session).toMatchObject({
+      status: "running",
+      activeTurnId: "turn-midturn-final-message",
+    });
+    expect(projectedThread.latestTurn).toMatchObject({
+      turnId: "turn-midturn-final-message",
+      state: "running",
+      completedAt: null,
+      assistantMessageId: "assistant:item-midturn-final-message",
+    });
   });
 
   it("streams assistant deltas when thread.turn.start requests streaming mode", async () => {

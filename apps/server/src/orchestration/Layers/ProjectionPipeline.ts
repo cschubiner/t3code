@@ -919,6 +919,13 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           if (event.payload.turnId === null || event.payload.role !== "assistant") {
             return;
           }
+          const sessionRow = yield* projectionThreadSessionRepository.getByThreadId({
+            threadId: event.payload.threadId,
+          });
+          const turnStillRunning =
+            Option.isSome(sessionRow) &&
+            sessionRow.value.status === "running" &&
+            sessionRow.value.activeTurnId === event.payload.turnId;
           const existingTurn = yield* projectionTurnRepository.getByTurnId({
             threadId: event.payload.threadId,
             turnId: event.payload.turnId,
@@ -929,14 +936,18 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               assistantMessageId: event.payload.messageId,
               state: event.payload.streaming
                 ? existingTurn.value.state
-                : existingTurn.value.state === "interrupted"
-                  ? "interrupted"
-                  : existingTurn.value.state === "error"
-                    ? "error"
-                    : "completed",
+                : turnStillRunning
+                  ? existingTurn.value.state
+                  : existingTurn.value.state === "interrupted"
+                    ? "interrupted"
+                    : existingTurn.value.state === "error"
+                      ? "error"
+                      : "completed",
               completedAt: event.payload.streaming
                 ? existingTurn.value.completedAt
-                : (existingTurn.value.completedAt ?? event.payload.updatedAt),
+                : turnStillRunning
+                  ? existingTurn.value.completedAt
+                  : (existingTurn.value.completedAt ?? event.payload.updatedAt),
               startedAt: existingTurn.value.startedAt ?? event.payload.createdAt,
               requestedAt: existingTurn.value.requestedAt ?? event.payload.createdAt,
             });
@@ -949,10 +960,11 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             sourceProposedPlanThreadId: null,
             sourceProposedPlanId: null,
             assistantMessageId: event.payload.messageId,
-            state: event.payload.streaming ? "running" : "completed",
+            state: event.payload.streaming || turnStillRunning ? "running" : "completed",
             requestedAt: event.payload.createdAt,
             startedAt: event.payload.createdAt,
-            completedAt: event.payload.streaming ? null : event.payload.updatedAt,
+            completedAt:
+              event.payload.streaming || turnStillRunning ? null : event.payload.updatedAt,
             checkpointTurnCount: null,
             checkpointRef: null,
             checkpointStatus: null,

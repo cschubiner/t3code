@@ -1709,6 +1709,132 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       ]);
     }),
   );
+
+  it.effect(
+    "keeps a turn running when an assistant message completes before the session does",
+    () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const now = "2026-02-26T13:00:00.000Z";
+
+        const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+          eventStore
+            .append(event)
+            .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+
+        yield* appendAndProject({
+          type: "project.created",
+          eventId: EventId.makeUnsafe("evt-midturn-project"),
+          aggregateKind: "project",
+          aggregateId: ProjectId.makeUnsafe("project-midturn"),
+          occurredAt: now,
+          commandId: CommandId.makeUnsafe("cmd-midturn-project"),
+          causationEventId: null,
+          correlationId: CorrelationId.makeUnsafe("cmd-midturn-project"),
+          metadata: {},
+          payload: {
+            projectId: ProjectId.makeUnsafe("project-midturn"),
+            title: "Project Midturn",
+            workspaceRoot: "/tmp/project-midturn",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+
+        yield* appendAndProject({
+          type: "thread.created",
+          eventId: EventId.makeUnsafe("evt-midturn-thread"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.makeUnsafe("thread-midturn"),
+          occurredAt: now,
+          commandId: CommandId.makeUnsafe("cmd-midturn-thread"),
+          causationEventId: null,
+          correlationId: CorrelationId.makeUnsafe("cmd-midturn-thread"),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.makeUnsafe("thread-midturn"),
+            projectId: ProjectId.makeUnsafe("project-midturn"),
+            title: "Thread Midturn",
+            modelSelection: {
+              provider: "codex",
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+
+        yield* appendAndProject({
+          type: "thread.session-set",
+          eventId: EventId.makeUnsafe("evt-midturn-session"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.makeUnsafe("thread-midturn"),
+          occurredAt: "2026-02-26T13:00:01.000Z",
+          commandId: CommandId.makeUnsafe("cmd-midturn-session"),
+          causationEventId: null,
+          correlationId: CorrelationId.makeUnsafe("cmd-midturn-session"),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.makeUnsafe("thread-midturn"),
+            session: {
+              threadId: ThreadId.makeUnsafe("thread-midturn"),
+              status: "running",
+              providerName: "codex",
+              runtimeMode: "full-access",
+              activeTurnId: TurnId.makeUnsafe("turn-running"),
+              lastError: null,
+              updatedAt: "2026-02-26T13:00:01.000Z",
+            },
+          },
+        });
+
+        yield* appendAndProject({
+          type: "thread.message-sent",
+          eventId: EventId.makeUnsafe("evt-midturn-message"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.makeUnsafe("thread-midturn"),
+          occurredAt: "2026-02-26T13:00:02.000Z",
+          commandId: CommandId.makeUnsafe("cmd-midturn-message"),
+          causationEventId: null,
+          correlationId: CorrelationId.makeUnsafe("cmd-midturn-message"),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.makeUnsafe("thread-midturn"),
+            messageId: MessageId.makeUnsafe("assistant-midturn"),
+            role: "assistant",
+            text: "still working",
+            turnId: TurnId.makeUnsafe("turn-running"),
+            streaming: false,
+            createdAt: "2026-02-26T13:00:02.000Z",
+            updatedAt: "2026-02-26T13:00:02.000Z",
+          },
+        });
+
+        const turnRows = yield* sql<{
+          readonly turnId: string;
+          readonly state: string;
+          readonly completedAt: string | null;
+        }>`
+        SELECT
+          turn_id AS "turnId",
+          state,
+          completed_at AS "completedAt"
+        FROM projection_turns
+        WHERE thread_id = 'thread-midturn'
+      `;
+
+        assert.deepEqual(turnRows, [
+          { turnId: "turn-running", state: "running", completedAt: null },
+        ]);
+      }),
+  );
 });
 
 it.effect("restores pending turn-start metadata across projection pipeline restart", () =>
