@@ -1,6 +1,7 @@
 import * as React from "react";
 import type { ThreadId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
+import { buildGitHubPullRequestUrl } from "@t3tools/shared/githubPullRequest";
 import type { SidebarThreadSummary, Thread } from "../types";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
@@ -40,6 +41,18 @@ export interface SidebarPullRequestReference {
   owner: string;
   repo: string;
   number: string;
+}
+
+export function resolveThreadSidebarRepositoryCwds(input: {
+  worktreePath?: string | null;
+  projectCwd?: string | null;
+}): string[] {
+  const candidates = [input.worktreePath, input.projectCwd];
+  return [
+    ...new Set(
+      candidates.filter((cwd): cwd is string => typeof cwd === "string" && cwd.length > 0),
+    ),
+  ];
 }
 
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
@@ -388,7 +401,12 @@ export function extractSidebarPullRequestReferences(text: string): SidebarPullRe
       continue;
     }
 
-    const reference = { url, owner, repo, number };
+    const reference = {
+      url: buildGitHubPullRequestUrl({ owner, repo, number }),
+      owner,
+      repo,
+      number,
+    };
     const referenceKey = sidebarPullRequestReferenceKey(reference);
     if (seenReferences.has(referenceKey)) {
       continue;

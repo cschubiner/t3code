@@ -5,10 +5,13 @@ import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { page } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
+import type { GitStatusResult } from "@t3tools/contracts";
 
 let mockedSidebarProjectSortOrder: "updated_at" | "manual" = "updated_at";
 let desktopMenuActionListener: ((action: string) => void) | null = null;
 let mockedKeybindings: ResolvedKeybindingsConfig = [];
+let mockedGitStatusByCwd = new Map<string, GitStatusResult>();
+let mockedReferencedPrStateByUrl = new Map<string, "open" | "closed" | "merged" | null>();
 
 vi.mock("@tanstack/react-router", async () => {
   const actual =
@@ -27,7 +30,17 @@ vi.mock("@tanstack/react-query", async () => {
     await vi.importActual<typeof import("@tanstack/react-query")>("@tanstack/react-query");
   return {
     ...actual,
-    useQueries: () => [],
+    useQueries: ({ queries }: { queries: Array<{ queryKey: readonly unknown[] }> }) =>
+      queries.map((query) => {
+        const [scope, key, third] = query.queryKey;
+        if (scope === "git" && key === "status" && typeof third === "string") {
+          return { data: mockedGitStatusByCwd.get(third) };
+        }
+        if (scope === "github-pr-status" && Array.isArray(key) && typeof third === "string") {
+          return { data: mockedReferencedPrStateByUrl.get(third) ?? null };
+        }
+        return { data: undefined };
+      }),
   };
 });
 
@@ -127,6 +140,9 @@ function makeThread(input: {
   title: string;
   createdAt: string;
   updatedAt: string;
+  messages?: Thread["messages"];
+  branch?: string | null;
+  worktreePath?: string | null;
 }): Thread {
   return {
     id: input.id,
@@ -140,7 +156,7 @@ function makeThread(input: {
     runtimeMode: "full-access",
     interactionMode: "default",
     session: null,
-    messages: [],
+    messages: input.messages ?? [],
     turnDiffSummaries: [],
     activities: [],
     proposedPlans: [],
@@ -149,8 +165,8 @@ function makeThread(input: {
     updatedAt: input.updatedAt,
     archivedAt: null,
     latestTurn: null,
-    branch: null,
-    worktreePath: null,
+    branch: input.branch ?? null,
+    worktreePath: input.worktreePath ?? null,
   };
 }
 
@@ -231,12 +247,14 @@ function buildThreads(): Thread[] {
 async function mountSidebar(options?: {
   projectOrder?: ProjectId[];
   selectedThreadIds?: ReadonlySet<ThreadId>;
+  threads?: Thread[];
+  projects?: Project[];
 }) {
-  const projects = [
+  const projects = options?.projects ?? [
     makeProject(PROJECT_ALPHA, "Alpha", "/repo/alpha"),
     makeProject(PROJECT_BETA, "Beta", "/repo/beta"),
   ];
-  const threads = buildThreads();
+  const threads = options?.threads ?? buildThreads();
 
   useStore.setState({
     projects,
@@ -300,6 +318,8 @@ describe("Sidebar", () => {
     localStorage.clear();
     mockedSidebarProjectSortOrder = "updated_at";
     mockedKeybindings = [];
+    mockedGitStatusByCwd = new Map();
+    mockedReferencedPrStateByUrl = new Map();
     desktopMenuActionListener = null;
     Reflect.deleteProperty(window, "desktopBridge");
     useStore.setState({
@@ -490,6 +510,63 @@ describe("Sidebar", () => {
 
       await vi.waitFor(() => {
         expect(document.querySelector('[data-testid="thread-row-thread-2"] input')).toBeTruthy();
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("renders referenced PR number pills with open, merged, and closed colors", async () => {
+    mockedReferencedPrStateByUrl = new Map([
+      ["https://github.com/pingdotgg/t3code/pull/88", "open"],
+      ["https://github.com/pingdotgg/t3code/pull/89", "merged"],
+      ["https://github.com/pingdotgg/t3code/pull/90", "closed"],
+    ]);
+
+    const project = makeProject(PROJECT_ALPHA, "Alpha", "/repo/alpha");
+    const thread = makeThread({
+      id: ThreadId.makeUnsafe("thread-pr-pills"),
+      projectId: PROJECT_ALPHA,
+      title: "PR pills",
+      createdAt: "2026-04-02T11:11:00.000Z",
+      updatedAt: "2026-04-02T11:11:00.000Z",
+      branch: "feature/pr-pills",
+      worktreePath: "/repo/alpha-worktree",
+      messages: [
+        {
+          id: "message-pr-pills" as never,
+          role: "assistant",
+          text: `
+            https://github.com/pingdotgg/t3code/pull/88/files
+            https://github.com/pingdotgg/t3code/pull/89#pullrequestreview-12
+            <https://github.com/pingdotgg/t3code/pull/90|PR 90>
+          `,
+          createdAt: "2026-04-02T11:11:00.000Z",
+          streaming: false,
+        },
+      ],
+    });
+
+    const mounted = await mountSidebar({
+      projects: [project],
+      threads: [thread],
+    });
+
+    try {
+      await vi.waitFor(() => {
+        const openPill = Array.from(document.querySelectorAll("button")).find(
+          (element) => element.textContent?.trim() === "#88",
+        );
+        const mergedPill = Array.from(document.querySelectorAll("button")).find(
+          (element) => element.textContent?.trim() === "#89",
+        );
+        const closedPill = Array.from(document.querySelectorAll("button")).find(
+          (element) => element.textContent?.trim() === "#90",
+        );
+
+        expect(openPill?.className).toContain("text-emerald-700");
+        expect(mergedPill?.className).toContain("text-violet-700");
+        expect(closedPill?.className).toContain("text-rose-700");
       });
     } finally {
       await mounted.cleanup();

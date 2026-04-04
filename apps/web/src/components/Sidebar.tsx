@@ -59,7 +59,13 @@ import {
 import { isElectron } from "../env";
 import { APP_BASE_NAME, APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { isTerminalFocused } from "../lib/terminalFocus";
-import { isLinuxPlatform, isMacPlatform, newCommandId, newProjectId } from "../lib/utils";
+import {
+  isLinuxPlatform,
+  isMacPlatform,
+  newCommandId,
+  newProjectId,
+  resolveServerUrl,
+} from "../lib/utils";
 import { useStore } from "../store";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useUiStateStore } from "../uiStateStore";
@@ -126,6 +132,7 @@ import {
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
+  resolveThreadSidebarRepositoryCwds,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   orderItemsByPreferredIds,
@@ -188,7 +195,7 @@ function referencedPrPillClassName(state: ReferencedPrState): string {
     return "border-violet-200/90 bg-violet-50 text-violet-700 hover:bg-violet-100/90 hover:text-violet-800 dark:border-violet-500/25 dark:bg-violet-500/12 dark:text-violet-300";
   }
   if (state === "closed") {
-    return "border-zinc-200/90 bg-zinc-100/90 text-zinc-600 hover:bg-zinc-200/90 hover:text-zinc-700 dark:border-zinc-500/20 dark:bg-zinc-500/10 dark:text-zinc-300/85";
+    return "border-rose-200/90 bg-rose-50 text-rose-700 hover:bg-rose-100/90 hover:text-rose-800 dark:border-rose-500/25 dark:bg-rose-500/12 dark:text-rose-300";
   }
   return "border-border/70 bg-secondary/75 text-muted-foreground/88 hover:bg-accent hover:text-foreground";
 }
@@ -258,7 +265,7 @@ function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
   if (pr.state === "closed") {
     return {
       label: "PR closed",
-      colorClass: "text-zinc-500 dark:text-zinc-400/80",
+      colorClass: "text-rose-600 dark:text-rose-300/90",
       tooltip: `#${pr.number} PR closed: ${pr.title}`,
       url: pr.url,
     };
@@ -866,53 +873,6 @@ export default function Sidebar() {
     }),
     [platform, routeTerminalOpen],
   );
-  const threadGitTargets = useMemo(
-    () =>
-      sidebarThreads.map((thread) => ({
-        threadId: thread.id,
-        branch: thread.branch,
-        cwd: thread.worktreePath ?? projectCwdById.get(thread.projectId) ?? null,
-      })),
-    [projectCwdById, sidebarThreads],
-  );
-  const threadGitStatusCwds = useMemo(
-    () => [
-      ...new Set(
-        threadGitTargets
-          .filter((target) => target.branch !== null)
-          .map((target) => target.cwd)
-          .filter((cwd): cwd is string => cwd !== null),
-      ),
-    ],
-    [threadGitTargets],
-  );
-  const threadGitStatusQueries = useQueries({
-    queries: threadGitStatusCwds.map((cwd) => ({
-      ...gitStatusQueryOptions(cwd),
-      staleTime: 30_000,
-      refetchInterval: 60_000,
-    })),
-  });
-  const prByThreadId = useMemo(() => {
-    const statusByCwd = new Map<string, GitStatusResult>();
-    for (let index = 0; index < threadGitStatusCwds.length; index += 1) {
-      const cwd = threadGitStatusCwds[index];
-      if (!cwd) continue;
-      const status = threadGitStatusQueries[index]?.data;
-      if (status) {
-        statusByCwd.set(cwd, status);
-      }
-    }
-
-    const map = new Map<ThreadId, ThreadPr>();
-    for (const target of threadGitTargets) {
-      const status = target.cwd ? statusByCwd.get(target.cwd) : undefined;
-      const branchMatches =
-        target.branch !== null && status?.branch !== null && status?.branch === target.branch;
-      map.set(target.threadId, branchMatches ? (status?.pr ?? null) : null);
-    }
-    return map;
-  }, [threadGitStatusCwds, threadGitStatusQueries, threadGitTargets]);
   const referencedPrsByThreadId = useMemo(() => {
     const map = new Map<ThreadId, ReturnType<typeof deriveThreadSidebarPullRequestReferences>>();
     for (const thread of threads) {
@@ -920,48 +880,6 @@ export default function Sidebar() {
     }
     return map;
   }, [threads]);
-  const referencedPrTargets = useMemo(
-    () => [
-      ...new Map(
-        threads.flatMap((thread) => {
-          const cwd = thread.worktreePath ?? projectCwdById.get(thread.projectId) ?? null;
-          if (!cwd) {
-            return [];
-          }
-          return (referencedPrsByThreadId.get(thread.id) ?? []).map(
-            (reference) => [`${cwd}::${reference.url}`, { cwd, url: reference.url }] as const,
-          );
-        }),
-      ).values(),
-    ],
-    [projectCwdById, referencedPrsByThreadId, threads],
-  );
-  const referencedPrStatusQueries = useQueries({
-    queries: referencedPrTargets.map((target) => ({
-      queryKey: ["github-pr-status", target.cwd, target.url] as const,
-      queryFn: async (): Promise<ReferencedPrState> => {
-        const response = await fetch(
-          `/api/github-pr-status?cwd=${encodeURIComponent(target.cwd)}&url=${encodeURIComponent(target.url)}`,
-        );
-        if (!response.ok) {
-          return null;
-        }
-        const data = (await response.json()) as { state?: ReferencedPrState };
-        return data.state ?? null;
-      },
-      staleTime: 5 * 60_000,
-      refetchInterval: 10 * 60_000,
-    })),
-  });
-  const referencedPrStateByUrl = useMemo(() => {
-    const map = new Map<string, ReferencedPrState>();
-    for (let index = 0; index < referencedPrTargets.length; index += 1) {
-      const target = referencedPrTargets[index];
-      if (!target) continue;
-      map.set(target.url, referencedPrStatusQueries[index]?.data ?? null);
-    }
-    return map;
-  }, [referencedPrStatusQueries, referencedPrTargets]);
 
   const openPrLink = useCallback((event: MouseEvent<HTMLElement>, prUrl: string) => {
     event.preventDefault();
@@ -1672,6 +1590,129 @@ export default function Sidebar() {
   useEffect(() => {
     visibleSidebarThreadIdsRef.current = visibleSidebarThreadIds;
   }, [visibleSidebarThreadIds]);
+  const visibleSidebarThreads = useMemo(
+    () =>
+      visibleSidebarThreadIds
+        .map((threadId) => sidebarThreadsById[threadId])
+        .filter((thread): thread is NonNullable<typeof thread> => thread !== undefined),
+    [sidebarThreadsById, visibleSidebarThreadIds],
+  );
+  const threadGitTargets = useMemo(
+    () =>
+      visibleSidebarThreads.map((thread) => ({
+        threadId: thread.id,
+        branch: thread.branch,
+        candidateCwds: resolveThreadSidebarRepositoryCwds({
+          worktreePath: thread.worktreePath,
+          projectCwd: projectCwdById.get(thread.projectId) ?? null,
+        }),
+      })),
+    [projectCwdById, visibleSidebarThreads],
+  );
+  const threadGitStatusCwds = useMemo(
+    () => [
+      ...new Set(
+        threadGitTargets
+          .filter((target) => target.branch !== null)
+          .flatMap((target) => target.candidateCwds),
+      ),
+    ],
+    [threadGitTargets],
+  );
+  const threadGitStatusQueries = useQueries({
+    queries: threadGitStatusCwds.map((cwd) => ({
+      ...gitStatusQueryOptions(cwd),
+      staleTime: 30_000,
+      refetchInterval: 60_000,
+    })),
+  });
+  const prByThreadId = useMemo(() => {
+    const statusByCwd = new Map<string, GitStatusResult>();
+    for (let index = 0; index < threadGitStatusCwds.length; index += 1) {
+      const cwd = threadGitStatusCwds[index];
+      if (!cwd) continue;
+      const status = threadGitStatusQueries[index]?.data;
+      if (status) {
+        statusByCwd.set(cwd, status);
+      }
+    }
+
+    const map = new Map<ThreadId, ThreadPr>();
+    for (const target of threadGitTargets) {
+      const status =
+        target.branch === null
+          ? null
+          : (target.candidateCwds
+              .map((cwd) => statusByCwd.get(cwd))
+              .find(
+                (candidateStatus) =>
+                  candidateStatus?.branch !== null && candidateStatus?.branch === target.branch,
+              ) ?? null);
+      map.set(target.threadId, status?.pr ?? null);
+    }
+    return map;
+  }, [threadGitStatusCwds, threadGitStatusQueries, threadGitTargets]);
+  const referencedPrTargets = useMemo(
+    () => [
+      ...new Map(
+        visibleSidebarThreads.flatMap((thread) => {
+          const candidateCwds = resolveThreadSidebarRepositoryCwds({
+            worktreePath: thread.worktreePath,
+            projectCwd: projectCwdById.get(thread.projectId) ?? null,
+          });
+          if (candidateCwds.length === 0) {
+            return [];
+          }
+          return (referencedPrsByThreadId.get(thread.id) ?? []).map(
+            (reference) =>
+              [
+                `${candidateCwds.join("::")}::${reference.url}`,
+                { candidateCwds, url: reference.url },
+              ] as const,
+          );
+        }),
+      ).values(),
+    ],
+    [projectCwdById, referencedPrsByThreadId, visibleSidebarThreads],
+  );
+  const referencedPrStatusQueries = useQueries({
+    queries: referencedPrTargets.map((target) => ({
+      queryKey: ["github-pr-status", target.candidateCwds, target.url] as const,
+      queryFn: async (): Promise<ReferencedPrState> => {
+        for (const cwd of target.candidateCwds) {
+          const response = await fetch(
+            resolveServerUrl({
+              protocol: "http",
+              pathname: "/api/github-pr-status",
+              searchParams: {
+                cwd,
+                url: target.url,
+              },
+            }),
+          );
+          if (!response.ok) {
+            continue;
+          }
+          const data = (await response.json()) as { state?: ReferencedPrState };
+          if (data.state) {
+            return data.state;
+          }
+        }
+        return null;
+      },
+      staleTime: 5 * 60_000,
+      refetchInterval: 10 * 60_000,
+    })),
+  });
+  const referencedPrStateByUrl = useMemo(() => {
+    const map = new Map<string, ReferencedPrState>();
+    for (let index = 0; index < referencedPrTargets.length; index += 1) {
+      const target = referencedPrTargets[index];
+      if (!target) continue;
+      map.set(target.url, referencedPrStatusQueries[index]?.data ?? null);
+    }
+    return map;
+  }, [referencedPrStatusQueries, referencedPrTargets]);
   const threadJumpCommandById = useMemo(() => {
     const mapping = new Map<ThreadId, NonNullable<ReturnType<typeof threadJumpCommandForIndex>>>();
     for (const [visibleThreadIndex, threadId] of visibleSidebarThreadIds.entries()) {

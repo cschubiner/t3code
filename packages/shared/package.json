@@ -51,6 +51,10 @@
     "./providerAuth": {
       "types": "./src/providerAuth.ts",
       "import": "./src/providerAuth.ts"
+    },
+    "./githubPullRequest": {
+      "types": "./src/githubPullRequest.ts",
+      "import": "./src/githubPullRequest.ts"
     }
   },
   "scripts": {

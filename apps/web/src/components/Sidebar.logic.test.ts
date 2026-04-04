@@ -17,6 +17,7 @@ import {
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
+  resolveThreadSidebarRepositoryCwds,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
@@ -181,6 +182,8 @@ describe("extractSidebarPullRequestReferences", () => {
       extractSidebarPullRequestReferences(`
         https://github.com/pingdotgg/t3code/pull/88
         https://github.com/pingdotgg/t3code/pull/88/files
+        https://github.com/pingdotgg/t3code/pull/88#pullrequestreview-12
+        <https://github.com/pingdotgg/t3code/pull/88|PR 88>
         https://github.com/pingdotgg/t3code/pull/91
       `),
     ).toEqual([
@@ -253,6 +256,24 @@ describe("deriveThreadSidebarPullRequestReferences", () => {
         ],
       }),
     ).toEqual([]);
+  });
+});
+
+describe("resolveThreadSidebarRepositoryCwds", () => {
+  it("prefers the worktree path and falls back to the project cwd without duplicates", () => {
+    expect(
+      resolveThreadSidebarRepositoryCwds({
+        worktreePath: "/repo/worktree",
+        projectCwd: "/repo/root",
+      }),
+    ).toEqual(["/repo/worktree", "/repo/root"]);
+
+    expect(
+      resolveThreadSidebarRepositoryCwds({
+        worktreePath: "/repo/root",
+        projectCwd: "/repo/root",
+      }),
+    ).toEqual(["/repo/root"]);
   });
 });
 

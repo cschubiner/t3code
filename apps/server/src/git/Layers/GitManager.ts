@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 
 import { Cache, Duration, Effect, Exit, FileSystem, Layer, Option, Path, Ref } from "effect";
+import { normalizeGitHubPullRequestReference } from "@t3tools/shared/githubPullRequest";
 import {
   GitActionProgressEvent,
   GitActionProgressPhase,
@@ -486,12 +487,6 @@ function toStatusPr(pr: PullRequestInfo): {
     headBranch: pr.headRefName,
     state: pr.state,
   };
-}
-
-function normalizePullRequestReference(reference: string): string {
-  const trimmed = reference.trim();
-  const hashNumber = /^#(\d+)$/.exec(trimmed);
-  return hashNumber?.[1] ?? trimmed;
 }
 
 function canonicalizeExistingPath(value: string): string {
@@ -1293,7 +1288,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
       const pullRequest = yield* gitHubCli
         .getPullRequest({
           cwd: input.cwd,
-          reference: normalizePullRequestReference(input.reference),
+          reference: normalizeGitHubPullRequestReference(input.reference),
         })
         .pipe(Effect.map((resolved) => toResolvedPullRequest(resolved)));
 
@@ -1305,7 +1300,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
     "preparePullRequestThread",
   )(function* (input) {
     return yield* Effect.gen(function* () {
-      const normalizedReference = normalizePullRequestReference(input.reference);
+      const normalizedReference = normalizeGitHubPullRequestReference(input.reference);
       const rootWorktreePath = canonicalizeExistingPath(input.cwd);
       const pullRequestSummary = yield* gitHubCli.getPullRequest({
         cwd: input.cwd,

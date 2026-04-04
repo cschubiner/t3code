@@ -1,6 +1,7 @@
 import Mime from "@effect/platform-node/Mime";
 import { Effect, FileSystem, Option, Path } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { normalizeGitHubPullRequestReference } from "@t3tools/shared/githubPullRequest";
 
 import {
   ATTACHMENTS_ROUTE_PREFIX,
@@ -136,7 +137,7 @@ export const githubPullRequestStatusRouteLayer = HttpRouter.add(
     const pullRequest = yield* gitHubCli
       .getPullRequest({
         cwd,
-        reference,
+        reference: normalizeGitHubPullRequestReference(reference),
       })
       .pipe(Effect.catch(() => Effect.succeed(null)));
 
