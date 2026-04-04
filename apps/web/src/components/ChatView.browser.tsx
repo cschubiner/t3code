@@ -2492,6 +2492,104 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("lets send-now dispatch a queued follow-up from a resumable paused session-error queue", async () => {
+    localStorage.setItem(
+      "t3code:queued-turn-store:v1",
+      JSON.stringify({
+        version: 1,
+        state: {
+          threadsByThreadId: {
+            [THREAD_ID]: {
+              items: [
+                {
+                  id: "queued-send-now-turn",
+                  text: "Send exactly this paused queued follow-up",
+                  attachments: [],
+                  terminalContexts: [],
+                  modelSelection: null,
+                  runtimeMode: "full-access",
+                  interactionMode: "default",
+                  createdAt: isoAt(2_100),
+                  updatedAt: isoAt(2_101),
+                },
+                {
+                  id: "queued-send-now-turn-2",
+                  text: "Keep this queued follow-up paused",
+                  attachments: [],
+                  terminalContexts: [],
+                  modelSelection: null,
+                  runtimeMode: "full-access",
+                  interactionMode: "default",
+                  createdAt: isoAt(2_102),
+                  updatedAt: isoAt(2_103),
+                },
+              ],
+              pauseReason: "session-error",
+              updatedAt: isoAt(2_103),
+            },
+          },
+        },
+      }),
+    );
+    await useQueuedTurnStore.persist.rehydrate();
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-paused-queue-send-now" as MessageId,
+        targetText: "paused queue send-now target",
+        sessionStatus: "error",
+        sessionLastError:
+          'ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when AuthRequired(AuthRequiredError { www_authenticate_header: "Bearer realm=\\"OAuth\\", error=\\"invalid_token\\", error_description=\\"Missing or invalid access token\\"" })',
+      }),
+      resolveRpc: (request) => {
+        if (request._tag !== ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return undefined;
+        }
+        return {
+          sequence: listDispatchCommandsByType("thread.turn.start").length + 1,
+        };
+      },
+    });
+
+    try {
+      await vi.waitFor(
+        () => {
+          const text = document.body.textContent ?? "";
+          expect(text).toContain("2 queued follow-ups");
+          expect(text).toContain("Paused after a session error");
+          expect(text).toContain("Send exactly this paused queued follow-up");
+          expect(text).toContain("Keep this queued follow-up paused");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const sendNowButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Send now"]'),
+        "Unable to find send-now button.",
+      );
+      expect(sendNowButton.disabled).toBe(false);
+      sendNowButton.click();
+
+      await vi.waitFor(
+        () => {
+          const turnStartRequest = listDispatchCommandsByType("thread.turn.start").at(-1);
+          const command = turnStartRequest as { message?: { text?: string } } | undefined;
+          expect(command?.message?.text).toBe("Send exactly this paused queued follow-up");
+
+          const queueState = useQueuedTurnStore.getState().threadsByThreadId[THREAD_ID];
+          expect(queueState?.pauseReason).toBe("session-error");
+          expect(queueState?.items.map((item) => item.text)).toEqual([
+            "Keep this queued follow-up paused",
+          ]);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("shows queue actions when the latest turn is still in progress even if the session status drifted back to ready", async () => {
     const baseSnapshot = createSnapshotForTargetUser({
       targetMessageId: "msg-user-running-turn-drift" as MessageId,

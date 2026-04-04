@@ -1095,6 +1095,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     hasHydratedQueuedTurnStore &&
     queuedTurnPauseReason !== null &&
     queuedTurnDispatchGate.pauseReason === null;
+  const canSendQueuedTurnNow =
+    queuedTurnDispatchGate.canDispatch && (queuedTurnPauseReason === null || canResumeQueuedTurns);
   const composerHasContent = composerSendState.hasSendableContent;
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
   useEffect(() => {
@@ -4821,6 +4823,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 }
                 busyQueuedTurnId={busyQueuedTurnId}
                 isQueueInteractionDisabled={isPreparingWorktree || isSendBusy}
+                canSendNow={canSendQueuedTurnNow}
                 canResume={canResumeQueuedTurns}
                 onResume={() => resumeThreadQueue(threadId, new Date().toISOString())}
                 onDelete={(queuedTurnId) => removeQueuedTurn(threadId, queuedTurnId)}
@@ -4846,12 +4849,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 }}
                 onSendNow={(queuedTurnId) => {
                   const queuedTurn = queuedTurns.find((entry) => entry.id === queuedTurnId);
-                  if (
-                    !queuedTurn ||
-                    queuedDispatchInFlightRef.current ||
-                    queuedTurnPauseReason !== null ||
-                    !queuedTurnDispatchGate.canDispatch
-                  ) {
+                  if (!queuedTurn || queuedDispatchInFlightRef.current || !canSendQueuedTurnNow) {
                     return;
                   }
                   queuedDispatchInFlightRef.current = true;

@@ -43,6 +43,7 @@ async function mountPanel(props: Partial<ComponentProps<typeof QueuedFollowUpsPa
       blockReason="running"
       busyQueuedTurnId={null}
       isQueueInteractionDisabled={false}
+      canSendNow={true}
       canResume={false}
       onResume={onResume}
       onDelete={onDelete}
