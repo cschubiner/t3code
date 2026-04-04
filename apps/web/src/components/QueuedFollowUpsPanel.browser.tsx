@@ -180,4 +180,24 @@ describe("QueuedFollowUpsPanel", () => {
       await mounted.cleanup();
     }
   });
+
+  it("disables queue controls while a queued dispatch is already busy", async () => {
+    const mounted = await mountPanel({
+      pauseReason: "thread-error",
+      blockReason: null,
+      busyQueuedTurnId: "turn-1",
+      canSendNow: true,
+      canResume: true,
+    });
+
+    try {
+      await expect.element(page.getByRole("button", { name: "Resume" })).toBeDisabled();
+      await expect.element(page.getByRole("button", { name: "Clear all" })).toBeDisabled();
+      await expect.element(page.getByRole("button", { name: "Edit" }).first()).toBeDisabled();
+      await expect.element(page.getByRole("button", { name: "Delete" }).first()).toBeDisabled();
+      await expect.element(page.getByRole("button", { name: "Send now" }).first()).toBeDisabled();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
 });

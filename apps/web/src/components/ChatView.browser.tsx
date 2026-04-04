@@ -2803,6 +2803,98 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("lets resume clear a paused session-error queue without dispatching while the current turn is still unsettled", async () => {
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-paused-queue-resume-blocked" as MessageId,
+      targetText: "paused queue resume blocked target",
+    });
+    const thread = baseSnapshot.threads[0];
+    if (!thread?.session) {
+      throw new Error("Expected browser fixture thread session.");
+    }
+
+    localStorage.setItem(
+      "t3code:queued-turn-store:v1",
+      JSON.stringify({
+        version: 1,
+        state: {
+          threadsByThreadId: {
+            [THREAD_ID]: {
+              items: [
+                {
+                  id: "queued-resume-blocked-turn",
+                  text: "Resume but do not dispatch yet",
+                  attachments: [],
+                  terminalContexts: [],
+                  modelSelection: null,
+                  runtimeMode: "full-access",
+                  interactionMode: "default",
+                  createdAt: isoAt(2_300),
+                  updatedAt: isoAt(2_301),
+                },
+              ],
+              pauseReason: "session-error",
+              updatedAt: isoAt(2_301),
+            },
+          },
+        },
+      }),
+    );
+    await useQueuedTurnStore.persist.rehydrate();
+
+    const snapshot: OrchestrationReadModel = {
+      ...baseSnapshot,
+      threads: [
+        {
+          ...thread,
+          latestTurn: {
+            turnId: "turn-resume-blocked-still-running" as TurnId,
+            state: "running",
+            requestedAt: isoAt(2_000),
+            startedAt: isoAt(2_001),
+            completedAt: null,
+            assistantMessageId: null,
+          },
+          session: {
+            ...thread.session,
+            status: "error",
+            activeTurnId: null,
+            lastError:
+              'ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when AuthRequired(AuthRequiredError { www_authenticate_header: "Bearer realm=\\"OAuth\\", error=\\"invalid_token\\", error_description=\\"Missing or invalid access token\\"" })',
+            updatedAt: isoAt(2_002),
+          },
+        },
+      ],
+    };
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+    });
+
+    try {
+      const resumeButton = await waitForButtonByText("Resume");
+      expect(resumeButton.disabled).toBe(false);
+      resumeButton.click();
+
+      await vi.waitFor(
+        () => {
+          const text = document.body.textContent ?? "";
+          expect(text).toContain("1 queued follow-up");
+          expect(text).toContain("Waiting for the current turn to finish");
+          expect(text).not.toContain("Paused after a session error");
+
+          const queueState = useQueuedTurnStore.getState().threadsByThreadId[THREAD_ID];
+          expect(queueState?.pauseReason).toBeNull();
+          expect(listDispatchCommandsByType("thread.turn.start")).toEqual([]);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("steers immediately from the composer button during a running turn", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
