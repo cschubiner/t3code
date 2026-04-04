@@ -120,6 +120,11 @@ const DEFAULT_BINDINGS = compile([
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
   {
+    shortcut: modShortcut("a", { shiftKey: true }),
+    command: "threads.searchAll",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
     shortcut: modShortcut("k", { shiftKey: true }),
     command: "projects.search",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
@@ -347,6 +352,10 @@ describe("shortcutLabelForCommand", () => {
       "⇧⌘F",
     );
     assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "threads.searchAll", "MacIntel"),
+      "⇧⌘A",
+    );
+    assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "projects.search", "Linux"),
       "Ctrl+Shift+K",
     );
@@ -557,6 +566,13 @@ describe("chat/editor shortcuts", () => {
         },
       ),
     );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "a", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+      "threads.searchAll",
+    );
   });
 
   it("matches the project folder search shortcut outside terminal focus", () => {
@@ -722,6 +738,13 @@ describe("resolveShortcutCommand", () => {
         context: { terminalFocus: false },
       }),
       "threads.search",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "a", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+      "threads.searchAll",
     );
     assert.strictEqual(
       resolveShortcutCommand(event({ key: "k", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {

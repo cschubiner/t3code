@@ -3,22 +3,13 @@ import {
   buildThreadSearchMatches,
   buildThreadSearchSources,
   createThreadSearchSnippet,
-  type ThreadSearchMatch,
 } from "./threadSearch";
+import type { ThreadSearchDialogResult, ThreadSearchDialogResults } from "./threadSearchSurface";
 
 export const GLOBAL_THREAD_SEARCH_RESULT_LIMIT = 300;
 
-export interface GlobalThreadSearchResult extends ThreadSearchMatch {
-  projectName: string;
-  displaySnippet: string;
-  matchCount: number;
-}
-
-export interface GlobalThreadSearchResults {
-  results: GlobalThreadSearchResult[];
-  totalResults: number;
-  truncated: boolean;
-}
+export type GlobalThreadSearchResult = ThreadSearchDialogResult;
+export type GlobalThreadSearchResults = ThreadSearchDialogResults;
 
 export function buildGlobalThreadSearchResults(input: {
   threads: readonly Thread[];

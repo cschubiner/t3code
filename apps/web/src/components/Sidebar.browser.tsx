@@ -14,6 +14,8 @@ let mockedGitStatusByCwd = new Map<string, GitStatusResult>();
 let mockedReferencedPrStateByUrl = new Map<string, "open" | "closed" | "merged" | null>();
 let mockedReferencedPrStateByTarget = new Map<string, "open" | "closed" | "merged" | null>();
 let mockedUseQueriesQueryKeys: Array<readonly unknown[]> = [];
+let quickThreadSearchDialogOpen = false;
+let globalThreadSearchDialogOpen = false;
 
 function referencedPrTargetKey(candidateCwds: readonly unknown[], url: string): string {
   return `${candidateCwds.filter((cwd): cwd is string => typeof cwd === "string").join("::")}::${url}`;
@@ -103,7 +105,17 @@ vi.mock("./ProjectFavicon", () => ({
 }));
 
 vi.mock("./GlobalThreadSearchDialog", () => ({
-  GlobalThreadSearchDialog: () => null,
+  GlobalThreadSearchDialog: ({ open }: { open: boolean }) => {
+    globalThreadSearchDialogOpen = open;
+    return open ? <div data-testid="global-thread-search-dialog" /> : null;
+  },
+}));
+
+vi.mock("./QuickThreadSearchDialog", () => ({
+  QuickThreadSearchDialog: ({ open }: { open: boolean }) => {
+    quickThreadSearchDialogOpen = open;
+    return open ? <div data-testid="quick-thread-search-dialog" /> : null;
+  },
 }));
 
 vi.mock("./ProjectFolderSearchDialog", () => ({
@@ -335,6 +347,8 @@ describe("Sidebar", () => {
     mockedReferencedPrStateByUrl = new Map();
     mockedReferencedPrStateByTarget = new Map();
     mockedUseQueriesQueryKeys = [];
+    quickThreadSearchDialogOpen = false;
+    globalThreadSearchDialogOpen = false;
     desktopMenuActionListener = null;
     Reflect.deleteProperty(window, "desktopBridge");
     useStore.setState({
@@ -493,6 +507,153 @@ describe("Sidebar", () => {
         expect(forwardSpy).toHaveBeenCalledTimes(1);
       });
     } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens quick thread search from the sidebar shortcut", async () => {
+    mockedKeybindings = [
+      {
+        shortcut: {
+          key: "f",
+          modKey: true,
+          metaKey: false,
+          ctrlKey: false,
+          shiftKey: true,
+          altKey: false,
+        },
+        command: "threads.search",
+        whenAst: { type: "not", node: { type: "identifier", name: "terminalFocus" } },
+      },
+    ];
+    const mounted = await mountSidebar();
+    const useMetaForMod = isMacPlatform(navigator.platform);
+
+    try {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          key: "F",
+          code: "KeyF",
+          shiftKey: true,
+          metaKey: useMetaForMod,
+          ctrlKey: !useMetaForMod,
+        }),
+      );
+
+      await vi.waitFor(() => {
+        expect(quickThreadSearchDialogOpen).toBe(true);
+        expect(document.querySelector('[data-testid="quick-thread-search-dialog"]')).toBeTruthy();
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens deep thread search from the sidebar shortcut", async () => {
+    mockedKeybindings = [
+      {
+        shortcut: {
+          key: "a",
+          modKey: true,
+          metaKey: false,
+          ctrlKey: false,
+          shiftKey: true,
+          altKey: false,
+        },
+        command: "threads.searchAll",
+        whenAst: { type: "not", node: { type: "identifier", name: "terminalFocus" } },
+      },
+    ];
+    const mounted = await mountSidebar();
+    const useMetaForMod = isMacPlatform(navigator.platform);
+
+    try {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          key: "A",
+          code: "KeyA",
+          shiftKey: true,
+          metaKey: useMetaForMod,
+          ctrlKey: !useMetaForMod,
+        }),
+      );
+
+      await vi.waitFor(() => {
+        expect(globalThreadSearchDialogOpen).toBe(true);
+        expect(document.querySelector('[data-testid="global-thread-search-dialog"]')).toBeTruthy();
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not open thread search shortcuts while another dialog is already present", async () => {
+    mockedKeybindings = [
+      {
+        shortcut: {
+          key: "f",
+          modKey: true,
+          metaKey: false,
+          ctrlKey: false,
+          shiftKey: true,
+          altKey: false,
+        },
+        command: "threads.search",
+        whenAst: { type: "not", node: { type: "identifier", name: "terminalFocus" } },
+      },
+      {
+        shortcut: {
+          key: "a",
+          modKey: true,
+          metaKey: false,
+          ctrlKey: false,
+          shiftKey: true,
+          altKey: false,
+        },
+        command: "threads.searchAll",
+        whenAst: { type: "not", node: { type: "identifier", name: "terminalFocus" } },
+      },
+    ];
+    const blocker = document.createElement("div");
+    blocker.setAttribute("data-slot", "dialog-popup");
+    document.body.append(blocker);
+    const mounted = await mountSidebar();
+    const useMetaForMod = isMacPlatform(navigator.platform);
+
+    try {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          key: "F",
+          code: "KeyF",
+          shiftKey: true,
+          metaKey: useMetaForMod,
+          ctrlKey: !useMetaForMod,
+        }),
+      );
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          key: "A",
+          code: "KeyA",
+          shiftKey: true,
+          metaKey: useMetaForMod,
+          ctrlKey: !useMetaForMod,
+        }),
+      );
+
+      await vi.waitFor(() => {
+        expect(quickThreadSearchDialogOpen).toBe(false);
+        expect(globalThreadSearchDialogOpen).toBe(false);
+      });
+    } finally {
+      blocker.remove();
       await mounted.cleanup();
     }
   });
