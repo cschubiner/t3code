@@ -88,7 +88,8 @@ function SortableQueuedFollowUpRow({
   index,
   isEditing,
   isBusy,
-  isInteractionDisabled,
+  isActionDisabled,
+  isSendNowDisabled,
   draftText,
   onDraftTextChange,
   onEdit,
@@ -102,7 +103,8 @@ function SortableQueuedFollowUpRow({
   index: number;
   isEditing: boolean;
   isBusy: boolean;
-  isInteractionDisabled: boolean;
+  isActionDisabled: boolean;
+  isSendNowDisabled: boolean;
   draftText: string;
   onDraftTextChange: (value: string) => void;
   onEdit: () => void;
@@ -114,7 +116,7 @@ function SortableQueuedFollowUpRow({
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: queuedTurn.id,
-    disabled: isInteractionDisabled || isEditing,
+    disabled: isActionDisabled || isEditing,
   });
   const canSave = draftText.trim().length > 0 || queuedTurn.attachments.length > 0;
   const canSaveAsSnippet = queuedTurn.text.trim().length > 0;
@@ -138,12 +140,12 @@ function SortableQueuedFollowUpRow({
           type="button"
           className={cn(
             "mt-0.5 shrink-0 rounded-md p-1 text-muted-foreground transition-colors",
-            isInteractionDisabled || isEditing
+            isActionDisabled || isEditing
               ? "cursor-not-allowed opacity-40"
               : "hover:bg-accent hover:text-foreground",
           )}
           aria-label={`Reorder queued follow-up ${index + 1}`}
-          disabled={isInteractionDisabled || isEditing}
+          disabled={isActionDisabled || isEditing}
           {...attributes}
           {...listeners}
         >
@@ -203,7 +205,7 @@ function SortableQueuedFollowUpRow({
               variant="ghost"
               className="rounded-full text-muted-foreground hover:bg-background/80 hover:text-foreground"
               onClick={onSaveAsSnippet}
-              disabled={isInteractionDisabled || !canSaveAsSnippet}
+              disabled={isActionDisabled || !canSaveAsSnippet}
               aria-label="Save as snippet"
               title="Save as snippet"
               data-testid={`queued-follow-up-save-snippet-${queuedTurn.id}`}
@@ -216,7 +218,7 @@ function SortableQueuedFollowUpRow({
               variant="ghost"
               className="rounded-full text-muted-foreground hover:bg-background/80 hover:text-foreground"
               onClick={onEdit}
-              disabled={isInteractionDisabled}
+              disabled={isActionDisabled}
               aria-label="Edit"
               title="Edit"
             >
@@ -228,7 +230,7 @@ function SortableQueuedFollowUpRow({
               variant="secondary"
               className="rounded-full border-primary/10 bg-primary/15 text-primary hover:bg-primary/20 hover:text-primary"
               onClick={onSendNow}
-              disabled={isInteractionDisabled}
+              disabled={isActionDisabled || isSendNowDisabled}
               aria-label="Send now"
               title="Send now"
             >
@@ -244,7 +246,7 @@ function SortableQueuedFollowUpRow({
               variant="ghost"
               className="rounded-full text-muted-foreground hover:bg-background/80 hover:text-destructive"
               onClick={onDelete}
-              disabled={isInteractionDisabled}
+              disabled={isActionDisabled}
               aria-label="Delete"
               title="Delete"
             >
@@ -263,6 +265,7 @@ export default function QueuedFollowUpsPanel({
   blockReason,
   busyQueuedTurnId,
   isQueueInteractionDisabled,
+  canSendNow,
   canResume,
   onResume,
   onDelete,
@@ -277,6 +280,7 @@ export default function QueuedFollowUpsPanel({
   blockReason: QueuedTurnDispatchBlockReason | null;
   busyQueuedTurnId: string | null;
   isQueueInteractionDisabled: boolean;
+  canSendNow: boolean;
   canResume: boolean;
   onResume: () => void;
   onDelete: (queuedTurnId: string) => void;
@@ -382,7 +386,8 @@ export default function QueuedFollowUpsPanel({
                   index={index}
                   isEditing={editingQueuedTurnId === queuedTurn.id}
                   isBusy={busyQueuedTurnId === queuedTurn.id}
-                  isInteractionDisabled={interactionDisabled}
+                  isActionDisabled={interactionDisabled}
+                  isSendNowDisabled={!canSendNow}
                   draftText={editingQueuedTurnId === queuedTurn.id ? draftText : queuedTurn.text}
                   onDraftTextChange={setDraftText}
                   onEdit={() => {
