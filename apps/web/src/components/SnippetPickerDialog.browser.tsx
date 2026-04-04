@@ -121,7 +121,7 @@ describe("SnippetPickerDialog", () => {
     }
   });
 
-  it("selects the currently highlighted snippet when pressing enter", async () => {
+  it("selects the highlighted snippet when pressing enter after keyboard navigation", async () => {
     const mounted = await mountDialog({
       snippets: [
         makeSnippet({
@@ -148,15 +148,23 @@ describe("SnippetPickerDialog", () => {
         { timeout: 8_000, interval: 16 },
       );
 
-      getResultRows()[0]?.dispatchEvent(
-        new MouseEvent("mouseenter", {
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "ArrowDown",
           bubbles: true,
           cancelable: true,
         }),
       );
-      await new Promise<void>((resolve) => {
-        window.requestAnimationFrame(() => resolve());
-      });
+
+      await vi.waitFor(
+        () => {
+          const results = getResultRows();
+          expect(results[1]?.dataset.highlighted).toBe("true");
+          expect(results[0]?.dataset.highlighted).toBeUndefined();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
       input.dispatchEvent(
         new KeyboardEvent("keydown", {
           key: "Enter",
@@ -169,8 +177,8 @@ describe("SnippetPickerDialog", () => {
         () => {
           expect(mounted.onSelectSnippet).toHaveBeenCalledWith(
             expect.objectContaining({
-              id: "snippet-2",
-              text: "Second saved snippet",
+              id: "snippet-1",
+              text: "First saved snippet",
             }),
           );
         },
