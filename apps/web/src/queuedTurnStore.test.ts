@@ -109,6 +109,23 @@ describe("deriveQueuedTurnDispatchGate", () => {
     });
   });
 
+  it("blocks without pausing while a local dispatch is still in flight", () => {
+    expect(
+      deriveQueuedTurnDispatchGate({
+        phase: "ready",
+        sessionOrchestrationStatus: "ready",
+        hasActiveUnsettledTurn: false,
+        isLocalDispatchInFlight: true,
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+      }),
+    ).toEqual({
+      canDispatch: false,
+      pauseReason: null,
+      blockReason: "local-dispatch",
+    });
+  });
+
   it("pauses when an approval is pending", () => {
     expect(
       deriveQueuedTurnDispatchGate({
@@ -224,6 +241,21 @@ describe("queuedTurnStore", () => {
       updatedAt: "2026-04-02T17:01:05.000Z",
     });
     expect(useQueuedTurnStore.getState().getQueuedTurns(threadId)).toHaveLength(1);
+  });
+
+  it("cleans up an empty paused queue once it is resumed", () => {
+    const store = useQueuedTurnStore.getState();
+    store.pauseThreadQueue(threadId, "session-error", "2026-04-02T17:01:00.000Z");
+
+    expect(useQueuedTurnStore.getState().getThreadQueue(threadId)).toMatchObject({
+      pauseReason: "session-error",
+      updatedAt: "2026-04-02T17:01:00.000Z",
+      items: [],
+    });
+
+    store.resumeThreadQueue(threadId, "2026-04-02T17:01:05.000Z");
+
+    expect(useQueuedTurnStore.getState().getThreadQueue(threadId)).toBeNull();
   });
 
   it("removes empty thread queue state after the last item is cleared", () => {

@@ -66,12 +66,16 @@ async function waitForInput(): Promise<HTMLInputElement> {
   return input;
 }
 
+function getResultRows(): HTMLElement[] {
+  return Array.from(document.querySelectorAll<HTMLElement>('[data-snippet-picker-result="true"]'));
+}
+
 describe("SnippetPickerDialog", () => {
   afterEach(() => {
     document.body.innerHTML = "";
   });
 
-  it("selects the highlighted snippet from the dialog keyboard flow", async () => {
+  it("moves the highlighted snippet from the dialog keyboard flow", async () => {
     const mounted = await mountDialog({
       snippets: [
         makeSnippet({
@@ -106,10 +110,54 @@ describe("SnippetPickerDialog", () => {
 
       await vi.waitFor(
         () => {
-          const results = Array.from(
-            document.querySelectorAll<HTMLElement>('[data-snippet-picker-result="true"]'),
-          );
+          const results = getResultRows();
           expect(results[1]?.dataset.highlighted).toBe("true");
+          expect(results[0]?.dataset.highlighted).toBeUndefined();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("selects the currently highlighted snippet when pressing enter", async () => {
+    const mounted = await mountDialog({
+      snippets: [
+        makeSnippet({
+          id: SnippetId.makeUnsafe("snippet-1"),
+          text: "First saved snippet",
+          updatedAt: "2026-04-03T16:00:00.000Z",
+        }),
+        makeSnippet({
+          id: SnippetId.makeUnsafe("snippet-2"),
+          text: "Second saved snippet",
+          updatedAt: "2026-04-03T16:01:00.000Z",
+        }),
+      ],
+    });
+
+    try {
+      const input = await waitForInput();
+      await vi.waitFor(
+        () => {
+          const results = getResultRows();
+          expect(results).toHaveLength(2);
+          expect(results[0]?.textContent ?? "").toContain("Second saved snippet");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      getResultRows()[0]?.dispatchEvent(
+        new MouseEvent("mouseenter", {
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(getResultRows()[0]?.dataset.highlighted).toBe("true");
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -124,8 +172,8 @@ describe("SnippetPickerDialog", () => {
 
       expect(mounted.onSelectSnippet).toHaveBeenCalledWith(
         expect.objectContaining({
-          id: "snippet-1",
-          text: "First saved snippet",
+          id: "snippet-2",
+          text: "Second saved snippet",
         }),
       );
     } finally {
