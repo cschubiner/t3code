@@ -34,6 +34,7 @@ import {
   clearPromotedDraftThreads,
   useComposerDraftStore,
 } from "../composerDraftStore";
+import { synthesizeDraftThreadCreatedEvents } from "../draftThreadMaterialization";
 import { useStore } from "../store";
 import { useUiStateStore } from "../uiStateStore";
 import { useTerminalStateStore } from "../terminalStateStore";
@@ -362,7 +363,16 @@ function EventRouter() {
       }
 
       const batchEffects = deriveOrchestrationBatchEffects(nextEvents);
-      const uiEvents = coalesceOrchestrationUiEvents(nextEvents);
+      const syntheticThreadCreatedEvents = synthesizeDraftThreadCreatedEvents({
+        events: nextEvents,
+        existingThreadIds: new Set(useStore.getState().threads.map((thread) => thread.id)),
+        projects: useStore.getState().projects,
+        draftThreadsByThreadId: useComposerDraftStore.getState().draftThreadsByThreadId,
+      });
+      const uiEvents = [
+        ...syntheticThreadCreatedEvents,
+        ...coalesceOrchestrationUiEvents(nextEvents),
+      ];
       const needsProjectUiSync = nextEvents.some(
         (event) =>
           event.type === "project.created" ||
@@ -383,7 +393,7 @@ function EventRouter() {
       const needsThreadUiSync = nextEvents.some(
         (event) => event.type === "thread.created" || event.type === "thread.deleted",
       );
-      if (needsThreadUiSync) {
+      if (needsThreadUiSync || syntheticThreadCreatedEvents.length > 0) {
         const threads = useStore.getState().threads;
         syncThreads(
           threads.map((thread) => ({

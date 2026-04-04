@@ -509,6 +509,53 @@ describe("incremental orchestration updates", () => {
     expect(next.threadIdsByProjectId[recreatedProjectId]).toEqual([threadId]);
   });
 
+  it("preserves existing thread messages when a late thread.created arrives", () => {
+    const threadId = ThreadId.makeUnsafe("thread-1");
+    const state = makeState(
+      makeThread({
+        id: threadId,
+        title: "Synthetic draft thread",
+        messages: [
+          {
+            id: MessageId.makeUnsafe("message-1"),
+            role: "user",
+            text: "Materialized before create",
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-02-27T00:00:02.000Z",
+          },
+        ],
+        updatedAt: "2026-02-27T00:00:02.000Z",
+      }),
+    );
+
+    const next = applyOrchestrationEvent(
+      state,
+      makeEvent("thread.created", {
+        threadId,
+        projectId: ProjectId.makeUnsafe("project-1"),
+        title: "Canonical thread title",
+        modelSelection: {
+          provider: "codex",
+          model: DEFAULT_MODEL_BY_PROVIDER.codex,
+        },
+        runtimeMode: DEFAULT_RUNTIME_MODE,
+        interactionMode: DEFAULT_INTERACTION_MODE,
+        branch: "main",
+        worktreePath: null,
+        createdAt: "2026-02-27T00:00:01.000Z",
+        updatedAt: "2026-02-27T00:00:03.000Z",
+      }),
+    );
+
+    expect(next.threads[0]?.title).toBe("Canonical thread title");
+    expect(next.threads[0]?.branch).toBe("main");
+    expect(next.threads[0]?.messages.map((message) => message.text)).toEqual([
+      "Materialized before create",
+    ]);
+    expect(next.sidebarThreadsById[threadId]?.latestUserMessageAt).toBe("2026-02-27T00:00:02.000Z");
+  });
+
   it("updates only the affected thread for message events", () => {
     const thread1 = makeThread({
       id: ThreadId.makeUnsafe("thread-1"),
