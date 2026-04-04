@@ -4,6 +4,7 @@ import { randomUUID } from "~/lib/utils";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import { Schema } from "effect";
 import { useStore } from "../store";
+import type { QueuedTurnDispatchGate } from "../queuedTurnStore";
 import {
   filterTerminalContextsWithText,
   stripInlineTerminalContextPlaceholders,
@@ -14,6 +15,8 @@ export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by
 const WORKTREE_BRANCH_PREFIX = "t3code";
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
+
+export type ComposerSubmissionDisposition = "default" | "queue" | "queue-front" | "steer";
 
 export function buildLocalDraftThread(
   threadId: ThreadId,
@@ -158,6 +161,23 @@ export function buildExpiredTerminalContextToastCopy(
     title: `${noun} omitted from message`,
     description: "Re-add it if you want that terminal output included.",
   };
+}
+
+export function shouldEnqueueComposerTurn(input: {
+  disposition: ComposerSubmissionDisposition;
+  phase: SessionPhase;
+  queuedTurnDispatchGate: QueuedTurnDispatchGate;
+}): boolean {
+  const shouldSteerImmediately = input.disposition === "steer" && input.phase === "running";
+  if (shouldSteerImmediately) {
+    return false;
+  }
+
+  return (
+    input.queuedTurnDispatchGate.blockReason !== null ||
+    input.queuedTurnDispatchGate.pauseReason === "pending-approval" ||
+    input.queuedTurnDispatchGate.pauseReason === "pending-user-input"
+  );
 }
 
 export function threadHasStarted(thread: Thread | null | undefined): boolean {

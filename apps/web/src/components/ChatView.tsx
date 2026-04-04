@@ -199,6 +199,7 @@ import {
   buildTemporaryWorktreeBranchName,
   cloneComposerImageForRetry,
   collectUserMessageBlobPreviewUrls,
+  type ComposerSubmissionDisposition,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   hasServerAcknowledgedLocalDispatch,
@@ -209,6 +210,7 @@ import {
   readFileAsDataUrl,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
+  shouldEnqueueComposerTurn,
   threadHasStarted,
   waitForStartedServerThread,
 } from "./ChatView.logic";
@@ -366,8 +368,6 @@ const terminalContextIdListsEqual = (
   ids: ReadonlyArray<string>,
 ): boolean =>
   contexts.length === ids.length && contexts.every((context, index) => context.id === ids[index]);
-
-type ComposerSubmissionDisposition = "default" | "queue" | "queue-front" | "steer";
 
 interface ChatViewProps {
   threadId: ThreadId;
@@ -3466,14 +3466,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       return;
     }
-    const shouldSteerImmediately = disposition === "steer" && phase === "running";
     if (
-      isServerThread &&
-      threadHasStarted(activeThread) &&
-      (queuedTurnDispatchGate.blockReason !== null ||
-        queuedTurnDispatchGate.pauseReason === "pending-approval" ||
-        queuedTurnDispatchGate.pauseReason === "pending-user-input") &&
-      !shouldSteerImmediately
+      shouldEnqueueComposerTurn({
+        disposition,
+        phase,
+        queuedTurnDispatchGate,
+      })
     ) {
       await enqueueCurrentComposerTurn({
         promptForSend,
@@ -4574,7 +4572,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
     if (
       key === "Enter" &&
-      (phase === "running" || isPreparingWorktree) &&
+      (phase === "running" || isPreparingWorktree || isSendBusy) &&
       composerHasContent &&
       event.shiftKey &&
       !event.altKey &&

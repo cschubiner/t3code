@@ -4,6 +4,7 @@ import { useStore } from "../store";
 
 import {
   buildExpiredTerminalContextToastCopy,
+  shouldEnqueueComposerTurn,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   hasServerAcknowledgedLocalDispatch,
@@ -72,6 +73,50 @@ describe("buildExpiredTerminalContextToastCopy", () => {
       title: "Expired terminal contexts omitted from message",
       description: "Re-add it if you want that terminal output included.",
     });
+  });
+});
+
+describe("shouldEnqueueComposerTurn", () => {
+  it("queues follow-ups while local dispatch is still in flight", () => {
+    expect(
+      shouldEnqueueComposerTurn({
+        disposition: "queue",
+        phase: "ready",
+        queuedTurnDispatchGate: {
+          canDispatch: false,
+          pauseReason: null,
+          blockReason: "local-dispatch",
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it("does not enqueue a steer while the current turn is already running", () => {
+    expect(
+      shouldEnqueueComposerTurn({
+        disposition: "steer",
+        phase: "running",
+        queuedTurnDispatchGate: {
+          canDispatch: false,
+          pauseReason: null,
+          blockReason: "running",
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it("queues queue-front follow-ups while local dispatch is still in flight", () => {
+    expect(
+      shouldEnqueueComposerTurn({
+        disposition: "queue-front",
+        phase: "ready",
+        queuedTurnDispatchGate: {
+          canDispatch: false,
+          pauseReason: null,
+          blockReason: "local-dispatch",
+        },
+      }),
+    ).toBe(true);
   });
 });
 

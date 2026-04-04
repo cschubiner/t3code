@@ -124,7 +124,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
               size="sm"
               variant="outline"
               className={cn("rounded-full", compact ? "px-3" : "px-4")}
-              disabled={isPreparingWorktree || isSendBusy || isConnecting}
+              disabled={isPreparingWorktree || isConnecting}
               onClick={onQueue}
             >
               Queue
