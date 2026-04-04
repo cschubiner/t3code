@@ -94,6 +94,7 @@ vi.mock("./sidebar/SidebarUpdatePill", () => ({
 
 import AppSidebar from "./Sidebar";
 import { SidebarProvider } from "./ui/sidebar";
+import { isMacPlatform } from "../lib/utils";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useStore } from "../store";
 import { useTerminalStateStore } from "../terminalStateStore";
@@ -428,6 +429,7 @@ describe("Sidebar", () => {
     const backSpy = vi.spyOn(window.history, "back").mockImplementation(() => undefined);
     const forwardSpy = vi.spyOn(window.history, "forward").mockImplementation(() => undefined);
     const mounted = await mountSidebar();
+    const useMetaForMod = isMacPlatform(navigator.platform);
 
     try {
       window.dispatchEvent(
@@ -436,7 +438,8 @@ describe("Sidebar", () => {
           cancelable: true,
           key: "[",
           code: "BracketLeft",
-          metaKey: true,
+          metaKey: useMetaForMod,
+          ctrlKey: !useMetaForMod,
         }),
       );
       window.dispatchEvent(
@@ -445,7 +448,8 @@ describe("Sidebar", () => {
           cancelable: true,
           key: "]",
           code: "BracketRight",
-          metaKey: true,
+          metaKey: useMetaForMod,
+          ctrlKey: !useMetaForMod,
         }),
       );
 
