@@ -686,4 +686,72 @@ describe("Sidebar", () => {
       await mounted.cleanup();
     }
   });
+
+  it("deduplicates referenced PR status queries across visible threads", async () => {
+    const prUrl = "https://github.com/pingdotgg/t3code/pull/333";
+    mockedReferencedPrStateByUrl = new Map([[prUrl, "merged"]]);
+
+    const sharedMessage = {
+      role: "assistant" as const,
+      text: `${prUrl}/files`,
+      streaming: false,
+    };
+
+    const threads = [
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-pr-dedupe-1"),
+        projectId: PROJECT_ALPHA,
+        title: "Shared PR 1",
+        createdAt: "2026-04-02T11:13:00.000Z",
+        updatedAt: "2026-04-02T11:13:00.000Z",
+        branch: "feature/shared-pr-1",
+        worktreePath: "/repo/alpha-worktree-shared",
+        messages: [
+          {
+            id: "message-pr-dedupe-1" as never,
+            createdAt: "2026-04-02T11:13:00.000Z",
+            ...sharedMessage,
+          },
+        ],
+      }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-pr-dedupe-2"),
+        projectId: PROJECT_ALPHA,
+        title: "Shared PR 2",
+        createdAt: "2026-04-02T11:14:00.000Z",
+        updatedAt: "2026-04-02T11:14:00.000Z",
+        branch: "feature/shared-pr-2",
+        worktreePath: "/repo/alpha-worktree-shared",
+        messages: [
+          {
+            id: "message-pr-dedupe-2" as never,
+            createdAt: "2026-04-02T11:14:00.000Z",
+            ...sharedMessage,
+          },
+        ],
+      }),
+    ];
+
+    const mounted = await mountSidebar({
+      projects: [makeProject(PROJECT_ALPHA, "Alpha", "/repo/alpha")],
+      threads,
+    });
+
+    try {
+      await vi.waitFor(() => {
+        const referencedPrQueries = mockedUseQueriesQueryKeys.filter(
+          (queryKey) => queryKey[0] === "github-pr-status",
+        );
+
+        expect(referencedPrQueries).toHaveLength(1);
+        expect(referencedPrQueries[0]).toEqual([
+          "github-pr-status",
+          ["/repo/alpha-worktree-shared", "/repo/alpha"],
+          prUrl,
+        ]);
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
 });

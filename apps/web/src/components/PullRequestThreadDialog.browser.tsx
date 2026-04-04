@@ -75,28 +75,35 @@ describe("PullRequestThreadDialog", () => {
     mockedGetQueryData.mockReset();
   });
 
-  it("renders closed pull requests in red", async () => {
-    mockedResolvedPullRequest = {
-      title: "Fix sidebar PR pill colors",
-      number: 42,
-      headBranch: "feature/pr-pill-colors",
-      baseBranch: "main",
-      state: "closed",
-    };
+  it.each([
+    ["open", "text-emerald-600"],
+    ["merged", "text-violet-600"],
+    ["closed", "text-rose-600"],
+  ] as const)(
+    "renders %s pull requests with the expected status tone",
+    async (state, toneClass) => {
+      mockedResolvedPullRequest = {
+        title: "Fix sidebar PR pill colors",
+        number: 42,
+        headBranch: "feature/pr-pill-colors",
+        baseBranch: "main",
+        state,
+      };
 
-    const mounted = await mountDialog();
+      const mounted = await mountDialog();
 
-    try {
-      await vi.waitFor(() => {
-        const closedStatus = Array.from(document.querySelectorAll("span")).find(
-          (element) => element.textContent?.trim() === "closed",
-        );
+      try {
+        await vi.waitFor(() => {
+          const status = Array.from(document.querySelectorAll("span")).find(
+            (element) => element.textContent?.trim() === state,
+          );
 
-        expect(document.body.textContent).toContain("Fix sidebar PR pill colors");
-        expect(closedStatus?.className).toContain("text-rose-600");
-      });
-    } finally {
-      await mounted.cleanup();
-    }
-  });
+          expect(document.body.textContent).toContain("Fix sidebar PR pill colors");
+          expect(status?.className).toContain(toneClass);
+        });
+      } finally {
+        await mounted.cleanup();
+      }
+    },
+  );
 });
