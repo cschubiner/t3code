@@ -5,13 +5,14 @@ import {
   EventId,
   ORCHESTRATION_WS_METHODS,
   type MessageId,
+  type OrchestrationEvent,
   type OrchestrationReadModel,
   type ProjectId,
   type ServerConfig,
   type ServerLifecycleWelcomePayload,
   type SnippetListResult,
   SnippetId,
-  type ThreadId,
+  ThreadId,
   type TurnId,
   WS_METHODS,
   OrchestrationSessionStatus,
@@ -451,6 +452,29 @@ function setDraftThreadWithoutWorktree(): void {
       [PROJECT_ID]: THREAD_ID,
     },
   });
+}
+
+function makeDomainEvent<T extends OrchestrationEvent["type"]>(
+  type: T,
+  payload: Extract<OrchestrationEvent, { type: T }>["payload"],
+  overrides: Partial<Extract<OrchestrationEvent, { type: T }>> = {},
+): Extract<OrchestrationEvent, { type: T }> {
+  const sequence = overrides.sequence ?? 1;
+  return {
+    sequence,
+    eventId: EventId.makeUnsafe(`browser-event-${sequence}`),
+    aggregateKind: "thread",
+    aggregateId:
+      "threadId" in payload ? payload.threadId : ThreadId.makeUnsafe("thread-browser-test"),
+    occurredAt: isoAt(sequence),
+    commandId: null,
+    causationEventId: null,
+    correlationId: null,
+    metadata: {},
+    type,
+    payload,
+    ...overrides,
+  } as Extract<OrchestrationEvent, { type: T }>;
 }
 
 function createSnapshotWithLongProposedPlan(): OrchestrationReadModel {
@@ -1388,6 +1412,113 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
     try {
       await expect.element(page.getByText("No threads yet")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("materializes a sent draft thread before thread.created arrives and preserves the message after create", async () => {
+    setDraftThreadWithoutWorktree();
+
+    const firstMessage = "Delayed thread materialization race";
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await vi.waitFor(
+        () => {
+          expect(
+            wsRequests.some(
+              (request) => request._tag === WS_METHODS.subscribeOrchestrationDomainEvents,
+            ),
+          ).toBe(true);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      rpcHarness.emitStreamValue(
+        WS_METHODS.subscribeOrchestrationDomainEvents,
+        makeDomainEvent(
+          "thread.message-sent",
+          {
+            threadId: THREAD_ID,
+            messageId: "msg-draft-materialized" as MessageId,
+            role: "user",
+            text: firstMessage,
+            turnId: null,
+            streaming: false,
+            createdAt: isoAt(400),
+            updatedAt: isoAt(401),
+          },
+          { sequence: 2 },
+        ),
+      );
+      rpcHarness.emitStreamValue(
+        WS_METHODS.subscribeOrchestrationDomainEvents,
+        makeDomainEvent(
+          "thread.turn-start-requested",
+          {
+            threadId: THREAD_ID,
+            modelSelection: {
+              provider: "codex",
+              model: "gpt-5",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            titleSeed: firstMessage,
+            messageId: "msg-draft-materialized" as MessageId,
+            createdAt: isoAt(402),
+          },
+          { sequence: 3 },
+        ),
+      );
+
+      await vi.waitFor(
+        () => {
+          const thread = useStore.getState().threads.find((entry) => entry.id === THREAD_ID);
+          expect(thread?.title).toBe(firstMessage);
+          expect(thread?.messages.at(-1)?.text).toBe(firstMessage);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await expect.element(page.getByTestId(`thread-row-${THREAD_ID}`)).toBeInTheDocument();
+
+      rpcHarness.emitStreamValue(
+        WS_METHODS.subscribeOrchestrationDomainEvents,
+        makeDomainEvent(
+          "thread.created",
+          {
+            threadId: THREAD_ID,
+            projectId: PROJECT_ID,
+            title: firstMessage,
+            modelSelection: {
+              provider: "codex",
+              model: "gpt-5",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: NOW_ISO,
+            updatedAt: isoAt(403),
+          },
+          { sequence: 4 },
+        ),
+      );
+
+      await vi.waitFor(
+        () => {
+          const thread = useStore.getState().threads.find((entry) => entry.id === THREAD_ID);
+          expect(thread?.updatedAt).toBe(isoAt(403));
+          expect(thread?.messages.at(-1)?.text).toBe(firstMessage);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
     } finally {
       await mounted.cleanup();
     }

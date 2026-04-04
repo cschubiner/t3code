@@ -667,26 +667,40 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
 
     case "thread.created": {
       const existing = state.threads.find((thread) => thread.id === event.payload.threadId);
-      const nextThread = mapThread({
-        id: event.payload.threadId,
-        projectId: event.payload.projectId,
-        title: event.payload.title,
-        modelSelection: event.payload.modelSelection,
-        runtimeMode: event.payload.runtimeMode,
-        interactionMode: event.payload.interactionMode,
-        branch: event.payload.branch,
-        worktreePath: event.payload.worktreePath,
-        latestTurn: null,
-        createdAt: event.payload.createdAt,
-        updatedAt: event.payload.updatedAt,
-        archivedAt: null,
-        deletedAt: null,
-        messages: [],
-        proposedPlans: [],
-        activities: [],
-        checkpoints: [],
-        session: null,
-      });
+      const nextThread = existing
+        ? {
+            ...existing,
+            projectId: event.payload.projectId,
+            title: event.payload.title,
+            modelSelection: normalizeModelSelection(event.payload.modelSelection),
+            runtimeMode: event.payload.runtimeMode,
+            interactionMode: event.payload.interactionMode,
+            branch: event.payload.branch,
+            worktreePath: event.payload.worktreePath,
+            createdAt: event.payload.createdAt,
+            updatedAt: event.payload.updatedAt,
+            archivedAt: null,
+          }
+        : mapThread({
+            id: event.payload.threadId,
+            projectId: event.payload.projectId,
+            title: event.payload.title,
+            modelSelection: event.payload.modelSelection,
+            runtimeMode: event.payload.runtimeMode,
+            interactionMode: event.payload.interactionMode,
+            branch: event.payload.branch,
+            worktreePath: event.payload.worktreePath,
+            latestTurn: null,
+            createdAt: event.payload.createdAt,
+            updatedAt: event.payload.updatedAt,
+            archivedAt: null,
+            deletedAt: null,
+            messages: [],
+            proposedPlans: [],
+            activities: [],
+            checkpoints: [],
+            session: null,
+          });
       const threads = existing
         ? state.threads.map((thread) => (thread.id === nextThread.id ? nextThread : thread))
         : [...state.threads, nextThread];
