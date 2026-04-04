@@ -1,6 +1,6 @@
 import "../index.css";
 
-import { ProjectId, ThreadId } from "@t3tools/contracts";
+import { ProjectId, ThreadId, type ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { page } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -8,6 +8,7 @@ import { render } from "vitest-browser-react";
 
 let mockedSidebarProjectSortOrder: "updated_at" | "manual" = "updated_at";
 let desktopMenuActionListener: ((action: string) => void) | null = null;
+let mockedKeybindings: ResolvedKeybindingsConfig = [];
 
 vi.mock("@tanstack/react-router", async () => {
   const actual =
@@ -45,7 +46,7 @@ vi.mock("../hooks/useSettings", () => ({
 }));
 
 vi.mock("../rpc/serverState", () => ({
-  useServerKeybindings: () => [],
+  useServerKeybindings: () => mockedKeybindings,
 }));
 
 vi.mock("../nativeApi", () => ({
@@ -297,6 +298,7 @@ describe("Sidebar", () => {
     document.body.innerHTML = "";
     localStorage.clear();
     mockedSidebarProjectSortOrder = "updated_at";
+    mockedKeybindings = [];
     desktopMenuActionListener = null;
     Reflect.deleteProperty(window, "desktopBridge");
     useStore.setState({
@@ -392,6 +394,64 @@ describe("Sidebar", () => {
         ).map((button) => button.getAttribute("aria-label"));
 
         expect(projectButtons).toEqual(["Create new thread in Beta", "Create new thread in Alpha"]);
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("routes sidebar history shortcuts to browser navigation", async () => {
+    mockedKeybindings = [
+      {
+        shortcut: {
+          key: "[",
+          modKey: true,
+          metaKey: false,
+          ctrlKey: false,
+          shiftKey: false,
+          altKey: false,
+        },
+        command: "sidebar.history.previous",
+      },
+      {
+        shortcut: {
+          key: "]",
+          modKey: true,
+          metaKey: false,
+          ctrlKey: false,
+          shiftKey: false,
+          altKey: false,
+        },
+        command: "sidebar.history.next",
+      },
+    ];
+    const backSpy = vi.spyOn(window.history, "back").mockImplementation(() => undefined);
+    const forwardSpy = vi.spyOn(window.history, "forward").mockImplementation(() => undefined);
+    const mounted = await mountSidebar();
+
+    try {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          key: "[",
+          code: "BracketLeft",
+          metaKey: true,
+        }),
+      );
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          key: "]",
+          code: "BracketRight",
+          metaKey: true,
+        }),
+      );
+
+      await vi.waitFor(() => {
+        expect(backSpy).toHaveBeenCalledTimes(1);
+        expect(forwardSpy).toHaveBeenCalledTimes(1);
       });
     } finally {
       await mounted.cleanup();

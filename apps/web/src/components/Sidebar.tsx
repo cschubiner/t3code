@@ -1726,6 +1726,18 @@ export default function Sidebar() {
         platform,
         context: getShortcutContext(),
       });
+      if (command === "sidebar.history.previous") {
+        event.preventDefault();
+        event.stopPropagation();
+        window.history.back();
+        return;
+      }
+      if (command === "sidebar.history.next") {
+        event.preventDefault();
+        event.stopPropagation();
+        window.history.forward();
+        return;
+      }
       if (
         isTypingInSidebarTextEntry(event.target) &&
         command !== "sidebar.rename" &&
