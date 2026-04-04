@@ -544,7 +544,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
-  it.effect("maps auth-required stderr notifications to runtime.error", () =>
+  it.effect("maps rmcp auth-required stderr notifications to runtime.warning", () =>
     Effect.gen(function* () {
       const adapter = yield* CodexAdapter;
       const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
@@ -567,12 +567,11 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       if (firstEvent._tag !== "Some") {
         return;
       }
-      assert.equal(firstEvent.value.type, "runtime.error");
-      if (firstEvent.value.type !== "runtime.error") {
+      assert.equal(firstEvent.value.type, "runtime.warning");
+      if (firstEvent.value.type !== "runtime.warning") {
         return;
       }
       assert.equal(firstEvent.value.turnId, "turn-1");
-      assert.equal(firstEvent.value.payload.class, "provider_error");
       assert.match(firstEvent.value.payload.message, /authrequired/i);
     }),
   );

@@ -216,6 +216,7 @@ import { useLocalStorage } from "~/hooks/useLocalStorage";
 import {
   deriveQueuedTurnDispatchGate,
   type QueuedTurnDraft,
+  useQueuedTurnStoreHydrated,
   useQueuedTurnStore,
 } from "../queuedTurnStore";
 import { buildThreadSearchMatches, buildThreadSearchSources } from "../lib/threadSearch";
@@ -772,6 +773,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [activeThread?.activities],
   );
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
+  const hasActiveUnsettledTurn = activeLatestTurn?.startedAt != null && !latestTurnSettled;
   const activeProject = useProjectById(activeThread?.projectId);
   const deferredThreadSearchQuery = useDeferredValue(threadSearchQuery);
   const threadSearchSources = useMemo(
@@ -1069,27 +1071,30 @@ export default function ChatView({ threadId }: ChatViewProps) {
   });
   const queuedTurns = queuedThreadState?.items ?? EMPTY_QUEUED_TURN_DRAFTS;
   const queuedTurnPauseReason = queuedThreadState?.pauseReason ?? null;
+  const hasHydratedQueuedTurnStore = useQueuedTurnStoreHydrated();
   const queuedTurnDispatchGate = useMemo(
     () =>
       deriveQueuedTurnDispatchGate({
         phase,
         sessionOrchestrationStatus: activeThread?.session?.orchestrationStatus ?? null,
+        hasActiveUnsettledTurn,
         isLocalDispatchInFlight: isSendBusy,
         hasPendingApproval: activePendingApproval !== null,
         hasPendingUserInput: activePendingUserInput !== null,
-        threadError: activeThread?.error,
       }),
     [
       activePendingApproval,
       activePendingUserInput,
-      activeThread?.error,
       activeThread?.session?.orchestrationStatus,
+      hasActiveUnsettledTurn,
       isSendBusy,
       phase,
     ],
   );
   const canResumeQueuedTurns =
-    queuedTurnPauseReason !== null && queuedTurnDispatchGate.pauseReason === null;
+    hasHydratedQueuedTurnStore &&
+    queuedTurnPauseReason !== null &&
+    queuedTurnDispatchGate.pauseReason === null;
   const composerHasContent = composerSendState.hasSendableContent;
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
   useEffect(() => {
@@ -1573,11 +1578,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
     () => providerStatuses.find((status) => status.provider === selectedProvider) ?? null,
     [selectedProvider, providerStatuses],
   );
-  const hasActiveCodexAuthFailure =
+  const isRecoverableCodexProviderAuthError =
     selectedProvider === "codex" &&
-    isCodexAuthErrorMessage(activeThread?.session?.lastError ?? null);
+    activeProviderStatus?.status === "error" &&
+    isCodexAuthErrorMessage(activeProviderStatus.message);
   const isProviderBlockedForSend =
-    activeProviderStatus?.status === "error" || hasActiveCodexAuthFailure;
+    activeProviderStatus?.status === "error" && !isRecoverableCodexProviderAuthError;
   const activeProjectCwd = activeProject?.cwd ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const threadTerminalRuntimeEnv = useMemo(() => {
@@ -3285,6 +3291,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           activeThread.id,
           err instanceof Error ? err.message : "Failed to send queued follow-up.",
         );
+        pauseThreadQueue(activeThread.id, "thread-error", new Date().toISOString());
         resetLocalDispatch();
         return false;
       } finally {
@@ -3296,6 +3303,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       beginLocalDispatch,
       forceStickToBottom,
       isServerThread,
+      pauseThreadQueue,
       persistThreadSettingsForNextTurn,
       resetLocalDispatch,
       selectedModelSelection,
@@ -3327,6 +3335,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (
       !activeThread ||
       !isServerThread ||
+      !hasHydratedQueuedTurnStore ||
       queuedTurns.length === 0 ||
       queuedTurnPauseReason !== null ||
       !queuedTurnDispatchGate.canDispatch ||
@@ -3355,6 +3364,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [
     activeThread,
     dispatchQueuedTurn,
+    hasHydratedQueuedTurnStore,
     isServerThread,
     queuedTurnDispatchGate.canDispatch,
     queuedTurnPauseReason,
@@ -3458,7 +3468,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (
       isServerThread &&
       threadHasStarted(activeThread) &&
-      !queuedTurnDispatchGate.canDispatch &&
+      (queuedTurnDispatchGate.blockReason !== null ||
+        queuedTurnDispatchGate.pauseReason === "pending-approval" ||
+        queuedTurnDispatchGate.pauseReason === "pending-user-input") &&
       !shouldSteerImmediately
     ) {
       await enqueueCurrentComposerTurn({
@@ -5216,7 +5228,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                 }
                               : null
                           }
-                          isRunning={phase === "running"}
+                          isRunning={isWorking || hasActiveUnsettledTurn}
                           showPlanFollowUpPrompt={
                             pendingUserInputs.length === 0 && showPlanFollowUpPrompt
                           }

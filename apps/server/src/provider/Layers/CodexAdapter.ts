@@ -22,6 +22,7 @@ import {
   TurnId,
   ProviderSendTurnInput,
 } from "@t3tools/contracts";
+import { isCodexAuthErrorMessage } from "@t3tools/shared/providerAuth";
 import { Effect, FileSystem, Layer, Queue, Schema, ServiceMap, Stream } from "effect";
 
 import {
@@ -119,7 +120,15 @@ const FATAL_CODEX_STDERR_SNIPPETS = [
   "www_authenticate_header",
 ];
 
+function isNonFatalCodexAuthWorkerStderrMessage(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return normalized.includes("rmcp::transport::worker") && isCodexAuthErrorMessage(message);
+}
+
 function isFatalCodexProcessStderrMessage(message: string): boolean {
+  if (isNonFatalCodexAuthWorkerStderrMessage(message)) {
+    return false;
+  }
   const normalized = message.toLowerCase();
   return FATAL_CODEX_STDERR_SNIPPETS.some((snippet) => normalized.includes(snippet));
 }
