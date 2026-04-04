@@ -211,6 +211,19 @@ describe("QuickThreadSearchDialog", () => {
     try {
       const input = page.getByTestId("quick-thread-search-input");
       await input.fill("needle");
+
+      await vi.waitFor(() => {
+        const results = Array.from(
+          document.querySelectorAll<HTMLElement>("[data-global-thread-search-result]"),
+        );
+        expect(results).toHaveLength(1);
+        expect(results[0]?.dataset.highlighted).toBe("true");
+      });
+
+      await new Promise<void>((resolve) => {
+        window.requestAnimationFrame(() => resolve());
+      });
+
       const inputElement = document.querySelector<HTMLInputElement>(
         '[data-testid="quick-thread-search-input"]',
       );
