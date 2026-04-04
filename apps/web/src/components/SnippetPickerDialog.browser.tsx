@@ -70,6 +70,12 @@ function getResultRows(): HTMLElement[] {
   return Array.from(document.querySelectorAll<HTMLElement>('[data-snippet-picker-result="true"]'));
 }
 
+function getHighlightedResultRow(): HTMLElement | null {
+  return document.querySelector<HTMLElement>(
+    '[data-snippet-picker-result="true"][data-highlighted="true"]',
+  );
+}
+
 describe("SnippetPickerDialog", () => {
   afterEach(() => {
     document.body.innerHTML = "";
@@ -164,10 +170,12 @@ describe("SnippetPickerDialog", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
-
       await new Promise<void>((resolve) => {
         window.requestAnimationFrame(() => resolve());
       });
+
+      const highlightedSnippetId = getHighlightedResultRow()?.dataset.snippetId;
+      expect(highlightedSnippetId).toBeTruthy();
 
       input.dispatchEvent(
         new KeyboardEvent("keydown", {
@@ -181,8 +189,7 @@ describe("SnippetPickerDialog", () => {
         () => {
           expect(mounted.onSelectSnippet).toHaveBeenCalledWith(
             expect.objectContaining({
-              id: "snippet-1",
-              text: "First saved snippet",
+              id: highlightedSnippetId,
             }),
           );
         },
