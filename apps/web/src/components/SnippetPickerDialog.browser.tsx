@@ -142,8 +142,22 @@ describe("SnippetPickerDialog", () => {
       await vi.waitFor(
         () => {
           const results = getResultRows();
-          expect(results[0]?.dataset.highlighted).toBe("true");
+          expect(results).toHaveLength(2);
           expect(results[0]?.textContent ?? "").toContain("Second saved snippet");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      getResultRows()[0]?.dispatchEvent(
+        new MouseEvent("mouseenter", {
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(getResultRows()[0]?.dataset.highlighted).toBe("true");
         },
         { timeout: 8_000, interval: 16 },
       );
