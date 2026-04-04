@@ -186,6 +186,7 @@ export function SnippetPickerDialog({
                       <div
                         key={snippet.id}
                         data-snippet-picker-result="true"
+                        data-snippet-id={String(snippet.id)}
                         data-highlighted={isHighlighted ? "true" : undefined}
                         className={cn(
                           "flex items-start gap-3 px-4 py-3 transition-colors",

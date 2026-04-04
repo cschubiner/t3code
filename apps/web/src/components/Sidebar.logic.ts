@@ -3,8 +3,11 @@ import type { ThreadId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import { buildGitHubPullRequestUrl } from "@t3tools/shared/githubPullRequest";
 import type { SidebarThreadSummary, Thread } from "../types";
+import { sortThreadsForRecentSidebar } from "../lib/threadRecency";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
+
+export { sortThreadsForRecentSidebar } from "../lib/threadRecency";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
@@ -629,12 +632,6 @@ function getThreadSortTimestamp(
   return getLatestUserMessageTimestamp(thread);
 }
 
-function threadRecentSortTimestamp(
-  thread: Pick<SidebarThreadSummary, "createdAt" | "updatedAt">,
-): number {
-  return toSortableTimestamp(thread.updatedAt ?? thread.createdAt) ?? Number.NEGATIVE_INFINITY;
-}
-
 export function sortThreadsForSidebar<
   T extends Pick<Thread, "id" | "createdAt" | "updatedAt"> & SidebarThreadSortInput,
 >(threads: readonly T[], sortOrder: SidebarThreadSortOrder): T[] {
@@ -644,20 +641,6 @@ export function sortThreadsForSidebar<
     const byTimestamp =
       rightTimestamp === leftTimestamp ? 0 : rightTimestamp > leftTimestamp ? 1 : -1;
     if (byTimestamp !== 0) return byTimestamp;
-    return right.id.localeCompare(left.id);
-  });
-}
-
-export function sortThreadsForRecentSidebar<
-  T extends Pick<SidebarThreadSummary, "id" | "createdAt" | "updatedAt">,
->(threads: readonly T[]): T[] {
-  return threads.toSorted((left, right) => {
-    const byUpdatedAt = threadRecentSortTimestamp(right) - threadRecentSortTimestamp(left);
-    if (byUpdatedAt !== 0) return byUpdatedAt;
-
-    const byCreatedAt = Date.parse(right.createdAt) - Date.parse(left.createdAt);
-    if (byCreatedAt !== 0) return byCreatedAt;
-
     return right.id.localeCompare(left.id);
   });
 }

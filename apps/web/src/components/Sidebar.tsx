@@ -101,8 +101,9 @@ import { Menu, MenuGroup, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger 
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { Toggle, ToggleGroup } from "./ui/toggle-group";
 import { GlobalThreadSearchDialog } from "./GlobalThreadSearchDialog";
-import { ProjectFolderSearchDialog } from "./ProjectFolderSearchDialog";
 import { ImportFromCodexDialog } from "./ImportFromCodexDialog";
+import { ProjectFolderSearchDialog } from "./ProjectFolderSearchDialog";
+import { QuickThreadSearchDialog } from "./QuickThreadSearchDialog";
 import {
   SidebarContent,
   SidebarFooter,
@@ -825,6 +826,8 @@ export default function Sidebar() {
   const suppressProjectClickForContextMenuRef = useRef(false);
   const visibleSidebarThreadIdsRef = useRef<readonly ThreadId[]>([]);
   const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
+  const [isQuickThreadSearchOpen, setIsQuickThreadSearchOpen] = useState(false);
+  const [quickThreadSearchFocusRequestId, setQuickThreadSearchFocusRequestId] = useState(0);
   const [isGlobalThreadSearchOpen, setIsGlobalThreadSearchOpen] = useState(false);
   const [globalThreadSearchFocusRequestId, setGlobalThreadSearchFocusRequestId] = useState(0);
   const [isProjectFolderSearchOpen, setIsProjectFolderSearchOpen] = useState(false);
@@ -1811,6 +1814,19 @@ export default function Sidebar() {
         }
         event.preventDefault();
         event.stopPropagation();
+        setIsQuickThreadSearchOpen(true);
+        setQuickThreadSearchFocusRequestId((current) => current + 1);
+        return;
+      }
+      if (command === "threads.searchAll") {
+        if (
+          document.querySelector("[data-slot='dialog-popup']") !== null ||
+          document.querySelector("[data-slot='command-dialog-popup']") !== null
+        ) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
         setIsGlobalThreadSearchOpen(true);
         setGlobalThreadSearchFocusRequestId((current) => current + 1);
         return;
@@ -2623,6 +2639,12 @@ export default function Sidebar() {
             onOpenChange={setIsGlobalThreadSearchOpen}
             activeThreadId={routeThreadId}
             focusRequestId={globalThreadSearchFocusRequestId}
+          />
+          <QuickThreadSearchDialog
+            open={isQuickThreadSearchOpen}
+            onOpenChange={setIsQuickThreadSearchOpen}
+            activeThreadId={routeThreadId}
+            focusRequestId={quickThreadSearchFocusRequestId}
           />
           <ProjectFolderSearchDialog
             open={isProjectFolderSearchOpen}

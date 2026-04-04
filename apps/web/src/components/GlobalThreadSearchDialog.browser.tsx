@@ -141,4 +141,19 @@ describe("GlobalThreadSearchDialog", () => {
       await mounted.cleanup();
     }
   });
+
+  it("shows a no-results state for unmatched deep queries", async () => {
+    const mounted = await mountDialog();
+
+    try {
+      const input = page.getByTestId("global-thread-search-input");
+      await input.fill("missing-query");
+
+      await vi.waitFor(() => {
+        expect(document.body.textContent).toContain("No threads matched this search.");
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
 });

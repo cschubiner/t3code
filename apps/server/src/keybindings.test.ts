@@ -191,6 +191,14 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       assert.isTrue(
         persisted.some(
           (entry) =>
+            entry.command === "threads.searchAll" &&
+            entry.key === "mod+shift+a" &&
+            entry.when === "!terminalFocus",
+        ),
+      );
+      assert.isTrue(
+        persisted.some(
+          (entry) =>
             entry.command === "projects.search" &&
             entry.key === "mod+shift+k" &&
             entry.when === "!terminalFocus",

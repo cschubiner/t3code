@@ -23,6 +23,9 @@ See the full schema for more details: [`packages/contracts/src/keybindings.ts`](
   { "key": "mod+d", "command": "terminal.split", "when": "terminalFocus" },
   { "key": "mod+n", "command": "terminal.new", "when": "terminalFocus" },
   { "key": "mod+w", "command": "terminal.close", "when": "terminalFocus" },
+  { "key": "mod+f", "command": "thread.search", "when": "!terminalFocus" },
+  { "key": "mod+shift+f", "command": "threads.search", "when": "!terminalFocus" },
+  { "key": "mod+shift+a", "command": "threads.searchAll", "when": "!terminalFocus" },
   { "key": "mod+n", "command": "chat.new", "when": "!terminalFocus" },
   { "key": "mod+shift+o", "command": "chat.new", "when": "!terminalFocus" },
   { "key": "mod+shift+n", "command": "chat.newLocal", "when": "!terminalFocus" },
@@ -51,6 +54,9 @@ Invalid rules are ignored. Invalid config files are ignored. Warnings are logged
 - `terminal.split`: split terminal (in focused terminal context by default)
 - `terminal.new`: create new terminal (in focused terminal context by default)
 - `terminal.close`: close/kill the focused terminal (in focused terminal context by default)
+- `thread.search`: search within the active thread
+- `threads.search`: quick-search recent threads by title and opening prompt
+- `threads.searchAll`: deep-search all loaded threads including messages and plans
 - `chat.new`: create a new chat thread preserving the active thread's branch/worktree state
 - `chat.newLocal`: create a new chat thread for the active project in a new environment (local/worktree determined by app settings (default `local`))
 - `chat.branchSelector.focus`: focus and open the branch/worktree selector for the active chat
