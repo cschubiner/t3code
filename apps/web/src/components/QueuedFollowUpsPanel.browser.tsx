@@ -157,4 +157,27 @@ describe("QueuedFollowUpsPanel", () => {
       await mounted.cleanup();
     }
   });
+
+  it("disables only send-now when the queue cannot dispatch yet", async () => {
+    const mounted = await mountPanel({
+      pauseReason: "session-error",
+      blockReason: null,
+      canSendNow: false,
+      canResume: true,
+    });
+
+    try {
+      const sendNowButton = page.getByRole("button", { name: "Send now" }).first();
+      const editButton = page.getByRole("button", { name: "Edit" }).first();
+      const deleteButton = page.getByRole("button", { name: "Delete" }).first();
+      const resumeButton = page.getByRole("button", { name: "Resume" });
+
+      await expect.element(sendNowButton).toBeDisabled();
+      await expect.element(editButton).toBeEnabled();
+      await expect.element(deleteButton).toBeEnabled();
+      await expect.element(resumeButton).toBeEnabled();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
 });

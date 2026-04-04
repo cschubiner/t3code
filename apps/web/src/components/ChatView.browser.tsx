@@ -2710,6 +2710,99 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("keeps send-now disabled while a paused session-error queue is still blocked by an unsettled turn", async () => {
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-paused-queue-blocked-send-now" as MessageId,
+      targetText: "paused queue blocked send-now target",
+    });
+    const thread = baseSnapshot.threads[0];
+    if (!thread?.session) {
+      throw new Error("Expected browser fixture thread session.");
+    }
+
+    localStorage.setItem(
+      "t3code:queued-turn-store:v1",
+      JSON.stringify({
+        version: 1,
+        state: {
+          threadsByThreadId: {
+            [THREAD_ID]: {
+              items: [
+                {
+                  id: "queued-blocked-send-now-turn",
+                  text: "Blocked paused queued follow-up",
+                  attachments: [],
+                  terminalContexts: [],
+                  modelSelection: null,
+                  runtimeMode: "full-access",
+                  interactionMode: "default",
+                  createdAt: isoAt(2_200),
+                  updatedAt: isoAt(2_201),
+                },
+              ],
+              pauseReason: "session-error",
+              updatedAt: isoAt(2_201),
+            },
+          },
+        },
+      }),
+    );
+    await useQueuedTurnStore.persist.rehydrate();
+
+    const snapshot: OrchestrationReadModel = {
+      ...baseSnapshot,
+      threads: [
+        {
+          ...thread,
+          latestTurn: {
+            turnId: "turn-paused-queue-still-running" as TurnId,
+            state: "running",
+            requestedAt: isoAt(2_000),
+            startedAt: isoAt(2_001),
+            completedAt: null,
+            assistantMessageId: null,
+          },
+          session: {
+            ...thread.session,
+            status: "error",
+            activeTurnId: null,
+            lastError:
+              'ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when AuthRequired(AuthRequiredError { www_authenticate_header: "Bearer realm=\\"OAuth\\", error=\\"invalid_token\\", error_description=\\"Missing or invalid access token\\"" })',
+            updatedAt: isoAt(2_002),
+          },
+        },
+      ],
+    };
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+    });
+
+    try {
+      await vi.waitFor(
+        () => {
+          const text = document.body.textContent ?? "";
+          expect(text).toContain("1 queued follow-up");
+          expect(text).toContain("Paused after a session error");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const sendNowButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Send now"]'),
+        "Unable to find send-now button.",
+      );
+      const resumeButton = await waitForButtonByText("Resume");
+
+      expect(sendNowButton.disabled).toBe(true);
+      expect(resumeButton.disabled).toBe(false);
+      expect(listDispatchCommandsByType("thread.turn.start")).toEqual([]);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("steers immediately from the composer button during a running turn", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,

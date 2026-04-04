@@ -109,6 +109,23 @@ describe("deriveQueuedTurnDispatchGate", () => {
     });
   });
 
+  it("blocks without pausing while a local dispatch is still in flight", () => {
+    expect(
+      deriveQueuedTurnDispatchGate({
+        phase: "ready",
+        sessionOrchestrationStatus: "ready",
+        hasActiveUnsettledTurn: false,
+        isLocalDispatchInFlight: true,
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+      }),
+    ).toEqual({
+      canDispatch: false,
+      pauseReason: null,
+      blockReason: "local-dispatch",
+    });
+  });
+
   it("pauses when an approval is pending", () => {
     expect(
       deriveQueuedTurnDispatchGate({
