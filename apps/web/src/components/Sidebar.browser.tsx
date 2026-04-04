@@ -12,6 +12,7 @@ let desktopMenuActionListener: ((action: string) => void) | null = null;
 let mockedKeybindings: ResolvedKeybindingsConfig = [];
 let mockedGitStatusByCwd = new Map<string, GitStatusResult>();
 let mockedReferencedPrStateByUrl = new Map<string, "open" | "closed" | "merged" | null>();
+let mockedUseQueriesQueryKeys: Array<readonly unknown[]> = [];
 
 vi.mock("@tanstack/react-router", async () => {
   const actual =
@@ -30,8 +31,9 @@ vi.mock("@tanstack/react-query", async () => {
     await vi.importActual<typeof import("@tanstack/react-query")>("@tanstack/react-query");
   return {
     ...actual,
-    useQueries: ({ queries }: { queries: Array<{ queryKey: readonly unknown[] }> }) =>
-      queries.map((query) => {
+    useQueries: ({ queries }: { queries: Array<{ queryKey: readonly unknown[] }> }) => {
+      mockedUseQueriesQueryKeys.push(...queries.map((query) => query.queryKey));
+      return queries.map((query) => {
         const [scope, key, third] = query.queryKey;
         if (scope === "git" && key === "status" && typeof third === "string") {
           return { data: mockedGitStatusByCwd.get(third) };
@@ -40,7 +42,8 @@ vi.mock("@tanstack/react-query", async () => {
           return { data: mockedReferencedPrStateByUrl.get(third) ?? null };
         }
         return { data: undefined };
-      }),
+      });
+    },
   };
 });
 
@@ -320,6 +323,7 @@ describe("Sidebar", () => {
     mockedKeybindings = [];
     mockedGitStatusByCwd = new Map();
     mockedReferencedPrStateByUrl = new Map();
+    mockedUseQueriesQueryKeys = [];
     desktopMenuActionListener = null;
     Reflect.deleteProperty(window, "desktopBridge");
     useStore.setState({
@@ -568,6 +572,55 @@ describe("Sidebar", () => {
         expect(mergedPill?.className).toContain("text-violet-700");
         expect(closedPill?.className).toContain("text-rose-700");
       });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("only queries PR status for threads visible in the recent sidebar list", async () => {
+    const threads = Array.from({ length: 7 }, (_, index) =>
+      makeThread({
+        id: ThreadId.makeUnsafe(`thread-pr-${index + 1}`),
+        projectId: PROJECT_ALPHA,
+        title: `PR thread ${index + 1}`,
+        createdAt: `2026-04-02T11:0${index}:00.000Z`,
+        updatedAt: `2026-04-02T11:0${index}:30.000Z`,
+        branch: `feature/pr-${index + 1}`,
+        worktreePath: `/repo/alpha-worktree-${index + 1}`,
+        messages: [
+          {
+            id: `message-pr-${index + 1}` as never,
+            role: "assistant",
+            text: `https://github.com/pingdotgg/t3code/pull/${index + 101}`,
+            createdAt: `2026-04-02T11:0${index}:30.000Z`,
+            streaming: false,
+          },
+        ],
+      }),
+    );
+
+    const mounted = await mountSidebar({
+      projects: [makeProject(PROJECT_ALPHA, "Alpha", "/repo/alpha")],
+      threads,
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(document.querySelector('[data-testid="thread-row-thread-pr-7"]')).toBeTruthy();
+        expect(document.querySelector('[data-testid="thread-row-thread-pr-2"]')).toBeTruthy();
+        expect(document.querySelector('[data-testid="thread-row-thread-pr-1"]')).toBeFalsy();
+      });
+
+      const referencedPrQueryUrls = new Set(
+        mockedUseQueriesQueryKeys
+          .filter((queryKey) => queryKey[0] === "github-pr-status")
+          .map((queryKey) => queryKey[2])
+          .filter((url): url is string => typeof url === "string"),
+      );
+
+      expect(referencedPrQueryUrls).toContain("https://github.com/pingdotgg/t3code/pull/107");
+      expect(referencedPrQueryUrls).toContain("https://github.com/pingdotgg/t3code/pull/102");
+      expect(referencedPrQueryUrls).not.toContain("https://github.com/pingdotgg/t3code/pull/101");
     } finally {
       await mounted.cleanup();
     }
