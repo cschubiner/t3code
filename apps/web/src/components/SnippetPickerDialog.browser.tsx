@@ -165,6 +165,10 @@ describe("SnippetPickerDialog", () => {
         { timeout: 8_000, interval: 16 },
       );
 
+      await new Promise<void>((resolve) => {
+        window.requestAnimationFrame(() => resolve());
+      });
+
       input.dispatchEvent(
         new KeyboardEvent("keydown", {
           key: "Enter",
