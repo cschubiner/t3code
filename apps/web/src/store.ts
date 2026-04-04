@@ -873,6 +873,9 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
                 event.payload.messageId,
               )
             : thread.turnDiffSummaries;
+        const turnStillRunning =
+          thread.session?.status === "running" &&
+          thread.session.activeTurnId === event.payload.turnId;
         const latestTurn: Thread["latestTurn"] =
           event.payload.role === "assistant" &&
           event.payload.turnId !== null &&
@@ -882,11 +885,13 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
                 turnId: event.payload.turnId,
                 state: event.payload.streaming
                   ? "running"
-                  : thread.latestTurn?.state === "interrupted"
-                    ? "interrupted"
-                    : thread.latestTurn?.state === "error"
-                      ? "error"
-                      : "completed",
+                  : turnStillRunning
+                    ? "running"
+                    : thread.latestTurn?.state === "interrupted"
+                      ? "interrupted"
+                      : thread.latestTurn?.state === "error"
+                        ? "error"
+                        : "completed",
                 requestedAt:
                   thread.latestTurn?.turnId === event.payload.turnId
                     ? thread.latestTurn.requestedAt
@@ -900,7 +905,11 @@ export function applyOrchestrationEvent(state: AppState, event: OrchestrationEve
                   ? thread.latestTurn?.turnId === event.payload.turnId
                     ? (thread.latestTurn.completedAt ?? null)
                     : null
-                  : event.payload.updatedAt,
+                  : turnStillRunning
+                    ? thread.latestTurn?.turnId === event.payload.turnId
+                      ? (thread.latestTurn.completedAt ?? null)
+                      : null
+                    : event.payload.updatedAt,
                 assistantMessageId: event.payload.messageId,
               })
             : thread.latestTurn;
