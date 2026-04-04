@@ -200,4 +200,16 @@ describe("QueuedFollowUpsPanel", () => {
       await mounted.cleanup();
     }
   });
+
+  it("disables clear-all while editing a queued follow-up draft", async () => {
+    const mounted = await mountPanel();
+
+    try {
+      await page.getByRole("button", { name: "Edit" }).first().click();
+      await expect.element(page.getByRole("button", { name: "Clear all" })).toBeDisabled();
+      await expect.element(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
 });

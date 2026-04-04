@@ -243,6 +243,21 @@ describe("queuedTurnStore", () => {
     expect(useQueuedTurnStore.getState().getQueuedTurns(threadId)).toHaveLength(1);
   });
 
+  it("cleans up an empty paused queue once it is resumed", () => {
+    const store = useQueuedTurnStore.getState();
+    store.pauseThreadQueue(threadId, "session-error", "2026-04-02T17:01:00.000Z");
+
+    expect(useQueuedTurnStore.getState().getThreadQueue(threadId)).toMatchObject({
+      pauseReason: "session-error",
+      updatedAt: "2026-04-02T17:01:00.000Z",
+      items: [],
+    });
+
+    store.resumeThreadQueue(threadId, "2026-04-02T17:01:05.000Z");
+
+    expect(useQueuedTurnStore.getState().getThreadQueue(threadId)).toBeNull();
+  });
+
   it("removes empty thread queue state after the last item is cleared", () => {
     const store = useQueuedTurnStore.getState();
     store.enqueueTurn(threadId, makeQueuedTurn({ id: "turn-a", text: "first" }));
