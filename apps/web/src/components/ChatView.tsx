@@ -221,6 +221,7 @@ import {
   useQueuedTurnStoreHydrated,
   useQueuedTurnStore,
 } from "../queuedTurnStore";
+import { persistThreadSettingsForNextTurn as syncThreadSettingsForNextTurn } from "../queuedTurnDispatch";
 import { buildThreadSearchMatches, buildThreadSearchSources } from "../lib/threadSearch";
 import { useThreadSearchNavigationStore } from "../threadSearchNavigationStore";
 import {
@@ -2299,40 +2300,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return;
       }
 
-      if (
-        input.modelSelection !== undefined &&
-        (input.modelSelection.model !== serverThread.modelSelection.model ||
-          input.modelSelection.provider !== serverThread.modelSelection.provider ||
-          JSON.stringify(input.modelSelection.options ?? null) !==
-            JSON.stringify(serverThread.modelSelection.options ?? null))
-      ) {
-        await api.orchestration.dispatchCommand({
-          type: "thread.meta.update",
-          commandId: newCommandId(),
-          threadId: input.threadId,
-          modelSelection: input.modelSelection,
-        });
-      }
-
-      if (input.runtimeMode !== serverThread.runtimeMode) {
-        await api.orchestration.dispatchCommand({
-          type: "thread.runtime-mode.set",
-          commandId: newCommandId(),
-          threadId: input.threadId,
-          runtimeMode: input.runtimeMode,
-          createdAt: input.createdAt,
-        });
-      }
-
-      if (input.interactionMode !== serverThread.interactionMode) {
-        await api.orchestration.dispatchCommand({
-          type: "thread.interaction-mode.set",
-          commandId: newCommandId(),
-          threadId: input.threadId,
-          interactionMode: input.interactionMode,
-          createdAt: input.createdAt,
-        });
-      }
+      await syncThreadSettingsForNextTurn(api, {
+        thread: serverThread,
+        createdAt: input.createdAt,
+        modelSelection: input.modelSelection,
+        runtimeMode: input.runtimeMode,
+        interactionMode: input.interactionMode,
+      });
     },
     [serverThread],
   );

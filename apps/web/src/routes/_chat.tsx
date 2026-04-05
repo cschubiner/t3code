@@ -5,6 +5,7 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { resolveShortcutCommand } from "../keybindings";
 import { useChatToolbarFocusStore } from "../chatToolbarFocusStore";
+import { QueuedTurnBackgroundDispatcher } from "../components/QueuedTurnBackgroundDispatcher";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { resolveSidebarNewThreadEnvMode } from "~/components/Sidebar.logic";
@@ -98,9 +99,12 @@ function ChatRouteGlobalShortcuts() {
 }
 
 function ChatRouteLayout() {
+  const { routeThreadId } = useHandleNewThread();
+
   return (
     <>
       <ChatRouteGlobalShortcuts />
+      <QueuedTurnBackgroundDispatcher activeThreadId={routeThreadId} />
       <Outlet />
     </>
   );
