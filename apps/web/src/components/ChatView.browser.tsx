@@ -454,6 +454,25 @@ function setDraftThreadWithoutWorktree(): void {
   });
 }
 
+function setDraftWorktreeThread(): void {
+  useComposerDraftStore.setState({
+    draftThreadsByThreadId: {
+      [THREAD_ID]: {
+        projectId: PROJECT_ID,
+        createdAt: NOW_ISO,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: "main",
+        worktreePath: null,
+        envMode: "worktree",
+      },
+    },
+    projectDraftThreadIdByProjectId: {
+      [PROJECT_ID]: THREAD_ID,
+    },
+  });
+}
+
 function makeDomainEvent<T extends OrchestrationEvent["type"]>(
   type: T,
   payload: Extract<OrchestrationEvent, { type: T }>["payload"],
@@ -3137,22 +3156,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("queues follow-ups from a brand-new worktree draft thread while the first turn is still in flight", async () => {
-    useComposerDraftStore.setState({
-      draftThreadsByThreadId: {
-        [THREAD_ID]: {
-          projectId: PROJECT_ID,
-          createdAt: NOW_ISO,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: "main",
-          worktreePath: null,
-          envMode: "worktree",
-        },
-      },
-      projectDraftThreadIdByProjectId: {
-        [PROJECT_ID]: THREAD_ID,
-      },
-    });
+    setDraftWorktreeThread();
 
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
@@ -3204,6 +3208,89 @@ describe("ChatView timeline estimator parity (full app)", () => {
               .getState()
               .threadsByThreadId[THREAD_ID]?.items.map((item) => item.text),
           ).toEqual(["Queued from draft thread"]);
+          expect(listDispatchCommandsByType("thread.turn.start")).toHaveLength(1);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("queues next-up follow-ups from a brand-new worktree draft thread with mod+shift+enter", async () => {
+    setDraftWorktreeThread();
+    useQueuedTurnStore.getState().enqueueTurn(THREAD_ID, {
+      id: "queued-existing-draft-turn",
+      text: "Already queued draft follow-up",
+      attachments: [],
+      terminalContexts: [],
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5",
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdAt: isoAt(600),
+      updatedAt: isoAt(600),
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      resolveRpc: (request) => {
+        if (request._tag === WS_METHODS.gitCreateWorktree) {
+          return {
+            worktree: {
+              branch: "t3code/queued-repro",
+              path: "/repo/worktrees/queued-repro",
+            },
+          };
+        }
+        if (request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: listDispatchCommandsByType("thread.turn.start").length + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "First in-flight message");
+      await waitForLayout();
+
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(listDispatchCommandsByType("thread.turn.start")).toHaveLength(1);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Put this queued draft turn first");
+      await waitForLayout();
+
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+          ...modShiftShortcutModifiers(),
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(
+            useQueuedTurnStore
+              .getState()
+              .threadsByThreadId[THREAD_ID]?.items.map((item) => item.text),
+          ).toEqual(["Put this queued draft turn first", "Already queued draft follow-up"]);
           expect(listDispatchCommandsByType("thread.turn.start")).toHaveLength(1);
         },
         { timeout: 8_000, interval: 16 },
