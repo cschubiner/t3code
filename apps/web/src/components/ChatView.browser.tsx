@@ -3136,6 +3136,83 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("queues follow-ups from a brand-new worktree draft thread while the first turn is still in flight", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "main",
+          worktreePath: null,
+          envMode: "worktree",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      resolveRpc: (request) => {
+        if (request._tag === WS_METHODS.gitCreateWorktree) {
+          return {
+            worktree: {
+              branch: "t3code/queued-repro",
+              path: "/repo/worktrees/queued-repro",
+            },
+          };
+        }
+        if (request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: listDispatchCommandsByType("thread.turn.start").length + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "First in-flight message");
+      await waitForLayout();
+
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(listDispatchCommandsByType("thread.turn.start")).toHaveLength(1);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Queued from draft thread");
+      await waitForLayout();
+
+      const queueButton = await waitForButtonByText("Queue");
+      expect(queueButton.disabled).toBe(false);
+      queueButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(
+            useQueuedTurnStore
+              .getState()
+              .threadsByThreadId[THREAD_ID]?.items.map((item) => item.text),
+          ).toEqual(["Queued from draft thread"]);
+          expect(listDispatchCommandsByType("thread.turn.start")).toHaveLength(1);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("shows a pointer cursor for the running stop button", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,

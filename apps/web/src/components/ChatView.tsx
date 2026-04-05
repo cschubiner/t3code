@@ -3105,7 +3105,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       interactionMode: ProviderInteractionMode;
       prepend?: boolean;
     }) => {
-      if (!activeThread || !isServerThread) {
+      if (!activeThread) {
         return false;
       }
 
@@ -3177,7 +3177,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       clearComposerDraftContent,
       composerImages,
       enqueueQueuedTurn,
-      isServerThread,
       moveQueuedTurn,
       runtimeMode,
       selectedModel,
