@@ -25,6 +25,7 @@ async function mountComposerPrimaryActions(
       pendingAction={null}
       isRunning={true}
       showPlanFollowUpPrompt={false}
+      canSubmit={true}
       promptHasText={true}
       isSendBusy={false}
       isConnecting={false}
@@ -86,6 +87,32 @@ describe("ComposerPrimaryActions", () => {
 
     try {
       await expect.element(page.getByRole("button", { name: "Queue" })).toBeDisabled();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("disables steer and queue when submission is structurally unavailable", async () => {
+    const mounted = await mountComposerPrimaryActions({
+      canSubmit: false,
+    });
+
+    try {
+      await expect.element(page.getByRole("button", { name: "Steer" })).toBeDisabled();
+      await expect.element(page.getByRole("button", { name: "Queue" })).toBeDisabled();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("disables the idle send button when submission is structurally unavailable", async () => {
+    const mounted = await mountComposerPrimaryActions({
+      isRunning: false,
+      canSubmit: false,
+    });
+
+    try {
+      await expect.element(page.getByRole("button", { name: "Send message" })).toBeDisabled();
     } finally {
       await mounted.cleanup();
     }
