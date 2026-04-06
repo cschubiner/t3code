@@ -54,6 +54,11 @@ export interface QueuedTurnDispatchGateInput {
   hasPendingUserInput: boolean;
 }
 
+export interface QueuedTurnAutoPauseInput {
+  sessionOrchestrationStatus: typeof OrchestrationSessionStatus.Type | null | undefined;
+  hasActiveUnsettledTurn: boolean;
+}
+
 export function deriveQueuedTurnDispatchGate(
   input: QueuedTurnDispatchGateInput,
 ): QueuedTurnDispatchGate {
@@ -114,6 +119,16 @@ export function deriveQueuedTurnDispatchGate(
     pauseReason: null,
     blockReason: null,
   };
+}
+
+export function deriveQueuedTurnAutoPauseReason(
+  input: QueuedTurnAutoPauseInput,
+): QueuedTurnPauseReason | null {
+  if (input.sessionOrchestrationStatus === "error" && !input.hasActiveUnsettledTurn) {
+    return "session-error";
+  }
+
+  return null;
 }
 
 export const QueuedTurnAttachment = Schema.Struct({

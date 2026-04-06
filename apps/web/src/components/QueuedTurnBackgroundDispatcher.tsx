@@ -16,6 +16,7 @@ import {
 import { useStore } from "../store";
 import type { Thread } from "../types";
 import {
+  deriveQueuedTurnAutoPauseReason,
   deriveQueuedTurnDispatchGate,
   type QueuedTurnDraft,
   useQueuedTurnStore,
@@ -95,9 +96,14 @@ function selectBackgroundQueuedTurnCandidate(input: {
       hasPendingApproval: pendingApprovalCount > 0,
       hasPendingUserInput: pendingUserInputCount > 0,
     });
+    const autoPauseReason = deriveQueuedTurnAutoPauseReason({
+      sessionOrchestrationStatus: thread.session?.orchestrationStatus ?? null,
+      hasActiveUnsettledTurn,
+    });
 
-    if (gate.pauseReason !== null && queueState.pauseReason !== gate.pauseReason) {
-      input.pauseThreadQueue(thread.id, gate.pauseReason, pauseUpdatedAt);
+    const nextPauseReason = autoPauseReason ?? gate.pauseReason;
+    if (nextPauseReason !== null && queueState.pauseReason !== nextPauseReason) {
+      input.pauseThreadQueue(thread.id, nextPauseReason, pauseUpdatedAt);
       continue;
     }
 
