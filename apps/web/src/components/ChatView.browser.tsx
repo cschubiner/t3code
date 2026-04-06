@@ -3463,6 +3463,70 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("keeps a session-error queue paused after the session recovers until the user resumes it", async () => {
+    localStorage.setItem(
+      "t3code:queued-turn-store:v1",
+      JSON.stringify({
+        version: 1,
+        state: {
+          threadsByThreadId: {
+            [THREAD_ID]: {
+              items: [
+                {
+                  id: "queued-recovered-session-error-turn",
+                  text: "Stay paused until I resume",
+                  attachments: [],
+                  terminalContexts: [],
+                  modelSelection: null,
+                  runtimeMode: "full-access",
+                  interactionMode: "default",
+                  createdAt: isoAt(830),
+                  updatedAt: isoAt(831),
+                },
+              ],
+              pauseReason: "session-error",
+              updatedAt: isoAt(831),
+            },
+          },
+        },
+      }),
+    );
+    await useQueuedTurnStore.persist.rehydrate();
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-recovered-session-error-queue" as MessageId,
+        targetText: "recovered session error queue target",
+      }),
+    });
+
+    try {
+      await vi.waitFor(
+        () => {
+          const text = document.body.textContent ?? "";
+          expect(text).toContain("1 queued follow-up");
+          expect(text).toContain("Paused after a session error");
+          expect(listDispatchCommandsByType("thread.turn.start")).toEqual([]);
+          expect(useQueuedTurnStore.getState().threadsByThreadId[THREAD_ID]?.pauseReason).toBe(
+            "session-error",
+          );
+          expect(
+            useQueuedTurnStore
+              .getState()
+              .threadsByThreadId[THREAD_ID]?.items.map((item) => item.text),
+          ).toEqual(["Stay paused until I resume"]);
+        },
+        { timeout: 2_000, interval: 16 },
+      );
+
+      const resumeButton = await waitForButtonByText("Resume");
+      expect(resumeButton.disabled).toBe(false);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("shows a pointer cursor for the running stop button", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
