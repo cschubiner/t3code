@@ -17,6 +17,7 @@ interface ComposerPrimaryActionsProps {
   pendingAction: PendingActionState | null;
   isRunning: boolean;
   showPlanFollowUpPrompt: boolean;
+  canSubmit: boolean;
   promptHasText: boolean;
   isSendBusy: boolean;
   isConnecting: boolean;
@@ -48,6 +49,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   pendingAction,
   isRunning,
   showPlanFollowUpPrompt,
+  canSubmit,
   promptHasText,
   isSendBusy,
   isConnecting,
@@ -114,7 +116,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
               type="button"
               size="sm"
               className={cn("rounded-full", compact ? "px-3" : "px-4")}
-              disabled={isSendBusy || isConnecting}
+              disabled={isSendBusy || isConnecting || !canSubmit}
               onClick={onSteer}
             >
               Steer
@@ -124,7 +126,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
               size="sm"
               variant="outline"
               className={cn("rounded-full", compact ? "px-3" : "px-4")}
-              disabled={isPreparingWorktree || isConnecting}
+              disabled={isPreparingWorktree || isConnecting || !canSubmit}
               onClick={onQueue}
             >
               Queue
@@ -200,7 +202,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     <button
       type="submit"
       className="flex h-9 w-9 enabled:cursor-pointer items-center justify-center rounded-full bg-primary/90 text-primary-foreground transition-all duration-150 hover:bg-primary hover:scale-105 disabled:pointer-events-none disabled:opacity-30 disabled:hover:scale-100 sm:h-8 sm:w-8"
-      disabled={isSendBusy || isConnecting || !hasSendableContent}
+      disabled={isSendBusy || isConnecting || !hasSendableContent || !canSubmit}
       aria-label={
         isConnecting
           ? "Connecting"
