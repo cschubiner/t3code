@@ -216,6 +216,7 @@ import {
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import {
+  deriveQueuedTurnAutoPauseReason,
   deriveQueuedTurnDispatchGate,
   type QueuedTurnDraft,
   useQueuedTurnStoreHydrated,
@@ -1091,6 +1092,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
       isSendBusy,
       phase,
     ],
+  );
+  const queuedTurnAutoPauseReason = useMemo(
+    () =>
+      deriveQueuedTurnAutoPauseReason({
+        sessionOrchestrationStatus: activeThread?.session?.orchestrationStatus ?? null,
+        hasActiveUnsettledTurn,
+      }),
+    [activeThread?.session?.orchestrationStatus, hasActiveUnsettledTurn],
   );
   const canResumeQueuedTurns =
     hasHydratedQueuedTurnStore &&
@@ -3287,19 +3296,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
 
   useEffect(() => {
+    const nextPauseReason = queuedTurnAutoPauseReason ?? queuedTurnDispatchGate.pauseReason;
     if (
       !isServerThread ||
       queuedTurns.length === 0 ||
-      queuedTurnDispatchGate.pauseReason === null ||
-      queuedTurnPauseReason === queuedTurnDispatchGate.pauseReason
+      nextPauseReason === null ||
+      queuedTurnPauseReason === nextPauseReason
     ) {
       return;
     }
 
-    pauseThreadQueue(threadId, queuedTurnDispatchGate.pauseReason, new Date().toISOString());
+    pauseThreadQueue(threadId, nextPauseReason, new Date().toISOString());
   }, [
     isServerThread,
     pauseThreadQueue,
+    queuedTurnAutoPauseReason,
     queuedTurnDispatchGate.pauseReason,
     queuedTurnPauseReason,
     queuedTurns.length,
@@ -3312,6 +3323,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       !isServerThread ||
       !hasHydratedQueuedTurnStore ||
       queuedTurns.length === 0 ||
+      queuedTurnAutoPauseReason !== null ||
       queuedTurnPauseReason !== null ||
       !queuedTurnDispatchGate.canDispatch ||
       queuedDispatchInFlightRef.current
@@ -3341,6 +3353,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     dispatchQueuedTurn,
     hasHydratedQueuedTurnStore,
     isServerThread,
+    queuedTurnAutoPauseReason,
     queuedTurnDispatchGate.canDispatch,
     queuedTurnPauseReason,
     queuedTurns,

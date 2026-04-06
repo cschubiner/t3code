@@ -7,6 +7,7 @@ import {
   setLocalStorageItem,
 } from "./hooks/useLocalStorage";
 import {
+  deriveQueuedTurnAutoPauseReason,
   deriveQueuedTurnDispatchGate,
   flushQueuedTurnStoreStorage,
   type QueuedTurnDraft,
@@ -175,6 +176,26 @@ describe("deriveQueuedTurnDispatchGate", () => {
       pauseReason: null,
       blockReason: null,
     });
+  });
+});
+
+describe("deriveQueuedTurnAutoPauseReason", () => {
+  it("pauses auto-dispatch for an idle errored session", () => {
+    expect(
+      deriveQueuedTurnAutoPauseReason({
+        sessionOrchestrationStatus: "error",
+        hasActiveUnsettledTurn: false,
+      }),
+    ).toBe("session-error");
+  });
+
+  it("does not pause auto-dispatch for a session error while the latest turn is still unsettled", () => {
+    expect(
+      deriveQueuedTurnAutoPauseReason({
+        sessionOrchestrationStatus: "error",
+        hasActiveUnsettledTurn: true,
+      }),
+    ).toBeNull();
   });
 });
 

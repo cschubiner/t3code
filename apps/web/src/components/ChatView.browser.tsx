@@ -3300,6 +3300,233 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("does not drain the next active-thread queued follow-up on a ready session refresh alone", async () => {
+    useQueuedTurnStore.setState({
+      threadsByThreadId: {
+        [THREAD_ID]: {
+          items: [
+            {
+              id: "queued-refresh-follow-up-one",
+              text: "Queued refresh follow-up one",
+              attachments: [],
+              terminalContexts: [],
+              modelSelection: null,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              createdAt: isoAt(800),
+              updatedAt: isoAt(800),
+            },
+            {
+              id: "queued-refresh-follow-up-two",
+              text: "Queued refresh follow-up two",
+              attachments: [],
+              terminalContexts: [],
+              modelSelection: null,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              createdAt: isoAt(801),
+              updatedAt: isoAt(801),
+            },
+          ],
+          pauseReason: null,
+          updatedAt: isoAt(801),
+        },
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-ready-refresh-queue" as MessageId,
+        targetText: "ready refresh queue target",
+      }),
+      resolveRpc: (request) => {
+        if (request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: listDispatchCommandsByType("thread.turn.start").length + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      await vi.waitFor(
+        () => {
+          expect(listDispatchCommandsByType("thread.turn.start")).toHaveLength(1);
+          expect(
+            useQueuedTurnStore
+              .getState()
+              .threadsByThreadId[THREAD_ID]?.items.map((item) => item.text),
+          ).toEqual(["Queued refresh follow-up two"]);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      rpcHarness.emitStreamValue(
+        WS_METHODS.subscribeOrchestrationDomainEvents,
+        makeDomainEvent(
+          "thread.session-set",
+          {
+            threadId: THREAD_ID,
+            session: {
+              threadId: THREAD_ID,
+              status: "ready",
+              providerName: "codex",
+              runtimeMode: "full-access",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: isoAt(900),
+            },
+          },
+          { sequence: 21 },
+        ),
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(listDispatchCommandsByType("thread.turn.start")).toHaveLength(1);
+          expect(
+            useQueuedTurnStore
+              .getState()
+              .threadsByThreadId[THREAD_ID]?.items.map((item) => item.text),
+          ).toEqual(["Queued refresh follow-up two"]);
+        },
+        { timeout: 2_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("auto-pauses active-thread queued follow-ups for an idle session error", async () => {
+    useQueuedTurnStore.setState({
+      threadsByThreadId: {
+        [THREAD_ID]: {
+          items: [
+            {
+              id: "queued-session-error-follow-up-one",
+              text: "Queued session-error follow-up one",
+              attachments: [],
+              terminalContexts: [],
+              modelSelection: null,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              createdAt: isoAt(820),
+              updatedAt: isoAt(820),
+            },
+            {
+              id: "queued-session-error-follow-up-two",
+              text: "Queued session-error follow-up two",
+              attachments: [],
+              terminalContexts: [],
+              modelSelection: null,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              createdAt: isoAt(821),
+              updatedAt: isoAt(821),
+            },
+          ],
+          pauseReason: null,
+          updatedAt: isoAt(821),
+        },
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-session-error-queue" as MessageId,
+        targetText: "session error queue target",
+        sessionStatus: "error",
+        sessionLastError: "Codex CLI timed out while starting",
+      }),
+    });
+
+    try {
+      await vi.waitFor(
+        () => {
+          expect(listDispatchCommandsByType("thread.turn.start")).toEqual([]);
+          expect(useQueuedTurnStore.getState().threadsByThreadId[THREAD_ID]?.pauseReason).toBe(
+            "session-error",
+          );
+          expect(
+            useQueuedTurnStore
+              .getState()
+              .threadsByThreadId[THREAD_ID]?.items.map((item) => item.text),
+          ).toEqual(["Queued session-error follow-up one", "Queued session-error follow-up two"]);
+        },
+        { timeout: 2_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps a session-error queue paused after the session recovers until the user resumes it", async () => {
+    localStorage.setItem(
+      "t3code:queued-turn-store:v1",
+      JSON.stringify({
+        version: 1,
+        state: {
+          threadsByThreadId: {
+            [THREAD_ID]: {
+              items: [
+                {
+                  id: "queued-recovered-session-error-turn",
+                  text: "Stay paused until I resume",
+                  attachments: [],
+                  terminalContexts: [],
+                  modelSelection: null,
+                  runtimeMode: "full-access",
+                  interactionMode: "default",
+                  createdAt: isoAt(830),
+                  updatedAt: isoAt(831),
+                },
+              ],
+              pauseReason: "session-error",
+              updatedAt: isoAt(831),
+            },
+          },
+        },
+      }),
+    );
+    await useQueuedTurnStore.persist.rehydrate();
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-recovered-session-error-queue" as MessageId,
+        targetText: "recovered session error queue target",
+      }),
+    });
+
+    try {
+      await vi.waitFor(
+        () => {
+          const text = document.body.textContent ?? "";
+          expect(text).toContain("1 queued follow-up");
+          expect(text).toContain("Paused after a session error");
+          expect(listDispatchCommandsByType("thread.turn.start")).toEqual([]);
+          expect(useQueuedTurnStore.getState().threadsByThreadId[THREAD_ID]?.pauseReason).toBe(
+            "session-error",
+          );
+          expect(
+            useQueuedTurnStore
+              .getState()
+              .threadsByThreadId[THREAD_ID]?.items.map((item) => item.text),
+          ).toEqual(["Stay paused until I resume"]);
+        },
+        { timeout: 2_000, interval: 16 },
+      );
+
+      const resumeButton = await waitForButtonByText("Resume");
+      expect(resumeButton.disabled).toBe(false);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("shows a pointer cursor for the running stop button", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,

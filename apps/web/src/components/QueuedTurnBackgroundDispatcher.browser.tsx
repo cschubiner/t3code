@@ -266,4 +266,65 @@ describe("QueuedTurnBackgroundDispatcher", () => {
       host.remove();
     }
   });
+
+  it("pauses inactive queued turns when the background thread is in an idle session error", async () => {
+    const dispatchCommand = vi.fn().mockResolvedValue(undefined);
+    window.nativeApi = {
+      orchestration: {
+        dispatchCommand,
+      },
+    } as unknown as NativeApi;
+
+    useStore.setState({
+      threads: [
+        makeThread(ACTIVE_THREAD_ID),
+        makeThread(BACKGROUND_THREAD_ID, {
+          session: {
+            provider: "codex" as const,
+            status: "error" as const,
+            orchestrationStatus: "error" as const,
+            createdAt: "2026-04-05T12:05:00.000Z",
+            updatedAt: "2026-04-05T12:05:00.000Z",
+            lastError: "Codex CLI timed out while starting",
+          },
+        }),
+      ],
+    });
+
+    useQueuedTurnStore.getState().enqueueTurn(BACKGROUND_THREAD_ID, {
+      id: "queued-background-session-error",
+      text: "Should pause for session error",
+      attachments: [],
+      terminalContexts: [],
+      modelSelection: null,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdAt: "2026-04-05T12:05:30.000Z",
+      updatedAt: "2026-04-05T12:05:30.000Z",
+    });
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const screen = await render(
+      <QueuedTurnBackgroundDispatcher activeThreadId={ACTIVE_THREAD_ID} />,
+      { container: host },
+    );
+
+    try {
+      await vi.waitFor(() => {
+        expect(
+          useQueuedTurnStore.getState().threadsByThreadId[BACKGROUND_THREAD_ID]?.pauseReason,
+        ).toBe("session-error");
+      });
+      expect(dispatchCommand).not.toHaveBeenCalled();
+      expect(
+        useQueuedTurnStore
+          .getState()
+          .threadsByThreadId[BACKGROUND_THREAD_ID]?.items.map((item) => item.text),
+      ).toEqual(["Should pause for session error"]);
+    } finally {
+      await screen.unmount();
+      host.remove();
+    }
+  });
 });
