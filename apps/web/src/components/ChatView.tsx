@@ -24,7 +24,6 @@ import {
   TerminalOpenInput,
 } from "@t3tools/contracts";
 import { applyClaudePromptEffortPrefix, normalizeModelSlug } from "@t3tools/shared/model";
-import { isCodexAuthErrorMessage } from "@t3tools/shared/providerAuth";
 import { truncate } from "@t3tools/shared/String";
 import {
   useCallback,
@@ -1590,12 +1589,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     () => providerStatuses.find((status) => status.provider === selectedProvider) ?? null,
     [selectedProvider, providerStatuses],
   );
-  const isRecoverableCodexProviderAuthError =
-    selectedProvider === "codex" &&
-    activeProviderStatus?.status === "error" &&
-    isCodexAuthErrorMessage(activeProviderStatus.message);
-  const isProviderBlockedForSend =
-    activeProviderStatus?.status === "error" && !isRecoverableCodexProviderAuthError;
   const activeProjectCwd = activeProject?.cwd ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const threadTerminalRuntimeEnv = useMemo(() => {
@@ -2769,6 +2762,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
     : isLocalDraftThread
       ? (draftThread?.envMode ?? "local")
       : "local";
+  const isFirstThreadMessage = activeThread
+    ? !isServerThread || activeThread.messages.length === 0
+    : false;
+  const requiresBaseBranchForComposerSend =
+    isFirstThreadMessage && envMode === "worktree" && !activeWorktreePath;
+  const isComposerSendBlockedByMissingBaseBranch =
+    requiresBaseBranchForComposerSend && !activeThread?.branch;
+  const canSubmitComposerTurn =
+    activeThread !== null &&
+    activeProject !== undefined &&
+    !isComposerSendBlockedByMissingBaseBranch;
 
   useEffect(() => {
     if (!isWorking) return;
@@ -3468,35 +3472,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
       });
       return;
     }
-    if (isProviderBlockedForSend) {
-      setStoreThreadError(
-        activeThread.id,
-        activeProviderStatus?.message ??
-          activeThread.session?.lastError ??
-          `${selectedProvider} is unavailable right now.`,
-      );
-      return;
-    }
     if (isSendBusy || isConnecting || sendInFlightRef.current) return;
-    if (!activeProject) return;
-    const threadIdForSend = activeThread.id;
-    const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
-    const baseBranchForWorktree =
-      isFirstMessage && envMode === "worktree" && !activeThread.worktreePath
-        ? activeThread.branch
-        : null;
-
-    // In worktree mode, require an explicit base branch so we don't silently
-    // fall back to local execution when branch selection is missing.
-    const shouldCreateWorktree =
-      isFirstMessage && envMode === "worktree" && !activeThread.worktreePath;
-    if (shouldCreateWorktree && !activeThread.branch) {
-      setStoreThreadError(
-        threadIdForSend,
-        "Select a base branch before sending in New worktree mode.",
-      );
+    if (!canSubmitComposerTurn) {
+      if (isComposerSendBlockedByMissingBaseBranch) {
+        setStoreThreadError(
+          activeThread.id,
+          "Select a base branch before sending in New worktree mode.",
+        );
+      }
       return;
     }
+    const threadIdForSend = activeThread.id;
+    const baseBranchForWorktree = requiresBaseBranchForComposerSend ? activeThread.branch : null;
 
     sendInFlightRef.current = true;
     beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
@@ -3666,7 +3653,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
 
       // Auto-title from first message
-      if (isFirstMessage && isServerThread) {
+      if (isFirstThreadMessage && isServerThread) {
         await api.orchestration.dispatchCommand({
           type: "thread.meta.update",
           commandId: newCommandId(),
@@ -5214,6 +5201,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                           showPlanFollowUpPrompt={
                             pendingUserInputs.length === 0 && showPlanFollowUpPrompt
                           }
+                          canSubmit={canSubmitComposerTurn}
                           promptHasText={prompt.trim().length > 0}
                           isSendBusy={isSendBusy}
                           isConnecting={isConnecting}

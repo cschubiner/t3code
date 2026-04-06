@@ -2,11 +2,7 @@ import { DEFAULT_RUNTIME_MODE, type ProjectId, ThreadId } from "@t3tools/contrac
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
-import {
-  type DraftThreadEnvMode,
-  type DraftThreadState,
-  useComposerDraftStore,
-} from "../composerDraftStore";
+import { type DraftThreadEnvMode, useComposerDraftStore } from "../composerDraftStore";
 import { newThreadId } from "../lib/utils";
 import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
 import { useStore } from "../store";
@@ -42,58 +38,7 @@ export function useHandleNewThread() {
         envMode?: DraftThreadEnvMode;
       },
     ): Promise<void> => {
-      const {
-        clearProjectDraftThreadId,
-        getDraftThread,
-        getDraftThreadByProjectId,
-        applyStickyState,
-        setDraftThreadContext,
-        setProjectDraftThreadId,
-      } = useComposerDraftStore.getState();
-      const hasBranchOption = options?.branch !== undefined;
-      const hasWorktreePathOption = options?.worktreePath !== undefined;
-      const hasEnvModeOption = options?.envMode !== undefined;
-      const storedDraftThread = getDraftThreadByProjectId(projectId);
-      const latestActiveDraftThread: DraftThreadState | null = routeThreadId
-        ? getDraftThread(routeThreadId)
-        : null;
-      if (storedDraftThread) {
-        return (async () => {
-          if (hasBranchOption || hasWorktreePathOption || hasEnvModeOption) {
-            setDraftThreadContext(storedDraftThread.threadId, {
-              ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
-              ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
-              ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
-            });
-          }
-          setProjectDraftThreadId(projectId, storedDraftThread.threadId);
-          if (routeThreadId === storedDraftThread.threadId) {
-            return;
-          }
-          await navigate({
-            to: "/$threadId",
-            params: { threadId: storedDraftThread.threadId },
-          });
-        })();
-      }
-
-      clearProjectDraftThreadId(projectId);
-
-      if (
-        latestActiveDraftThread &&
-        routeThreadId &&
-        latestActiveDraftThread.projectId === projectId
-      ) {
-        if (hasBranchOption || hasWorktreePathOption || hasEnvModeOption) {
-          setDraftThreadContext(routeThreadId, {
-            ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
-            ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
-            ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
-          });
-        }
-        setProjectDraftThreadId(projectId, routeThreadId);
-        return Promise.resolve();
-      }
+      const { applyStickyState, setProjectDraftThreadId } = useComposerDraftStore.getState();
 
       const threadId = newThreadId();
       const createdAt = new Date().toISOString();
@@ -113,7 +58,7 @@ export function useHandleNewThread() {
         });
       })();
     },
-    [navigate, routeThreadId],
+    [navigate],
   );
 
   return {

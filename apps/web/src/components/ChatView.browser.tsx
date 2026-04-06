@@ -2574,6 +2574,211 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("does not let a generic codex provider error banner block a fresh send from an existing thread", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-provider-banner-generic-error-send" as MessageId,
+        targetText: "provider banner generic error send target",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: nextFixture.serverConfig.providers.map((provider) =>
+            provider.provider !== "codex"
+              ? provider
+              : {
+                  ...provider,
+                  status: "error",
+                  message:
+                    "Codex CLI is installed but failed to run. Timed out while running command.",
+                },
+          ),
+        };
+      },
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Send past provider timeout banner");
+      await waitForLayout();
+
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          const turnStartRequest = listDispatchCommandsByType("thread.turn.start").at(-1);
+          const command = turnStartRequest as { message?: { text?: string } } | undefined;
+          expect(command?.message?.text).toBe("Send past provider timeout banner");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not let Enter get blocked by a generic codex provider error banner", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-provider-banner-enter-generic-error-send" as MessageId,
+        targetText: "provider banner enter generic error send target",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: nextFixture.serverConfig.providers.map((provider) =>
+            provider.provider !== "codex"
+              ? provider
+              : {
+                  ...provider,
+                  status: "error",
+                  message:
+                    "Codex CLI is installed but failed to run. Timed out while running command.",
+                },
+          ),
+        };
+      },
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Enter past provider timeout banner");
+      await waitForLayout();
+
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          const turnStartRequest = listDispatchCommandsByType("thread.turn.start").at(-1);
+          const command = turnStartRequest as { message?: { text?: string } } | undefined;
+          expect(command?.message?.text).toBe("Enter past provider timeout banner");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("auto-selects the current branch for a new worktree draft and sends successfully", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          envMode: "worktree",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      resolveRpc: (request) => {
+        if (request._tag === WS_METHODS.gitCreateWorktree) {
+          return {
+            worktree: {
+              branch: "t3code/auto-selected-main",
+              path: "/repo/worktrees/auto-selected-main",
+            },
+          };
+        }
+        if (request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: listDispatchCommandsByType("thread.turn.start").length + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      await vi.waitFor(
+        () => {
+          expect(useComposerDraftStore.getState().getDraftThread(THREAD_ID)?.branch).toBe("main");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Ready after auto branch selection");
+      await waitForLayout();
+
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          const worktreeRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.gitCreateWorktree,
+          ) as { branch?: string; newBranch?: string } | undefined;
+          expect(worktreeRequest?.branch).toBe("main");
+          expect(worktreeRequest?.newBranch).toMatch(/^t3code\/[0-9a-f]{8}$/);
+
+          const turnStartRequest = listDispatchCommandsByType("thread.turn.start").at(-1);
+          const command = turnStartRequest as { message?: { text?: string } } | undefined;
+          expect(command?.message?.text).toBe("Ready after auto branch selection");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("disables send when the thread project is unavailable", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: {
+        ...createSnapshotForTargetUser({
+          targetMessageId: "msg-user-missing-project-send-target" as MessageId,
+          targetText: "missing project send target",
+        }),
+        projects: [],
+      },
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Blocked without active project");
+      await waitForLayout();
+
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(true);
+
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await new Promise((resolve) => window.setTimeout(resolve, 150));
+      expect(listDispatchCommandsByType("thread.turn.start")).toHaveLength(0);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("keeps a persisted paused queue paused after reload until resume is clicked", async () => {
     localStorage.setItem(
       "t3code:queued-turn-store:v1",
@@ -3814,7 +4019,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("prefers draft state over sticky composer settings and defaults", async () => {
+  it("creates a fresh draft instead of reusing the existing project draft thread", async () => {
     useComposerDraftStore.setState({
       stickyModelSelectionByProvider: {
         codex: {
@@ -3874,11 +4079,14 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await newThreadButton.click();
 
-      await waitForURL(
+      const secondThreadPath = await waitForURL(
         mounted.router,
-        (path) => path === threadPath,
-        "New-thread should reuse the existing project draft thread.",
+        (path) => UUID_ROUTE_RE.test(path) && path !== threadPath,
+        "New-thread should create a fresh draft thread.",
       );
+      const secondThreadId = secondThreadPath.slice(1) as ThreadId;
+
+      expect(secondThreadId).not.toBe(threadId);
       expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toMatchObject({
         modelSelectionByProvider: {
           codex: {
@@ -3891,6 +4099,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
           },
         },
         activeProvider: "codex",
+      });
+      expect(useComposerDraftStore.getState().draftThreadsByThreadId[threadId]).toMatchObject({
+        projectId: PROJECT_ID,
       });
     } finally {
       await mounted.cleanup();
@@ -3943,6 +4154,83 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await mounted.cleanup();
     }
   });
+
+  it("creates and sends from a fresh draft while an earlier worktree draft is still preparing", async () => {
+    setDraftWorktreeThread();
+    let worktreeIndex = 0;
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      resolveRpc: (request) => {
+        if (request._tag === WS_METHODS.gitCreateWorktree) {
+          worktreeIndex += 1;
+          return {
+            worktree: {
+              branch: `t3code/parallel-draft-${worktreeIndex}`,
+              path: `/repo/worktrees/parallel-draft-${worktreeIndex}`,
+            },
+          };
+        }
+        if (request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: listDispatchCommandsByType("thread.turn.start").length + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "First parallel draft");
+      await waitForLayout();
+
+      const firstSendButton = await waitForSendButton();
+      expect(firstSendButton.disabled).toBe(false);
+      firstSendButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(listDispatchCommandsByType("thread.turn.start")).toHaveLength(1);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const newThreadButton = page.getByTestId("new-thread-button");
+      await expect.element(newThreadButton).toBeInTheDocument();
+      await newThreadButton.click();
+
+      const secondThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "New-thread should create a fresh draft while the first draft is still in flight.",
+      );
+      const secondThreadId = secondThreadPath.slice(1) as ThreadId;
+      expect(secondThreadId).not.toBe(THREAD_ID);
+
+      useComposerDraftStore.getState().setPrompt(secondThreadId, "Second parallel draft");
+      await waitForLayout();
+
+      const secondSendButton = await waitForSendButton();
+      expect(secondSendButton.disabled).toBe(false);
+      secondSendButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(listDispatchCommandsByType("thread.turn.start")).toHaveLength(2);
+          expect(
+            listDispatchCommandsByType("thread.turn.start").map(
+              (request) => (request.message as { text?: string } | undefined)?.text,
+            ),
+          ).toEqual(["First parallel draft", "Second parallel draft"]);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("creates a fresh draft after the previous draft thread is promoted", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
