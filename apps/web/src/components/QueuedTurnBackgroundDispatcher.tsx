@@ -1,125 +1,63 @@
-import type { MessageId, ThreadId } from "@t3tools/contracts";
-import { useEffect, useRef } from "react";
+import type { ThreadId } from "@t3tools/contracts";
+import { useEffect } from "react";
 
-import {
-  createLocalDispatchSnapshot,
-  hasServerAcknowledgedLocalDispatch,
-  type LocalDispatchSnapshot,
-} from "./ChatView.logic";
+import { createLocalDispatchSnapshot } from "../localDispatch";
 import { readNativeApi } from "../nativeApi";
-import {
-  derivePendingApprovals,
-  derivePendingUserInputs,
-  derivePhase,
-  isLatestTurnSettled,
-} from "../session-logic";
 import { useStore } from "../store";
 import type { Thread } from "../types";
+import { dispatchQueuedTurnCommand } from "../queuedTurnDispatch";
 import {
-  deriveQueuedTurnAutoPauseReason,
-  deriveQueuedTurnDispatchGate,
-  type QueuedTurnDraft,
+  deriveQueuedTurnThreadAction,
+  hasQueuedTurnDispatchBeenAcknowledged,
+} from "../queuedTurnEngine";
+import {
+  getQueuedTurnDispatchState,
   useQueuedTurnStore,
   useQueuedTurnStoreHydrated,
 } from "../queuedTurnStore";
-import { persistThreadSettingsForNextTurn } from "../queuedTurnDispatch";
-import { newCommandId } from "~/lib/utils";
 
 interface QueuedTurnBackgroundDispatcherProps {
   activeThreadId: ThreadId | null;
 }
 
-interface BackgroundQueuedTurnCandidate {
-  thread: Thread;
-  queuedTurn: QueuedTurnDraft;
-}
-
-function getPendingLocalDispatch(
-  thread: Thread,
-  snapshotsByThreadId: Record<string, LocalDispatchSnapshot>,
-): LocalDispatchSnapshot | null {
-  const snapshot = snapshotsByThreadId[thread.id];
-  if (!snapshot) {
-    return null;
-  }
-
-  const acknowledged = hasServerAcknowledgedLocalDispatch({
-    localDispatch: snapshot,
-    phase: derivePhase(thread.session),
-    latestTurn: thread.latestTurn,
-    session: thread.session,
-    hasPendingApproval: derivePendingApprovals(thread.activities).length > 0,
-    hasPendingUserInput: derivePendingUserInputs(thread.activities).length > 0,
-    threadError: thread.error,
-  });
-
-  if (acknowledged) {
-    delete snapshotsByThreadId[thread.id];
-    return null;
-  }
-
-  return snapshot;
-}
-
-function selectBackgroundQueuedTurnCandidate(input: {
+function selectNextInactiveDispatchCandidate(input: {
   activeThreadId: ThreadId | null;
-  queuedThreadsByThreadId: ReturnType<typeof useQueuedTurnStore.getState>["threadsByThreadId"];
-  pauseThreadQueue: ReturnType<typeof useQueuedTurnStore.getState>["pauseThreadQueue"];
-  snapshotsByThreadId: Record<string, LocalDispatchSnapshot>;
   threads: readonly Thread[];
-}): BackgroundQueuedTurnCandidate | null {
-  let nextCandidate: BackgroundQueuedTurnCandidate | null = null;
-  const pauseUpdatedAt = new Date().toISOString();
+  queuedThreadsByThreadId: ReturnType<typeof useQueuedTurnStore.getState>["threadsByThreadId"];
+}): { thread: Thread; queuedTurnId: string } | null {
+  let nextCandidate: { thread: Thread; queuedTurnId: string; createdAt: string } | null = null;
 
   for (const thread of input.threads) {
-    if (input.activeThreadId === thread.id) {
+    if (thread.id === input.activeThreadId) {
       continue;
     }
 
-    const queueState = input.queuedThreadsByThreadId[thread.id];
-    const queuedTurn = queueState?.items[0];
-    if (!queueState || !queuedTurn) {
-      continue;
-    }
-
-    const pendingApprovalCount = derivePendingApprovals(thread.activities).length;
-    const pendingUserInputCount = derivePendingUserInputs(thread.activities).length;
-    const localDispatch = getPendingLocalDispatch(thread, input.snapshotsByThreadId);
-    const hasActiveUnsettledTurn =
-      thread.latestTurn?.startedAt != null &&
-      !isLatestTurnSettled(thread.latestTurn, thread.session ?? null);
-    const gate = deriveQueuedTurnDispatchGate({
-      phase: derivePhase(thread.session),
-      sessionOrchestrationStatus: thread.session?.orchestrationStatus ?? null,
-      hasActiveUnsettledTurn,
-      isLocalDispatchInFlight: localDispatch !== null,
-      hasPendingApproval: pendingApprovalCount > 0,
-      hasPendingUserInput: pendingUserInputCount > 0,
-    });
-    const autoPauseReason = deriveQueuedTurnAutoPauseReason({
-      sessionOrchestrationStatus: thread.session?.orchestrationStatus ?? null,
-      hasActiveUnsettledTurn,
+    const queueState = input.queuedThreadsByThreadId[thread.id] ?? null;
+    const action = deriveQueuedTurnThreadAction({
+      thread,
+      queueState,
+      isLocalDispatchInFlight: false,
     });
 
-    const nextPauseReason = autoPauseReason ?? gate.pauseReason;
-    if (nextPauseReason !== null && queueState.pauseReason !== nextPauseReason) {
-      input.pauseThreadQueue(thread.id, nextPauseReason, pauseUpdatedAt);
+    if (action.type !== "dispatch") {
       continue;
     }
 
-    if (queueState.pauseReason !== null || !gate.canDispatch) {
-      continue;
-    }
-
-    if (
-      nextCandidate === null ||
-      queuedTurn.createdAt.localeCompare(nextCandidate.queuedTurn.createdAt) < 0
-    ) {
-      nextCandidate = { thread, queuedTurn };
+    if (nextCandidate === null || action.queuedTurn.createdAt < nextCandidate.createdAt) {
+      nextCandidate = {
+        thread,
+        queuedTurnId: action.queuedTurn.id,
+        createdAt: action.queuedTurn.createdAt,
+      };
     }
   }
 
-  return nextCandidate;
+  return nextCandidate
+    ? {
+        thread: nextCandidate.thread,
+        queuedTurnId: nextCandidate.queuedTurnId,
+      }
+    : null;
 }
 
 export function QueuedTurnBackgroundDispatcher({
@@ -127,105 +65,144 @@ export function QueuedTurnBackgroundDispatcher({
 }: QueuedTurnBackgroundDispatcherProps) {
   const hasHydratedQueuedTurnStore = useQueuedTurnStoreHydrated();
   const queuedThreadsByThreadId = useQueuedTurnStore((store) => store.threadsByThreadId);
+  const beginDispatch = useQueuedTurnStore((store) => store.beginDispatch);
+  const markDispatchAwaitingAck = useQueuedTurnStore((store) => store.markDispatchAwaitingAck);
+  const acknowledgeDispatch = useQueuedTurnStore((store) => store.acknowledgeDispatch);
+  const resetDispatch = useQueuedTurnStore((store) => store.resetDispatch);
   const pauseThreadQueue = useQueuedTurnStore((store) => store.pauseThreadQueue);
-  const removeQueuedTurn = useQueuedTurnStore((store) => store.removeQueuedTurn);
   const threads = useStore((store) => store.threads);
   const setThreadError = useStore((store) => store.setError);
-  const queuedDispatchInFlightRef = useRef<ThreadId | null>(null);
-  const localDispatchSnapshotsByThreadIdRef = useRef<Record<string, LocalDispatchSnapshot>>({});
 
   useEffect(() => {
-    if (!hasHydratedQueuedTurnStore || queuedDispatchInFlightRef.current !== null) {
+    if (!hasHydratedQueuedTurnStore) {
       return;
     }
 
-    const nextCandidate = selectBackgroundQueuedTurnCandidate({
+    const acknowledgedThreadIds = threads.flatMap((thread) => {
+      if (thread.id === activeThreadId) {
+        return [];
+      }
+
+      const queueState = queuedThreadsByThreadId[thread.id] ?? null;
+      if (
+        getQueuedTurnDispatchState(queueState).status === "idle" ||
+        !hasQueuedTurnDispatchBeenAcknowledged({
+          thread,
+          dispatchState: getQueuedTurnDispatchState(queueState),
+        })
+      ) {
+        return [];
+      }
+
+      const queuedTurnId = getQueuedTurnDispatchState(queueState).queuedTurnId;
+      return queuedTurnId ? [{ threadId: thread.id, queuedTurnId }] : [];
+    });
+
+    if (acknowledgedThreadIds.length === 0) {
+      return;
+    }
+
+    const updatedAt = new Date().toISOString();
+    for (const acknowledgedDispatch of acknowledgedThreadIds) {
+      acknowledgeDispatch(
+        acknowledgedDispatch.threadId,
+        acknowledgedDispatch.queuedTurnId,
+        updatedAt,
+      );
+    }
+  }, [
+    acknowledgeDispatch,
+    activeThreadId,
+    hasHydratedQueuedTurnStore,
+    queuedThreadsByThreadId,
+    threads,
+  ]);
+
+  useEffect(() => {
+    if (!hasHydratedQueuedTurnStore) {
+      return;
+    }
+
+    const updatedAt = new Date().toISOString();
+    for (const thread of threads) {
+      if (thread.id === activeThreadId) {
+        continue;
+      }
+
+      const queueState = queuedThreadsByThreadId[thread.id] ?? null;
+      const action = deriveQueuedTurnThreadAction({
+        thread,
+        queueState,
+        isLocalDispatchInFlight: false,
+      });
+
+      if (action.type === "pause") {
+        pauseThreadQueue(thread.id, action.reason, updatedAt);
+      }
+    }
+  }, [
+    activeThreadId,
+    hasHydratedQueuedTurnStore,
+    pauseThreadQueue,
+    queuedThreadsByThreadId,
+    threads,
+  ]);
+
+  useEffect(() => {
+    if (!hasHydratedQueuedTurnStore) {
+      return;
+    }
+
+    const nextCandidate = selectNextInactiveDispatchCandidate({
       activeThreadId,
       queuedThreadsByThreadId,
-      pauseThreadQueue,
-      snapshotsByThreadId: localDispatchSnapshotsByThreadIdRef.current,
       threads,
     });
     if (!nextCandidate) {
       return;
     }
 
-    const { queuedTurn, thread } = nextCandidate;
+    const queueState = queuedThreadsByThreadId[nextCandidate.thread.id];
+    const queuedTurn = queueState?.items.find((item) => item.id === nextCandidate.queuedTurnId);
+    if (!queueState || !queuedTurn) {
+      return;
+    }
+
     const api = readNativeApi();
     if (!api) {
       return;
     }
 
-    queuedDispatchInFlightRef.current = thread.id;
-    localDispatchSnapshotsByThreadIdRef.current[thread.id] = createLocalDispatchSnapshot(thread);
-    setThreadError(thread.id, null);
+    const localDispatchSnapshot = createLocalDispatchSnapshot(nextCandidate.thread);
+    const createdAt = new Date().toISOString();
 
-    const dispatchQueuedTurn = async (): Promise<boolean> => {
-      const messageIdForSend = queuedTurn.id as MessageId;
-      const messageCreatedAt = new Date().toISOString();
-      const modelSelectionForSend = queuedTurn.modelSelection ?? thread.modelSelection;
+    beginDispatch(nextCandidate.thread.id, queuedTurn.id, localDispatchSnapshot);
+    setThreadError(nextCandidate.thread.id, null);
 
-      try {
-        await persistThreadSettingsForNextTurn(api, {
-          thread,
-          createdAt: messageCreatedAt,
-          modelSelection: modelSelectionForSend,
-          runtimeMode: queuedTurn.runtimeMode,
-          interactionMode: queuedTurn.interactionMode,
-        });
-
-        await api.orchestration.dispatchCommand({
-          type: "thread.turn.start",
-          commandId: newCommandId(),
-          threadId: thread.id,
-          message: {
-            messageId: messageIdForSend,
-            role: "user",
-            text: queuedTurn.text,
-            attachments: queuedTurn.attachments.map((attachment) => ({
-              type: "image" as const,
-              name: attachment.name,
-              mimeType: attachment.mimeType,
-              sizeBytes: attachment.sizeBytes,
-              dataUrl: attachment.dataUrl,
-            })),
-          },
-          modelSelection: modelSelectionForSend,
-          titleSeed: thread.title,
-          runtimeMode: queuedTurn.runtimeMode,
-          interactionMode: queuedTurn.interactionMode,
-          createdAt: messageCreatedAt,
-        });
-
-        return true;
-      } catch (err) {
-        delete localDispatchSnapshotsByThreadIdRef.current[thread.id];
+    void dispatchQueuedTurnCommand(api, {
+      thread: nextCandidate.thread,
+      queuedTurn,
+      createdAt,
+    })
+      .then(() => {
+        markDispatchAwaitingAck(nextCandidate.thread.id, queuedTurn.id, localDispatchSnapshot);
+      })
+      .catch((err) => {
+        resetDispatch(nextCandidate.thread.id);
         setThreadError(
-          thread.id,
+          nextCandidate.thread.id,
           err instanceof Error ? err.message : "Failed to send queued follow-up.",
         );
-        pauseThreadQueue(thread.id, "thread-error", new Date().toISOString());
-        return false;
-      }
-    };
-
-    void dispatchQueuedTurn()
-      .then((didDispatch) => {
-        if (didDispatch) {
-          removeQueuedTurn(thread.id, queuedTurn.id);
-        }
-      })
-      .finally(() => {
-        if (queuedDispatchInFlightRef.current === thread.id) {
-          queuedDispatchInFlightRef.current = null;
-        }
+        pauseThreadQueue(nextCandidate.thread.id, "thread-error", new Date().toISOString());
       });
   }, [
     activeThreadId,
+    beginDispatch,
     hasHydratedQueuedTurnStore,
+    markDispatchAwaitingAck,
     pauseThreadQueue,
     queuedThreadsByThreadId,
-    removeQueuedTurn,
+    resetDispatch,
     setThreadError,
     threads,
   ]);

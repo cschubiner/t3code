@@ -10,11 +10,12 @@ import { useEffect, useState } from "react";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
+import { LocalDispatchSnapshotSchema, type LocalDispatchSnapshot } from "./localDispatch";
 import type { SessionPhase } from "./types";
 import { createDebouncedStorage, getIsomorphicStorage } from "./lib/storage";
 
 export const QUEUED_TURN_STORE_STORAGE_KEY = "t3code:queued-turn-store:v1";
-const QUEUED_TURN_STORE_STORAGE_VERSION = 1;
+const QUEUED_TURN_STORE_STORAGE_VERSION = 2;
 const QUEUED_TURN_STORE_PERSIST_DEBOUNCE_MS = 300;
 
 const queuedTurnDebouncedStorage = createDebouncedStorage(
@@ -165,26 +166,104 @@ export const QueuedTurnDraft = Schema.Struct({
 });
 export type QueuedTurnDraft = typeof QueuedTurnDraft.Type;
 
-export const ThreadQueuedTurnState = Schema.Struct({
+export type QueuedTurnDispatchStatus = "idle" | "dispatching" | "awaiting-ack";
+export const QueuedTurnDispatchStatusSchema = Schema.Literals([
+  "idle",
+  "dispatching",
+  "awaiting-ack",
+]);
+
+export interface QueuedTurnRuntimeDispatchState {
+  status: QueuedTurnDispatchStatus;
+  queuedTurnId: string | null;
+  localDispatch: LocalDispatchSnapshot | null;
+}
+
+export const PersistedQueuedTurnDispatchStateSchema = Schema.Struct({
+  status: QueuedTurnDispatchStatusSchema,
+  queuedTurnId: Schema.NullOr(Schema.String),
+  localDispatch: Schema.NullOr(LocalDispatchSnapshotSchema),
+});
+export type PersistedQueuedTurnDispatchState = typeof PersistedQueuedTurnDispatchStateSchema.Type;
+
+export const IDLE_QUEUED_TURN_DISPATCH_STATE: QueuedTurnRuntimeDispatchState = {
+  status: "idle",
+  queuedTurnId: null,
+  localDispatch: null,
+};
+
+export const PersistedThreadQueuedTurnStateSchema = Schema.Struct({
+  items: Schema.Array(QueuedTurnDraft),
+  pauseReason: Schema.NullOr(QueuedTurnPauseReason),
+  updatedAt: Schema.NullOr(Schema.String),
+  dispatch: PersistedQueuedTurnDispatchStateSchema,
+});
+export type PersistedThreadQueuedTurnState = typeof PersistedThreadQueuedTurnStateSchema.Type;
+
+const LegacyPersistedThreadQueuedTurnStateSchema = Schema.Struct({
   items: Schema.Array(QueuedTurnDraft),
   pauseReason: Schema.NullOr(QueuedTurnPauseReason),
   updatedAt: Schema.NullOr(Schema.String),
 });
-export type ThreadQueuedTurnState = typeof ThreadQueuedTurnState.Type;
+type LegacyPersistedThreadQueuedTurnState = typeof LegacyPersistedThreadQueuedTurnStateSchema.Type;
 
-export const QueuedTurnStoreStateSchema = Schema.Struct({
-  threadsByThreadId: Schema.Record(ThreadId, ThreadQueuedTurnState),
+export function getQueuedTurnDispatchState(
+  state: Pick<ThreadQueuedTurnState, "dispatch"> | null | undefined,
+): QueuedTurnRuntimeDispatchState {
+  return state?.dispatch ?? IDLE_QUEUED_TURN_DISPATCH_STATE;
+}
+
+export interface ThreadQueuedTurnState extends PersistedThreadQueuedTurnState {
+  dispatch: QueuedTurnRuntimeDispatchState;
+}
+
+export const QueuedTurnStorePersistedStateSchema = Schema.Struct({
+  threadsByThreadId: Schema.Record(ThreadId, PersistedThreadQueuedTurnStateSchema),
 });
-export type QueuedTurnStoreStateShape = typeof QueuedTurnStoreStateSchema.Type;
+
+const LegacyQueuedTurnStorePersistedStateSchema = Schema.Struct({
+  threadsByThreadId: Schema.Record(ThreadId, LegacyPersistedThreadQueuedTurnStateSchema),
+});
+
+export interface QueuedTurnStoreStateShape {
+  threadsByThreadId: Record<ThreadId, ThreadQueuedTurnState>;
+}
 
 export const QueuedTurnStoreStorageSchema = Schema.Struct({
   version: Schema.Number,
-  state: QueuedTurnStoreStateSchema,
+  state: QueuedTurnStorePersistedStateSchema,
+});
+
+export const LegacyQueuedTurnStoreStorageSchema = Schema.Struct({
+  version: Schema.Number,
+  state: LegacyQueuedTurnStorePersistedStateSchema,
 });
 
 const EMPTY_QUEUED_TURN_STORE_STATE: QueuedTurnStoreStateShape = {
   threadsByThreadId: {},
 };
+
+function createThreadQueuedTurnState(
+  input?: Partial<PersistedThreadQueuedTurnState>,
+): ThreadQueuedTurnState {
+  return {
+    items: input?.items ?? [],
+    pauseReason: input?.pauseReason ?? null,
+    updatedAt: input?.updatedAt ?? null,
+    dispatch: input?.dispatch ?? IDLE_QUEUED_TURN_DISPATCH_STATE,
+  };
+}
+
+function migratePersistedThreadQueuedTurnState(
+  state: PersistedThreadQueuedTurnState | LegacyPersistedThreadQueuedTurnState,
+): PersistedThreadQueuedTurnState {
+  return {
+    items: state.items,
+    pauseReason: state.pauseReason,
+    updatedAt: state.updatedAt,
+    dispatch: "dispatch" in state ? state.dispatch : IDLE_QUEUED_TURN_DISPATCH_STATE,
+  };
+}
 
 function cleanupThreadQueueState(
   state: ThreadQueuedTurnState | null,
@@ -192,7 +271,11 @@ function cleanupThreadQueueState(
   if (!state) {
     return null;
   }
-  if (state.items.length === 0 && state.pauseReason === null) {
+  if (
+    state.items.length === 0 &&
+    state.pauseReason === null &&
+    getQueuedTurnDispatchState(state).status === "idle"
+  ) {
     return null;
   }
   return state;
@@ -232,11 +315,28 @@ function clampMoveIndex(length: number, index: number): number {
 export interface QueuedTurnStore extends QueuedTurnStoreStateShape {
   getThreadQueue: (threadId: ThreadId) => ThreadQueuedTurnState | null;
   getQueuedTurns: (threadId: ThreadId) => readonly QueuedTurnDraft[];
+  getDispatchState: (threadId: ThreadId) => QueuedTurnRuntimeDispatchState;
   enqueueTurn: (threadId: ThreadId, turn: QueuedTurnDraft) => void;
   replaceQueuedTurn: (threadId: ThreadId, turnId: string, nextTurn: QueuedTurnDraft) => void;
   removeQueuedTurn: (threadId: ThreadId, turnId: string) => void;
   moveQueuedTurn: (threadId: ThreadId, turnId: string, nextIndex: number) => void;
   dequeueNextTurn: (threadId: ThreadId) => QueuedTurnDraft | null;
+  beginDispatch: (
+    threadId: ThreadId,
+    queuedTurnId: string,
+    localDispatch: LocalDispatchSnapshot,
+  ) => void;
+  markDispatchAwaitingAck: (
+    threadId: ThreadId,
+    queuedTurnId: string,
+    localDispatch: LocalDispatchSnapshot,
+  ) => void;
+  acknowledgeDispatch: (
+    threadId: ThreadId,
+    queuedTurnId: string,
+    updatedAt?: string | null,
+  ) => void;
+  resetDispatch: (threadId: ThreadId) => void;
   pauseThreadQueue: (
     threadId: ThreadId,
     reason: QueuedTurnPauseReason,
@@ -255,12 +355,15 @@ export const useQueuedTurnStore = create<QueuedTurnStore>()(
 
       getQueuedTurns: (threadId) => get().threadsByThreadId[threadId]?.items ?? [],
 
+      getDispatchState: (threadId) => getQueuedTurnDispatchState(get().threadsByThreadId[threadId]),
+
       enqueueTurn: (threadId, turn) => {
         set((state) =>
           withThreadQueueState(state, threadId, (current) => ({
             items: [...(current?.items ?? []), turn],
             pauseReason: current?.pauseReason ?? null,
             updatedAt: turn.updatedAt,
+            dispatch: getQueuedTurnDispatchState(current),
           })),
         );
       },
@@ -356,12 +459,74 @@ export const useQueuedTurnStore = create<QueuedTurnStore>()(
         return nextTurn;
       },
 
+      beginDispatch: (threadId, queuedTurnId, localDispatch) => {
+        set((state) =>
+          withThreadQueueState(state, threadId, (current) => ({
+            ...(current ?? createThreadQueuedTurnState()),
+            dispatch: {
+              status: "dispatching",
+              queuedTurnId,
+              localDispatch,
+            },
+          })),
+        );
+      },
+
+      markDispatchAwaitingAck: (threadId, queuedTurnId, localDispatch) => {
+        set((state) =>
+          withThreadQueueState(state, threadId, (current) => {
+            if (!current) {
+              return null;
+            }
+            return {
+              ...current,
+              dispatch: {
+                status: "awaiting-ack",
+                queuedTurnId,
+                localDispatch,
+              },
+            };
+          }),
+        );
+      },
+
+      acknowledgeDispatch: (threadId, queuedTurnId, updatedAt = null) => {
+        set((state) =>
+          withThreadQueueState(state, threadId, (current) => {
+            if (!current) {
+              return null;
+            }
+            return {
+              ...current,
+              items: current.items.filter((item) => item.id !== queuedTurnId),
+              updatedAt,
+              dispatch: IDLE_QUEUED_TURN_DISPATCH_STATE,
+            };
+          }),
+        );
+      },
+
+      resetDispatch: (threadId) => {
+        set((state) =>
+          withThreadQueueState(state, threadId, (current) => {
+            if (!current) {
+              return null;
+            }
+            return {
+              ...current,
+              dispatch: IDLE_QUEUED_TURN_DISPATCH_STATE,
+            };
+          }),
+        );
+      },
+
       pauseThreadQueue: (threadId, reason, updatedAt = null) => {
         set((state) =>
           withThreadQueueState(state, threadId, (current) => ({
             items: current?.items ?? [],
             pauseReason: reason,
             updatedAt,
+            dispatch: getQueuedTurnDispatchState(current),
           })),
         );
       },
@@ -390,16 +555,72 @@ export const useQueuedTurnStore = create<QueuedTurnStore>()(
       version: QUEUED_TURN_STORE_STORAGE_VERSION,
       storage: createJSONStorage(() => queuedTurnDebouncedStorage),
       partialize: (state) => ({
-        threadsByThreadId: state.threadsByThreadId,
+        threadsByThreadId: Object.fromEntries(
+          Object.entries(state.threadsByThreadId).map(([threadId, threadState]) => [
+            threadId,
+            {
+              items: threadState.items,
+              pauseReason: threadState.pauseReason,
+              updatedAt: threadState.updatedAt,
+              dispatch: threadState.dispatch,
+            } satisfies PersistedThreadQueuedTurnState,
+          ]),
+        ) as Record<ThreadId, PersistedThreadQueuedTurnState>,
       }),
+      migrate: (persistedState, version) => {
+        const nextState =
+          typeof persistedState === "object" && persistedState !== null
+            ? (persistedState as Partial<
+                | QueuedTurnStoreStateShape
+                | { threadsByThreadId: Record<ThreadId, LegacyPersistedThreadQueuedTurnState> }
+              >)
+            : null;
+
+        if (!nextState?.threadsByThreadId) {
+          return EMPTY_QUEUED_TURN_STORE_STATE;
+        }
+
+        if (version >= 2) {
+          return {
+            threadsByThreadId: Object.fromEntries(
+              Object.entries(nextState.threadsByThreadId).map(([threadId, threadState]) => [
+                threadId,
+                migratePersistedThreadQueuedTurnState(
+                  threadState as PersistedThreadQueuedTurnState,
+                ),
+              ]),
+            ) as Record<ThreadId, PersistedThreadQueuedTurnState>,
+          };
+        }
+
+        return {
+          threadsByThreadId: Object.fromEntries(
+            Object.entries(nextState.threadsByThreadId).map(([threadId, threadState]) => [
+              threadId,
+              migratePersistedThreadQueuedTurnState(
+                threadState as LegacyPersistedThreadQueuedTurnState,
+              ),
+            ]),
+          ) as Record<ThreadId, PersistedThreadQueuedTurnState>,
+        };
+      },
       merge: (persistedState, currentState) => {
         const nextState =
           typeof persistedState === "object" && persistedState !== null
-            ? (persistedState as Partial<QueuedTurnStoreStateShape>)
+            ? (persistedState as Partial<{
+                threadsByThreadId: Record<ThreadId, PersistedThreadQueuedTurnState>;
+              }>)
             : null;
         return {
           ...currentState,
-          threadsByThreadId: nextState?.threadsByThreadId ?? currentState.threadsByThreadId,
+          threadsByThreadId: nextState?.threadsByThreadId
+            ? (Object.fromEntries(
+                Object.entries(nextState.threadsByThreadId).map(([threadId, threadState]) => [
+                  threadId,
+                  createThreadQueuedTurnState(threadState),
+                ]),
+              ) as Record<ThreadId, ThreadQueuedTurnState>)
+            : currentState.threadsByThreadId,
         };
       },
     },

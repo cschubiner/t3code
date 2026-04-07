@@ -10,6 +10,8 @@ import {
   deriveQueuedTurnAutoPauseReason,
   deriveQueuedTurnDispatchGate,
   flushQueuedTurnStoreStorage,
+  IDLE_QUEUED_TURN_DISPATCH_STATE,
+  LegacyQueuedTurnStoreStorageSchema,
   type QueuedTurnDraft,
   QUEUED_TURN_STORE_STORAGE_KEY,
   QueuedTurnStoreStorageSchema,
@@ -40,6 +42,17 @@ function resetQueuedTurnStore() {
   useQueuedTurnStore.persist.clearStorage();
   removeLocalStorageItem(QUEUED_TURN_STORE_STORAGE_KEY);
 }
+
+const LOCAL_DISPATCH_SNAPSHOT = {
+  startedAt: "2026-04-06T23:00:00.000Z",
+  preparingWorktree: false,
+  latestTurnTurnId: null,
+  latestTurnRequestedAt: null,
+  latestTurnStartedAt: null,
+  latestTurnCompletedAt: null,
+  sessionActiveTurnId: null,
+  sessionOrchestrationStatus: "ready" as const,
+};
 
 describe("deriveQueuedTurnDispatchGate", () => {
   it("allows dispatch from a disconnected thread when nothing else is blocking", () => {
@@ -287,6 +300,56 @@ describe("queuedTurnStore", () => {
     expect(useQueuedTurnStore.getState().getThreadQueue(threadId)).toBeNull();
   });
 
+  it("tracks queued turn dispatch lifecycle until acknowledgement removes the head item", () => {
+    const store = useQueuedTurnStore.getState();
+    store.enqueueTurn(threadId, makeQueuedTurn({ id: "turn-a", text: "first" }));
+    store.enqueueTurn(threadId, makeQueuedTurn({ id: "turn-b", text: "second" }));
+
+    store.beginDispatch(threadId, "turn-a", LOCAL_DISPATCH_SNAPSHOT);
+    expect(useQueuedTurnStore.getState().getDispatchState(threadId)).toEqual({
+      status: "dispatching",
+      queuedTurnId: "turn-a",
+      localDispatch: LOCAL_DISPATCH_SNAPSHOT,
+    });
+    expect(
+      useQueuedTurnStore
+        .getState()
+        .getQueuedTurns(threadId)
+        .map((turn) => turn.id),
+    ).toEqual(["turn-a", "turn-b"]);
+
+    store.markDispatchAwaitingAck(threadId, "turn-a", LOCAL_DISPATCH_SNAPSHOT);
+    expect(useQueuedTurnStore.getState().getDispatchState(threadId)).toEqual({
+      status: "awaiting-ack",
+      queuedTurnId: "turn-a",
+      localDispatch: LOCAL_DISPATCH_SNAPSHOT,
+    });
+
+    store.acknowledgeDispatch(threadId, "turn-a", "2026-04-06T23:00:05.000Z");
+    expect(
+      useQueuedTurnStore
+        .getState()
+        .getQueuedTurns(threadId)
+        .map((turn) => turn.id),
+    ).toEqual(["turn-b"]);
+    expect(useQueuedTurnStore.getState().getDispatchState(threadId)).toEqual(
+      IDLE_QUEUED_TURN_DISPATCH_STATE,
+    );
+  });
+
+  it("can reset a failed dispatch without dropping queued turns", () => {
+    const store = useQueuedTurnStore.getState();
+    store.enqueueTurn(threadId, makeQueuedTurn({ id: "turn-a", text: "first" }));
+
+    store.beginDispatch(threadId, "turn-a", LOCAL_DISPATCH_SNAPSHOT);
+    store.resetDispatch(threadId);
+
+    expect(useQueuedTurnStore.getState().getQueuedTurns(threadId)[0]?.id).toBe("turn-a");
+    expect(useQueuedTurnStore.getState().getDispatchState(threadId)).toEqual(
+      IDLE_QUEUED_TURN_DISPATCH_STATE,
+    );
+  });
+
   it("persists queued turns and pause state to local storage", async () => {
     const store = useQueuedTurnStore.getState();
     store.enqueueTurn(threadId, makeQueuedTurn({ id: "turn-a", text: "first" }));
@@ -307,17 +370,42 @@ describe("queuedTurnStore", () => {
     ]);
   });
 
+  it("persists queued dispatch state to local storage", async () => {
+    const store = useQueuedTurnStore.getState();
+    store.enqueueTurn(threadId, makeQueuedTurn({ id: "turn-a", text: "first" }));
+    store.beginDispatch(threadId, "turn-a", LOCAL_DISPATCH_SNAPSHOT);
+    store.markDispatchAwaitingAck(threadId, "turn-a", LOCAL_DISPATCH_SNAPSHOT);
+    flushQueuedTurnStoreStorage();
+
+    const persisted = getLocalStorageItem(
+      QUEUED_TURN_STORE_STORAGE_KEY,
+      QueuedTurnStoreStorageSchema,
+    );
+
+    expect(persisted?.version).toBe(2);
+    expect(persisted?.state.threadsByThreadId[threadId]?.dispatch).toEqual({
+      status: "awaiting-ack",
+      queuedTurnId: "turn-a",
+      localDispatch: LOCAL_DISPATCH_SNAPSHOT,
+    });
+  });
+
   it("rehydrates queued turns from persisted storage", async () => {
     setLocalStorageItem(
       QUEUED_TURN_STORE_STORAGE_KEY,
       {
-        version: 1,
+        version: 2,
         state: {
           threadsByThreadId: {
             [threadId]: {
               items: [makeQueuedTurn({ id: "turn-a", text: "first" })],
               pauseReason: "thread-error",
               updatedAt: "2026-04-02T17:03:00.000Z",
+              dispatch: {
+                status: "awaiting-ack",
+                queuedTurnId: "turn-a",
+                localDispatch: LOCAL_DISPATCH_SNAPSHOT,
+              },
             },
           },
         },
@@ -333,5 +421,37 @@ describe("queuedTurnStore", () => {
       updatedAt: "2026-04-02T17:03:00.000Z",
     });
     expect(useQueuedTurnStore.getState().getQueuedTurns(threadId)[0]?.text).toBe("first");
+    expect(useQueuedTurnStore.getState().getDispatchState(threadId)).toEqual({
+      status: "awaiting-ack",
+      queuedTurnId: "turn-a",
+      localDispatch: LOCAL_DISPATCH_SNAPSHOT,
+    });
+  });
+
+  it("migrates legacy persisted storage without dispatch state", async () => {
+    setLocalStorageItem(
+      QUEUED_TURN_STORE_STORAGE_KEY,
+      {
+        version: 1,
+        state: {
+          threadsByThreadId: {
+            [threadId]: {
+              items: [makeQueuedTurn({ id: "turn-a", text: "first" })],
+              pauseReason: null,
+              updatedAt: "2026-04-02T17:04:00.000Z",
+            },
+          },
+        },
+      },
+      LegacyQueuedTurnStoreStorageSchema,
+    );
+
+    useQueuedTurnStore.setState({ threadsByThreadId: {} });
+    await useQueuedTurnStore.persist.rehydrate();
+
+    expect(useQueuedTurnStore.getState().getQueuedTurns(threadId)[0]?.id).toBe("turn-a");
+    expect(useQueuedTurnStore.getState().getDispatchState(threadId)).toEqual(
+      IDLE_QUEUED_TURN_DISPATCH_STATE,
+    );
   });
 });
