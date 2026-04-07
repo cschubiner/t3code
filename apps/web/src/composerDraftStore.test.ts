@@ -625,6 +625,37 @@ describe("composerDraftStore project draft thread mapping", () => {
     });
   });
 
+  it("does not let an older draft reclaim the project mapping when its context arrives later", () => {
+    const store = useComposerDraftStore.getState();
+    const otherThreadId = ThreadId.makeUnsafe("thread-other");
+
+    store.setProjectDraftThreadId(projectId, threadId, {
+      branch: "main",
+      worktreePath: null,
+      envMode: "worktree",
+    });
+    store.setProjectDraftThreadId(projectId, otherThreadId, {
+      branch: "main",
+      worktreePath: null,
+      envMode: "worktree",
+    });
+
+    store.setDraftThreadContext(threadId, {
+      branch: "feature/late-worktree",
+      worktreePath: "/tmp/feature-late-worktree",
+    });
+
+    expect(useComposerDraftStore.getState().getDraftThreadByProjectId(projectId)?.threadId).toBe(
+      otherThreadId,
+    );
+    expect(useComposerDraftStore.getState().getDraftThread(threadId)).toMatchObject({
+      projectId,
+      branch: "feature/late-worktree",
+      worktreePath: "/tmp/feature-late-worktree",
+      envMode: "worktree",
+    });
+  });
+
   it("preserves existing branch and worktree when setProjectDraftThreadId receives undefined", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectId, threadId, {

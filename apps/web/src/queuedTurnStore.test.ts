@@ -44,6 +44,7 @@ function resetQueuedTurnStore() {
 }
 
 const LOCAL_DISPATCH_SNAPSHOT = {
+  threadId: ThreadId.makeUnsafe("thread-queue"),
   startedAt: "2026-04-06T23:00:00.000Z",
   preparingWorktree: false,
   latestTurnTurnId: null,

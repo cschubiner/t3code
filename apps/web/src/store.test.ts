@@ -234,6 +234,78 @@ describe("store read model sync", () => {
     expect(next.threads[0]?.updatedAt).toBe("2026-02-27T00:05:00.000Z");
   });
 
+  it("hides empty managed worktree duplicates when a canonical project with the same title exists", () => {
+    const initialState = makeState(makeThread());
+    const canonicalProjectId = ProjectId.makeUnsafe("project-root");
+    const staleWorktreeProjectId = ProjectId.makeUnsafe("project-stale-worktree");
+    const readModel: OrchestrationReadModel = {
+      snapshotSequence: 1,
+      updatedAt: "2026-02-27T00:00:00.000Z",
+      projects: [
+        makeReadModelProject({
+          id: canonicalProjectId,
+          title: "t3code",
+          workspaceRoot: "/Users/canal/t3code",
+        }),
+        makeReadModelProject({
+          id: staleWorktreeProjectId,
+          title: "t3code",
+          workspaceRoot: "/Users/canal/.codex/worktrees/f606/t3code",
+        }),
+      ],
+      threads: [
+        makeReadModelThread({
+          id: ThreadId.makeUnsafe("thread-root"),
+          projectId: canonicalProjectId,
+        }),
+      ],
+    };
+
+    const next = syncServerReadModel(initialState, readModel);
+
+    expect(next.projects.map((project) => project.id)).toEqual([canonicalProjectId]);
+  });
+
+  it("keeps managed worktree projects when they still own threads", () => {
+    const initialState = makeState(makeThread());
+    const canonicalProjectId = ProjectId.makeUnsafe("project-root");
+    const worktreeProjectId = ProjectId.makeUnsafe("project-worktree");
+    const readModel: OrchestrationReadModel = {
+      snapshotSequence: 1,
+      updatedAt: "2026-02-27T00:00:00.000Z",
+      projects: [
+        makeReadModelProject({
+          id: canonicalProjectId,
+          title: "t3code",
+          workspaceRoot: "/Users/canal/t3code",
+        }),
+        makeReadModelProject({
+          id: worktreeProjectId,
+          title: "t3code",
+          workspaceRoot: "/Users/canal/.t3/worktrees/t3code/feature-branch",
+        }),
+      ],
+      threads: [
+        makeReadModelThread({
+          id: ThreadId.makeUnsafe("thread-root"),
+          projectId: canonicalProjectId,
+        }),
+        makeReadModelThread({
+          id: ThreadId.makeUnsafe("thread-worktree"),
+          projectId: worktreeProjectId,
+          worktreePath: "/Users/canal/.t3/worktrees/t3code/feature-branch",
+        }),
+      ],
+    };
+
+    const next = syncServerReadModel(initialState, readModel);
+
+    expect(next.projects.map((project) => project.id)).toEqual([
+      canonicalProjectId,
+      worktreeProjectId,
+    ]);
+  });
+
   it("marks a running latest turn errored when the session flips to error", () => {
     const initialState = makeState(
       makeThread({

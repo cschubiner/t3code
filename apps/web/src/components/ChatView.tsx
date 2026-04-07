@@ -407,12 +407,13 @@ function useLocalDispatchState(input: {
   threadError: string | null | undefined;
 }) {
   const [localDispatch, setLocalDispatch] = useState<LocalDispatchSnapshot | null>(null);
+  const activeThreadId = input.activeThread?.id ?? null;
 
   const beginLocalDispatch = useCallback(
     (options?: { preparingWorktree?: boolean }) => {
       const preparingWorktree = Boolean(options?.preparingWorktree);
       setLocalDispatch((current) => {
-        if (current) {
+        if (current && current.threadId === activeThreadId) {
           return current.preparingWorktree === preparingWorktree
             ? current
             : { ...current, preparingWorktree };
@@ -420,15 +421,19 @@ function useLocalDispatchState(input: {
         return createLocalDispatchSnapshot(input.activeThread, options);
       });
     },
-    [input.activeThread],
+    [activeThreadId, input.activeThread],
   );
 
   const resetLocalDispatch = useCallback(() => {
     setLocalDispatch(null);
   }, []);
 
+  const localDispatchMatchesActiveThread =
+    localDispatch !== null && localDispatch.threadId === activeThreadId;
+
   const serverAcknowledgedLocalDispatch = useMemo(
     () =>
+      localDispatchMatchesActiveThread &&
       hasServerAcknowledgedLocalDispatch({
         localDispatch,
         phase: input.phase,
@@ -446,6 +451,7 @@ function useLocalDispatchState(input: {
       input.phase,
       input.threadError,
       localDispatch,
+      localDispatchMatchesActiveThread,
     ],
   );
 
@@ -460,8 +466,11 @@ function useLocalDispatchState(input: {
     beginLocalDispatch,
     resetLocalDispatch,
     localDispatchStartedAt: localDispatch?.startedAt ?? null,
-    isPreparingWorktree: localDispatch?.preparingWorktree ?? false,
-    isSendBusy: localDispatch !== null && !serverAcknowledgedLocalDispatch,
+    isPreparingWorktree: localDispatchMatchesActiveThread && localDispatch?.preparingWorktree,
+    isSendBusy:
+      localDispatchMatchesActiveThread &&
+      localDispatch !== null &&
+      !serverAcknowledgedLocalDispatch,
   };
 }
 
@@ -663,7 +672,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const activeComposerMenuItemRef = useRef<ComposerCommandItem | null>(null);
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewHandoffTimeoutByMessageIdRef = useRef<Record<string, number>>({});
-  const sendInFlightRef = useRef(false);
+  const sendInFlightRef = useRef<ThreadId | null>(null);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
   const pendingThreadSearchRestoreRef = useRef<{
@@ -3242,7 +3251,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }));
       const localDispatchSnapshot = createLocalDispatchSnapshot(activeThread);
 
-      sendInFlightRef.current = true;
+      sendInFlightRef.current = activeThread.id;
       beginQueuedTurnDispatch(activeThread.id, queuedTurn.id, localDispatchSnapshot);
       setThreadError(activeThread.id, null);
       setOptimisticUserMessages((existing) => [
@@ -3280,7 +3289,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
         resetQueuedTurnDispatch(activeThread.id);
         return false;
       } finally {
-        sendInFlightRef.current = false;
+        if (sendInFlightRef.current === activeThread.id) {
+          sendInFlightRef.current = null;
+        }
       }
     },
     [
@@ -3469,7 +3480,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       });
       return;
     }
-    if (isSendBusy || isConnecting || sendInFlightRef.current) return;
+    if (isSendBusy || isConnecting || sendInFlightRef.current === activeThread.id) return;
     if (!canSubmitComposerTurn) {
       if (isComposerSendBlockedByMissingBaseBranch) {
         setStoreThreadError(
@@ -3482,7 +3493,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     const threadIdForSend = activeThread.id;
     const baseBranchForWorktree = requiresBaseBranchForComposerSend ? activeThread.branch : null;
 
-    sendInFlightRef.current = true;
+    sendInFlightRef.current = threadIdForSend;
     beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
 
     const composerImagesSnapshot = [...composerImages];
@@ -3555,31 +3566,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     let nextThreadBranch = activeThread.branch;
     let nextThreadWorktreePath = activeThread.worktreePath;
     await (async () => {
-      // On first message: lock in branch + create worktree if needed.
-      if (baseBranchForWorktree) {
-        beginLocalDispatch({ preparingWorktree: true });
-        const newBranch = buildTemporaryWorktreeBranchName();
-        const result = await createWorktreeMutation.mutateAsync({
-          cwd: activeProject.cwd,
-          branch: baseBranchForWorktree,
-          newBranch,
-        });
-        nextThreadBranch = result.worktree.branch;
-        nextThreadWorktreePath = result.worktree.path;
-        if (isServerThread) {
-          await api.orchestration.dispatchCommand({
-            type: "thread.meta.update",
-            commandId: newCommandId(),
-            threadId: threadIdForSend,
-            branch: result.worktree.branch,
-            worktreePath: result.worktree.path,
-          });
-          // Keep local thread state in sync immediately so terminal drawer opens
-          // with the worktree cwd/env instead of briefly using the project root.
-          setStoreThreadBranch(threadIdForSend, result.worktree.branch, result.worktree.path);
-        }
-      }
-
       let firstComposerImageName: string | null = null;
       if (composerImagesSnapshot.length > 0) {
         const firstComposerImage = composerImagesSnapshot[0];
@@ -3622,6 +3608,32 @@ export default function ChatView({ threadId }: ChatViewProps) {
           createdAt: activeThread.createdAt,
         });
         createdServerThreadForLocalDraft = true;
+      }
+
+      // On first message in worktree mode, persist the thread immediately and
+      // attach worktree metadata once preparation finishes.
+      if (baseBranchForWorktree) {
+        beginLocalDispatch({ preparingWorktree: true });
+        const newBranch = buildTemporaryWorktreeBranchName();
+        const result = await createWorktreeMutation.mutateAsync({
+          cwd: activeProject.cwd,
+          branch: baseBranchForWorktree,
+          newBranch,
+        });
+        nextThreadBranch = result.worktree.branch;
+        nextThreadWorktreePath = result.worktree.path;
+        if (isServerThread || createdServerThreadForLocalDraft) {
+          await api.orchestration.dispatchCommand({
+            type: "thread.meta.update",
+            commandId: newCommandId(),
+            threadId: threadIdForSend,
+            branch: result.worktree.branch,
+            worktreePath: result.worktree.path,
+          });
+          // Keep local thread state in sync immediately so terminal drawer opens
+          // with the worktree cwd/env instead of briefly using the project root.
+          setStoreThreadBranch(threadIdForSend, result.worktree.branch, result.worktree.path);
+        }
       }
 
       let setupScript: ProjectScript | null = null;
@@ -3724,7 +3736,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
         err instanceof Error ? err.message : "Failed to send message.",
       );
     });
-    sendInFlightRef.current = false;
+    if (sendInFlightRef.current === threadIdForSend) {
+      sendInFlightRef.current = null;
+    }
     if (!turnStartSucceeded) {
       resetLocalDispatch();
     }
@@ -3903,7 +3917,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         !isServerThread ||
         isSendBusy ||
         isConnecting ||
-        sendInFlightRef.current
+        sendInFlightRef.current === activeThread.id
       ) {
         return;
       }
@@ -3924,7 +3938,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         text: trimmed,
       });
 
-      sendInFlightRef.current = true;
+      sendInFlightRef.current = threadIdForSend;
       beginLocalDispatch({ preparingWorktree: false });
       setThreadError(threadIdForSend, null);
       setOptimisticUserMessages((existing) => [
@@ -3984,7 +3998,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
           planSidebarDismissedForTurnRef.current = null;
           setPlanSidebarOpen(true);
         }
-        sendInFlightRef.current = false;
+        if (sendInFlightRef.current === threadIdForSend) {
+          sendInFlightRef.current = null;
+        }
       } catch (err) {
         setOptimisticUserMessages((existing) =>
           existing.filter((message) => message.id !== messageIdForSend),
@@ -3993,7 +4009,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
           threadIdForSend,
           err instanceof Error ? err.message : "Failed to send plan follow-up.",
         );
-        sendInFlightRef.current = false;
+        if (sendInFlightRef.current === threadIdForSend) {
+          sendInFlightRef.current = null;
+        }
         resetLocalDispatch();
       }
     },
@@ -4028,7 +4046,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       !isServerThread ||
       isSendBusy ||
       isConnecting ||
-      sendInFlightRef.current
+      sendInFlightRef.current === activeThread.id
     ) {
       return;
     }
@@ -4047,10 +4065,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
     const nextThreadTitle = truncate(buildPlanImplementationThreadTitle(planMarkdown));
     const nextThreadModelSelection: ModelSelection = selectedModelSelection;
 
-    sendInFlightRef.current = true;
+    sendInFlightRef.current = activeThread.id;
     beginLocalDispatch({ preparingWorktree: false });
     const finish = () => {
-      sendInFlightRef.current = false;
+      if (sendInFlightRef.current === activeThread.id) {
+        sendInFlightRef.current = null;
+      }
       resetLocalDispatch();
     };
 
