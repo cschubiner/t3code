@@ -1,9 +1,10 @@
-import { OrchestrationSessionStatus, TurnId } from "@t3tools/contracts";
+import { OrchestrationSessionStatus, ThreadId, TurnId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import type { SessionPhase, Thread, ThreadSession } from "./types";
 
 export interface LocalDispatchSnapshot {
+  threadId: ThreadId | null;
   startedAt: string;
   preparingWorktree: boolean;
   latestTurnTurnId: TurnId | null;
@@ -15,6 +16,7 @@ export interface LocalDispatchSnapshot {
 }
 
 export const LocalDispatchSnapshotSchema = Schema.Struct({
+  threadId: Schema.NullOr(ThreadId),
   startedAt: Schema.String,
   preparingWorktree: Schema.Boolean,
   latestTurnTurnId: Schema.NullOr(TurnId),
@@ -33,6 +35,7 @@ export function createLocalDispatchSnapshot(
   const session = thread?.session ?? null;
 
   return {
+    threadId: thread?.id ?? null,
     startedAt: new Date().toISOString(),
     preparingWorktree: Boolean(options?.preparingWorktree),
     latestTurnTurnId: latestTurn?.turnId ?? null,

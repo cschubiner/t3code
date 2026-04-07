@@ -1407,8 +1407,14 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           }
           const nextProjectDraftThreadIdByProjectId: Record<ProjectId, ThreadId> = {
             ...state.projectDraftThreadIdByProjectId,
-            [nextProjectId]: threadId,
           };
+          const currentProjectDraftThreadId = nextProjectDraftThreadIdByProjectId[nextProjectId];
+          if (
+            currentProjectDraftThreadId === undefined ||
+            currentProjectDraftThreadId === threadId
+          ) {
+            nextProjectDraftThreadIdByProjectId[nextProjectId] = threadId;
+          }
           if (existing.projectId !== nextProjectId) {
             if (nextProjectDraftThreadIdByProjectId[existing.projectId] === threadId) {
               delete nextProjectDraftThreadIdByProjectId[existing.projectId];

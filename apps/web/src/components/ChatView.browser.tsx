@@ -4252,6 +4252,249 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("materializes rapid worktree drafts before worktree creation resolves", async () => {
+    setDraftWorktreeThread();
+    let worktreeIndex = 0;
+    const worktreeResolvers: Array<() => void> = [];
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      resolveRpc: (request) => {
+        if (request._tag === WS_METHODS.gitCreateWorktree) {
+          worktreeIndex += 1;
+          const currentIndex = worktreeIndex;
+          return new Promise<{ worktree: { branch: string; path: string } }>((resolve) => {
+            worktreeResolvers.push(() =>
+              resolve({
+                worktree: {
+                  branch: `t3code/pending-draft-${currentIndex}`,
+                  path: `/repo/worktrees/pending-draft-${currentIndex}`,
+                },
+              }),
+            );
+          });
+        }
+        if (request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: wsRequests.filter(
+              (entry) => entry._tag === ORCHESTRATION_WS_METHODS.dispatchCommand,
+            ).length,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "First pending worktree draft");
+      await waitForLayout();
+
+      const firstSendButton = await waitForSendButton();
+      expect(firstSendButton.disabled).toBe(false);
+      firstSendButton.click();
+
+      await vi.waitFor(
+        () => {
+          const createRequests = listDispatchCommandsByType("thread.create") as Array<{
+            threadId?: string;
+          }>;
+          expect(createRequests).toHaveLength(1);
+          expect(createRequests[0]?.threadId).toBe(THREAD_ID);
+          expect(listDispatchCommandsByType("thread.turn.start")).toHaveLength(0);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const newThreadButton = page.getByTestId("new-thread-button");
+      await expect.element(newThreadButton).toBeInTheDocument();
+      await newThreadButton.click();
+
+      const secondThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "New-thread should create a second draft while the first worktree is still pending.",
+      );
+      const secondThreadId = secondThreadPath.slice(1) as ThreadId;
+      expect(secondThreadId).not.toBe(THREAD_ID);
+
+      useComposerDraftStore.getState().setPrompt(secondThreadId, "Second pending worktree draft");
+      await waitForLayout();
+
+      const secondSendButton = await waitForSendButton();
+      expect(secondSendButton.disabled).toBe(false);
+      secondSendButton.click();
+
+      await vi.waitFor(
+        () => {
+          const createRequests = listDispatchCommandsByType("thread.create") as Array<{
+            threadId?: string;
+          }>;
+          expect(createRequests).toHaveLength(2);
+          expect(createRequests.map((request) => request.threadId)).toEqual([
+            THREAD_ID,
+            secondThreadId,
+          ]);
+          expect(listDispatchCommandsByType("thread.turn.start")).toHaveLength(0);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      for (const resolveWorktree of worktreeResolvers) {
+        resolveWorktree();
+      }
+
+      await vi.waitFor(
+        () => {
+          const turnStartRequests = listDispatchCommandsByType("thread.turn.start") as Array<{
+            message?: { text?: string };
+          }>;
+          expect(turnStartRequests).toHaveLength(2);
+          expect(
+            turnStartRequests
+              .map((request) => request.message?.text)
+              .toSorted((left, right) => (left ?? "").localeCompare(right ?? "")),
+          ).toEqual(["First pending worktree draft", "Second pending worktree draft"]);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("materializes rapid worktree drafts from the global chat.new shortcut before worktree creation resolves", async () => {
+    setDraftWorktreeThread();
+    let worktreeIndex = 0;
+    const worktreeResolvers: Array<() => void> = [];
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "chat.new",
+              shortcut: {
+                key: "o",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: true,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+      resolveRpc: (request) => {
+        if (request._tag === WS_METHODS.gitCreateWorktree) {
+          worktreeIndex += 1;
+          const currentIndex = worktreeIndex;
+          return new Promise<{ worktree: { branch: string; path: string } }>((resolve) => {
+            worktreeResolvers.push(() =>
+              resolve({
+                worktree: {
+                  branch: `t3code/shortcut-draft-${currentIndex}`,
+                  path: `/repo/worktrees/shortcut-draft-${currentIndex}`,
+                },
+              }),
+            );
+          });
+        }
+        if (request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: wsRequests.filter(
+              (entry) => entry._tag === ORCHESTRATION_WS_METHODS.dispatchCommand,
+            ).length,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      await waitForNewThreadShortcutLabel();
+      await waitForServerConfigToApply();
+
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "First pending shortcut draft");
+      await waitForLayout();
+
+      const firstSendButton = await waitForSendButton();
+      expect(firstSendButton.disabled).toBe(false);
+      firstSendButton.click();
+
+      await vi.waitFor(
+        () => {
+          const createRequests = listDispatchCommandsByType("thread.create") as Array<{
+            threadId?: string;
+          }>;
+          expect(createRequests).toHaveLength(1);
+          expect(createRequests[0]?.threadId).toBe(THREAD_ID);
+          expect(listDispatchCommandsByType("thread.turn.start")).toHaveLength(0);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const secondThreadPath = await triggerChatNewShortcutUntilPath(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path) && path !== `/${THREAD_ID}`,
+        "Shortcut should create a second draft while the first worktree is still pending.",
+      );
+      const secondThreadId = secondThreadPath.slice(1) as ThreadId;
+      expect(secondThreadId).not.toBe(THREAD_ID);
+
+      useComposerDraftStore.getState().setPrompt(secondThreadId, "Second pending shortcut draft");
+      await waitForLayout();
+
+      const secondSendButton = await waitForSendButton();
+      expect(secondSendButton.disabled).toBe(false);
+      secondSendButton.click();
+
+      await vi.waitFor(
+        () => {
+          const createRequests = listDispatchCommandsByType("thread.create") as Array<{
+            threadId?: string;
+          }>;
+          expect(createRequests).toHaveLength(2);
+          expect(createRequests.map((request) => request.threadId)).toEqual([
+            THREAD_ID,
+            secondThreadId,
+          ]);
+          expect(listDispatchCommandsByType("thread.turn.start")).toHaveLength(0);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      for (const resolveWorktree of worktreeResolvers) {
+        resolveWorktree();
+      }
+
+      await vi.waitFor(
+        () => {
+          const turnStartRequests = listDispatchCommandsByType("thread.turn.start") as Array<{
+            message?: { text?: string };
+          }>;
+          expect(turnStartRequests).toHaveLength(2);
+          expect(
+            turnStartRequests
+              .map((request) => request.message?.text)
+              .toSorted((left, right) => (left ?? "").localeCompare(right ?? "")),
+          ).toEqual(["First pending shortcut draft", "Second pending shortcut draft"]);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("creates and sends from a fresh draft while an earlier worktree draft is still preparing", async () => {
     setDraftWorktreeThread();
     let worktreeIndex = 0;
@@ -4323,6 +4566,81 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps the latest draft selected when an earlier worktree draft is promoted", async () => {
+    setDraftWorktreeThread();
+    let worktreeIndex = 0;
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      resolveRpc: (request) => {
+        if (request._tag === WS_METHODS.gitCreateWorktree) {
+          worktreeIndex += 1;
+          return {
+            worktree: {
+              branch: `t3code/promotion-draft-${worktreeIndex}`,
+              path: `/repo/worktrees/promotion-draft-${worktreeIndex}`,
+            },
+          };
+        }
+        if (request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: listDispatchCommandsByType("thread.turn.start").length + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "First promotion draft");
+      await waitForLayout();
+
+      const firstSendButton = await waitForSendButton();
+      expect(firstSendButton.disabled).toBe(false);
+      firstSendButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(listDispatchCommandsByType("thread.turn.start")).toHaveLength(1);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const newThreadButton = page.getByTestId("new-thread-button");
+      await expect.element(newThreadButton).toBeInTheDocument();
+      await newThreadButton.click();
+
+      const secondThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "New-thread should create a fresh draft while the first draft is still in flight.",
+      );
+      const secondThreadId = secondThreadPath.slice(1) as ThreadId;
+      expect(secondThreadId).not.toBe(THREAD_ID);
+
+      const promotedSnapshot = addThreadToSnapshot(fixture.snapshot, THREAD_ID);
+      fixture.snapshot = promotedSnapshot;
+      useStore.getState().syncServerReadModel(promotedSnapshot);
+      useComposerDraftStore.getState().clearDraftThread(THREAD_ID);
+
+      await waitForURL(
+        mounted.router,
+        (path) => path === secondThreadPath,
+        "Promoting the earlier draft thread should not navigate away from the latest draft.",
+      );
+
+      expect(useComposerDraftStore.getState().draftThreadsByThreadId[secondThreadId]).toMatchObject(
+        {
+          projectId: PROJECT_ID,
+        },
+      );
+      await waitForComposerEditor();
     } finally {
       await mounted.cleanup();
     }

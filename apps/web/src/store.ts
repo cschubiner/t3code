@@ -255,6 +255,55 @@ function buildSidebarThreadSummary(thread: Thread): SidebarThreadSummary {
   };
 }
 
+function normalizeProjectPath(path: string): string {
+  return path.replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+function isManagedWorktreeProjectPath(path: string): boolean {
+  const normalized = normalizeProjectPath(path);
+  return normalized.includes("/.codex/worktrees/") || normalized.includes("/.t3/worktrees/");
+}
+
+function filterSidebarProjects(input: { projects: Project[]; threads: Thread[] }): Project[] {
+  const threadCountByProjectId = new Map<Project["id"], number>();
+  for (const thread of input.threads) {
+    threadCountByProjectId.set(
+      thread.projectId,
+      (threadCountByProjectId.get(thread.projectId) ?? 0) + 1,
+    );
+  }
+
+  const projectsByName = new Map<string, Project[]>();
+  for (const project of input.projects) {
+    const existing = projectsByName.get(project.name) ?? [];
+    existing.push(project);
+    projectsByName.set(project.name, existing);
+  }
+
+  return input.projects.filter((project) => {
+    if ((threadCountByProjectId.get(project.id) ?? 0) > 0) {
+      return true;
+    }
+    if (!isManagedWorktreeProjectPath(project.cwd)) {
+      return true;
+    }
+
+    const siblingProjects = projectsByName.get(project.name) ?? [];
+    return !siblingProjects.some((candidate) => {
+      if (candidate.id === project.id) {
+        return false;
+      }
+      if (normalizeProjectPath(candidate.cwd) === normalizeProjectPath(project.cwd)) {
+        return false;
+      }
+      return (
+        (threadCountByProjectId.get(candidate.id) ?? 0) > 0 ||
+        !isManagedWorktreeProjectPath(candidate.cwd)
+      );
+    });
+  });
+}
+
 function sidebarThreadSummariesEqual(
   left: SidebarThreadSummary | undefined,
   right: SidebarThreadSummary,
@@ -598,10 +647,11 @@ function updateThreadState(
 // ── Pure state transition functions ────────────────────────────────────
 
 export function syncServerReadModel(state: AppState, readModel: OrchestrationReadModel): AppState {
-  const projects = readModel.projects
-    .filter((project) => project.deletedAt === null)
-    .map(mapProject);
   const threads = readModel.threads.filter((thread) => thread.deletedAt === null).map(mapThread);
+  const projects = filterSidebarProjects({
+    projects: readModel.projects.filter((project) => project.deletedAt === null).map(mapProject),
+    threads,
+  });
   const sidebarThreadsById = buildSidebarThreadsById(threads);
   const threadIdsByProjectId = buildThreadIdsByProjectId(threads);
   return {
