@@ -18,6 +18,7 @@ export {
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 const WORKTREE_BRANCH_PREFIX = "t3code";
+export const WORKTREE_PREPARATION_TIMEOUT_MS = 30_000;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
@@ -166,6 +167,43 @@ export function buildExpiredTerminalContextToastCopy(
     title: `${noun} omitted from message`,
     description: "Re-add it if you want that terminal output included.",
   };
+}
+
+export async function waitForPromiseWithTimeout<T>(input: {
+  promise: Promise<T>;
+  timeoutMs: number;
+  timeoutMessage: string;
+}): Promise<T> {
+  const { promise, timeoutMs, timeoutMessage } = input;
+  return await new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const timeoutId = globalThis.setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      reject(new Error(timeoutMessage));
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        globalThis.clearTimeout(timeoutId);
+        resolve(value);
+      },
+      (error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        globalThis.clearTimeout(timeoutId);
+        reject(error);
+      },
+    );
+  });
 }
 
 export function shouldEnqueueComposerTurn(input: {

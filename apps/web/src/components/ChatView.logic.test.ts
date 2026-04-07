@@ -4,10 +4,11 @@ import { useStore } from "../store";
 
 import {
   buildExpiredTerminalContextToastCopy,
-  shouldEnqueueComposerTurn,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   hasServerAcknowledgedLocalDispatch,
+  shouldEnqueueComposerTurn,
+  waitForPromiseWithTimeout,
   waitForStartedServerThread,
 } from "./ChatView.logic";
 
@@ -73,6 +74,41 @@ describe("buildExpiredTerminalContextToastCopy", () => {
       title: "Expired terminal contexts omitted from message",
       description: "Re-add it if you want that terminal output included.",
     });
+  });
+});
+
+describe("waitForPromiseWithTimeout", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("resolves when the promise settles before the timeout", async () => {
+    vi.useFakeTimers();
+
+    const promise = waitForPromiseWithTimeout({
+      promise: Promise.resolve("ok"),
+      timeoutMs: 500,
+      timeoutMessage: "timed out",
+    });
+
+    await vi.runAllTimersAsync();
+
+    await expect(promise).resolves.toBe("ok");
+  });
+
+  it("rejects when the promise does not settle before the timeout", async () => {
+    vi.useFakeTimers();
+
+    const promise = waitForPromiseWithTimeout({
+      promise: new Promise<string>(() => undefined),
+      timeoutMs: 500,
+      timeoutMessage: "timed out",
+    });
+    const assertion = expect(promise).rejects.toThrow("timed out");
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    await assertion;
   });
 });
 
