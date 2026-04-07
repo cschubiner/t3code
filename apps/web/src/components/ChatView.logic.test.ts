@@ -367,7 +367,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
     ).toBe(true);
   });
 
-  it("clears local dispatch when the session changes without an observed running phase", () => {
+  it("does not clear local dispatch when only the session timestamp changes", () => {
     const localDispatch = createLocalDispatchSnapshot({
       id: ThreadId.makeUnsafe("thread-1"),
       codexThreadId: null,
@@ -398,6 +398,46 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         session: {
           ...previousSession,
           updatedAt: "2026-03-29T00:00:11.000Z",
+        },
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("clears local dispatch when the session transitions into an acknowledged error state", () => {
+    const localDispatch = createLocalDispatchSnapshot({
+      id: ThreadId.makeUnsafe("thread-1"),
+      codexThreadId: null,
+      projectId,
+      title: "Thread",
+      modelSelection: { provider: "codex", model: "gpt-5.4" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      session: previousSession,
+      messages: [],
+      proposedPlans: [],
+      error: null,
+      createdAt: "2026-03-29T00:00:00.000Z",
+      archivedAt: null,
+      updatedAt: "2026-03-29T00:00:10.000Z",
+      latestTurn: previousLatestTurn,
+      branch: null,
+      worktreePath: null,
+      turnDiffSummaries: [],
+      activities: [],
+    });
+
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        localDispatch,
+        phase: "ready",
+        latestTurn: previousLatestTurn,
+        session: {
+          ...previousSession,
+          updatedAt: "2026-03-29T00:00:11.000Z",
+          orchestrationStatus: "error",
         },
         hasPendingApproval: false,
         hasPendingUserInput: false,
