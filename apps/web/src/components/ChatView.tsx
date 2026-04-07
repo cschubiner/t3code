@@ -215,13 +215,20 @@ import {
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import {
-  deriveQueuedTurnAutoPauseReason,
   deriveQueuedTurnDispatchGate,
+  getQueuedTurnDispatchState,
   type QueuedTurnDraft,
   useQueuedTurnStoreHydrated,
   useQueuedTurnStore,
 } from "../queuedTurnStore";
-import { persistThreadSettingsForNextTurn as syncThreadSettingsForNextTurn } from "../queuedTurnDispatch";
+import {
+  dispatchQueuedTurnCommand,
+  persistThreadSettingsForNextTurn as syncThreadSettingsForNextTurn,
+} from "../queuedTurnDispatch";
+import {
+  deriveQueuedTurnThreadAction,
+  hasQueuedTurnDispatchBeenAcknowledged,
+} from "../queuedTurnEngine";
 import { buildThreadSearchMatches, buildThreadSearchSources } from "../lib/threadSearch";
 import { useThreadSearchNavigationStore } from "../threadSearchNavigationStore";
 import {
@@ -550,6 +557,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const replaceQueuedTurn = useQueuedTurnStore((store) => store.replaceQueuedTurn);
   const removeQueuedTurn = useQueuedTurnStore((store) => store.removeQueuedTurn);
   const moveQueuedTurn = useQueuedTurnStore((store) => store.moveQueuedTurn);
+  const beginQueuedTurnDispatch = useQueuedTurnStore((store) => store.beginDispatch);
+  const markQueuedTurnDispatchAwaitingAck = useQueuedTurnStore(
+    (store) => store.markDispatchAwaitingAck,
+  );
+  const acknowledgeQueuedTurnDispatch = useQueuedTurnStore((store) => store.acknowledgeDispatch);
+  const resetQueuedTurnDispatch = useQueuedTurnStore((store) => store.resetDispatch);
   const pauseThreadQueue = useQueuedTurnStore((store) => store.pauseThreadQueue);
   const resumeThreadQueue = useQueuedTurnStore((store) => store.resumeThreadQueue);
   const clearThreadQueue = useQueuedTurnStore((store) => store.clearThreadQueue);
@@ -609,7 +622,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [titleSearchHighlighted, setTitleSearchHighlighted] = useState(false);
   const [pendingPullRequestSetupRequest, setPendingPullRequestSetupRequest] =
     useState<PendingPullRequestSetupRequest | null>(null);
-  const [busyQueuedTurnId, setBusyQueuedTurnId] = useState<string | null>(null);
   const [attachmentPreviewHandoffByMessageId, setAttachmentPreviewHandoffByMessageId] = useState<
     Record<string, string[]>
   >({});
@@ -652,7 +664,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewHandoffTimeoutByMessageIdRef = useRef<Record<string, number>>({});
   const sendInFlightRef = useRef(false);
-  const queuedDispatchInFlightRef = useRef(false);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
   const pendingThreadSearchRestoreRef = useRef<{
@@ -1072,6 +1083,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   });
   const queuedTurns = queuedThreadState?.items ?? EMPTY_QUEUED_TURN_DRAFTS;
   const queuedTurnPauseReason = queuedThreadState?.pauseReason ?? null;
+  const queuedTurnDispatchState = getQueuedTurnDispatchState(queuedThreadState);
+  const busyQueuedTurnId =
+    queuedTurnDispatchState.status === "idle" ? null : queuedTurnDispatchState.queuedTurnId;
+  const isQueuedTurnDispatchInFlight = queuedTurnDispatchState.status !== "idle";
   const hasHydratedQueuedTurnStore = useQueuedTurnStoreHydrated();
   const queuedTurnDispatchGate = useMemo(
     () =>
@@ -1079,7 +1094,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         phase,
         sessionOrchestrationStatus: activeThread?.session?.orchestrationStatus ?? null,
         hasActiveUnsettledTurn,
-        isLocalDispatchInFlight: isSendBusy,
+        isLocalDispatchInFlight: isSendBusy || isQueuedTurnDispatchInFlight,
         hasPendingApproval: activePendingApproval !== null,
         hasPendingUserInput: activePendingUserInput !== null,
       }),
@@ -1088,17 +1103,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
       activePendingUserInput,
       activeThread?.session?.orchestrationStatus,
       hasActiveUnsettledTurn,
+      isQueuedTurnDispatchInFlight,
       isSendBusy,
       phase,
     ],
-  );
-  const queuedTurnAutoPauseReason = useMemo(
-    () =>
-      deriveQueuedTurnAutoPauseReason({
-        sessionOrchestrationStatus: activeThread?.session?.orchestrationStatus ?? null,
-        hasActiveUnsettledTurn,
-      }),
-    [activeThread?.session?.orchestrationStatus, hasActiveUnsettledTurn],
   );
   const canResumeQueuedTurns =
     hasHydratedQueuedTurnStore &&
@@ -1107,14 +1115,27 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const canSendQueuedTurnNow =
     queuedTurnDispatchGate.canDispatch && (queuedTurnPauseReason === null || canResumeQueuedTurns);
   const composerHasContent = composerSendState.hasSendableContent;
-  const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  const isWorking =
+    phase === "running" ||
+    isSendBusy ||
+    isConnecting ||
+    isRevertingCheckpoint ||
+    isQueuedTurnDispatchInFlight;
   useEffect(() => {
-    const hasTransientWork = isSendBusy || isConnecting || isRevertingCheckpoint;
+    const hasTransientWork =
+      isSendBusy || isConnecting || isRevertingCheckpoint || isQueuedTurnDispatchInFlight;
     setTransientWorking(threadId, hasTransientWork);
     return () => {
       setTransientWorking(threadId, false);
     };
-  }, [isConnecting, isRevertingCheckpoint, isSendBusy, setTransientWorking, threadId]);
+  }, [
+    isConnecting,
+    isQueuedTurnDispatchInFlight,
+    isRevertingCheckpoint,
+    isSendBusy,
+    setTransientWorking,
+    threadId,
+  ]);
   const nowIso = new Date(nowTick).toISOString();
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
@@ -3219,11 +3240,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
         sizeBytes: attachment.sizeBytes,
         previewUrl: attachment.dataUrl,
       }));
-      const modelSelectionForSend =
-        queuedTurn.modelSelection ?? activeThread.modelSelection ?? selectedModelSelection;
+      const localDispatchSnapshot = createLocalDispatchSnapshot(activeThread);
 
       sendInFlightRef.current = true;
-      beginLocalDispatch({ preparingWorktree: false });
+      beginQueuedTurnDispatch(activeThread.id, queuedTurn.id, localDispatchSnapshot);
       setThreadError(activeThread.id, null);
       setOptimisticUserMessages((existing) => [
         ...existing,
@@ -3240,36 +3260,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
       forceStickToBottom();
 
       try {
-        await persistThreadSettingsForNextTurn({
-          threadId: activeThread.id,
+        await dispatchQueuedTurnCommand(api, {
+          thread: activeThread,
+          queuedTurn,
           createdAt: messageCreatedAt,
-          modelSelection: modelSelectionForSend,
-          runtimeMode: queuedTurn.runtimeMode,
-          interactionMode: queuedTurn.interactionMode,
+          fallbackModelSelection: selectedModelSelection,
         });
-
-        await api.orchestration.dispatchCommand({
-          type: "thread.turn.start",
-          commandId: newCommandId(),
-          threadId: activeThread.id,
-          message: {
-            messageId: messageIdForSend,
-            role: "user",
-            text: queuedTurn.text,
-            attachments: queuedTurn.attachments.map((attachment) => ({
-              type: "image" as const,
-              name: attachment.name,
-              mimeType: attachment.mimeType,
-              sizeBytes: attachment.sizeBytes,
-              dataUrl: attachment.dataUrl,
-            })),
-          },
-          modelSelection: modelSelectionForSend,
-          titleSeed: activeThread.title,
-          runtimeMode: queuedTurn.runtimeMode,
-          interactionMode: queuedTurn.interactionMode,
-          createdAt: messageCreatedAt,
-        });
+        markQueuedTurnDispatchAwaitingAck(activeThread.id, queuedTurn.id, localDispatchSnapshot);
         return true;
       } catch (err) {
         setOptimisticUserMessages((existing) =>
@@ -3280,7 +3277,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           err instanceof Error ? err.message : "Failed to send queued follow-up.",
         );
         pauseThreadQueue(activeThread.id, "thread-error", new Date().toISOString());
-        resetLocalDispatch();
+        resetQueuedTurnDispatch(activeThread.id);
         return false;
       } finally {
         sendInFlightRef.current = false;
@@ -3288,36 +3285,43 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [
       activeThread,
-      beginLocalDispatch,
+      beginQueuedTurnDispatch,
       forceStickToBottom,
       isServerThread,
+      markQueuedTurnDispatchAwaitingAck,
       pauseThreadQueue,
-      persistThreadSettingsForNextTurn,
-      resetLocalDispatch,
+      resetQueuedTurnDispatch,
       selectedModelSelection,
       setThreadError,
     ],
   );
 
   useEffect(() => {
-    const nextPauseReason = queuedTurnAutoPauseReason ?? queuedTurnDispatchGate.pauseReason;
     if (
+      !activeThread ||
       !isServerThread ||
-      queuedTurns.length === 0 ||
-      nextPauseReason === null ||
-      queuedTurnPauseReason === nextPauseReason
+      queuedTurnDispatchState.status === "idle" ||
+      !hasQueuedTurnDispatchBeenAcknowledged({
+        thread: activeThread,
+        dispatchState: queuedTurnDispatchState,
+      })
     ) {
       return;
     }
 
-    pauseThreadQueue(threadId, nextPauseReason, new Date().toISOString());
+    const dispatchedQueuedTurnId = queuedTurnDispatchState.queuedTurnId;
+    if (!dispatchedQueuedTurnId) {
+      resetQueuedTurnDispatch(threadId);
+      return;
+    }
+
+    acknowledgeQueuedTurnDispatch(threadId, dispatchedQueuedTurnId, new Date().toISOString());
   }, [
+    acknowledgeQueuedTurnDispatch,
+    activeThread,
     isServerThread,
-    pauseThreadQueue,
-    queuedTurnAutoPauseReason,
-    queuedTurnDispatchGate.pauseReason,
-    queuedTurnPauseReason,
-    queuedTurns.length,
+    queuedTurnDispatchState,
+    resetQueuedTurnDispatch,
     threadId,
   ]);
 
@@ -3326,42 +3330,35 @@ export default function ChatView({ threadId }: ChatViewProps) {
       !activeThread ||
       !isServerThread ||
       !hasHydratedQueuedTurnStore ||
-      queuedTurns.length === 0 ||
-      queuedTurnAutoPauseReason !== null ||
-      queuedTurnPauseReason !== null ||
-      !queuedTurnDispatchGate.canDispatch ||
-      queuedDispatchInFlightRef.current
+      queuedThreadState === null
     ) {
       return;
     }
 
-    const nextQueuedTurn = queuedTurns[0];
-    if (!nextQueuedTurn) {
+    const queuedTurnThreadAction = deriveQueuedTurnThreadAction({
+      thread: activeThread,
+      queueState: queuedThreadState,
+      isLocalDispatchInFlight: isSendBusy,
+    });
+
+    if (queuedTurnThreadAction.type === "pause") {
+      pauseThreadQueue(threadId, queuedTurnThreadAction.reason, new Date().toISOString());
       return;
     }
 
-    queuedDispatchInFlightRef.current = true;
-    setBusyQueuedTurnId(nextQueuedTurn.id);
-    void dispatchQueuedTurn(nextQueuedTurn)
-      .then((didDispatch) => {
-        if (didDispatch) {
-          removeQueuedTurn(threadId, nextQueuedTurn.id);
-        }
-      })
-      .finally(() => {
-        queuedDispatchInFlightRef.current = false;
-        setBusyQueuedTurnId((current) => (current === nextQueuedTurn.id ? null : current));
-      });
+    if (queuedTurnThreadAction.type !== "dispatch") {
+      return;
+    }
+
+    void dispatchQueuedTurn(queuedTurnThreadAction.queuedTurn);
   }, [
     activeThread,
     dispatchQueuedTurn,
     hasHydratedQueuedTurnStore,
     isServerThread,
-    queuedTurnAutoPauseReason,
-    queuedTurnDispatchGate.canDispatch,
-    queuedTurnPauseReason,
-    queuedTurns,
-    removeQueuedTurn,
+    isSendBusy,
+    pauseThreadQueue,
+    queuedThreadState,
     threadId,
   ]);
 
@@ -4545,7 +4542,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
     if (
       key === "Enter" &&
-      (phase === "running" || isPreparingWorktree || isSendBusy) &&
+      (isWorking || hasActiveUnsettledTurn || queuedTurns.length > 0) &&
       composerHasContent &&
       event.shiftKey &&
       !event.altKey &&
@@ -4793,7 +4790,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   queuedTurnPauseReason === null ? queuedTurnDispatchGate.blockReason : null
                 }
                 busyQueuedTurnId={busyQueuedTurnId}
-                isQueueInteractionDisabled={isPreparingWorktree || isSendBusy}
+                isQueueInteractionDisabled={
+                  isPreparingWorktree || isSendBusy || isQueuedTurnDispatchInFlight
+                }
                 canSendNow={canSendQueuedTurnNow}
                 canResume={canResumeQueuedTurns}
                 onResume={() => resumeThreadQueue(threadId, new Date().toISOString())}
@@ -4820,21 +4819,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 }}
                 onSendNow={(queuedTurnId) => {
                   const queuedTurn = queuedTurns.find((entry) => entry.id === queuedTurnId);
-                  if (!queuedTurn || queuedDispatchInFlightRef.current || !canSendQueuedTurnNow) {
+                  if (!queuedTurn || busyQueuedTurnId !== null || !canSendQueuedTurnNow) {
                     return;
                   }
-                  queuedDispatchInFlightRef.current = true;
-                  setBusyQueuedTurnId(queuedTurnId);
-                  void dispatchQueuedTurn(queuedTurn)
-                    .then((didDispatch) => {
-                      if (didDispatch) {
-                        removeQueuedTurn(threadId, queuedTurnId);
-                      }
-                    })
-                    .finally(() => {
-                      queuedDispatchInFlightRef.current = false;
-                      setBusyQueuedTurnId((current) => (current === queuedTurnId ? null : current));
-                    });
+                  void dispatchQueuedTurn(queuedTurn);
                 }}
                 onReorder={(activeQueuedTurnId, targetQueuedTurnId) => {
                   const targetIndex = queuedTurns.findIndex(

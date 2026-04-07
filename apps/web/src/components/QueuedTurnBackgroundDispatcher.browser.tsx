@@ -157,7 +157,11 @@ describe("QueuedTurnBackgroundDispatcher", () => {
           useQueuedTurnStore
             .getState()
             .threadsByThreadId[BACKGROUND_THREAD_ID]?.items.map((item) => item.text),
-        ).toEqual(["Second background queued follow-up"]);
+        ).toEqual(["First background queued follow-up", "Second background queued follow-up"]);
+        expect(
+          useQueuedTurnStore.getState().threadsByThreadId[BACKGROUND_THREAD_ID]?.dispatch
+            .queuedTurnId,
+        ).toBe("queued-background-1");
       });
 
       await new Promise((resolve) => window.setTimeout(resolve, 50));

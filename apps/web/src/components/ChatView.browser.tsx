@@ -26,7 +26,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { render } from "vitest-browser-react";
 
 import { useComposerDraftStore } from "../composerDraftStore";
-import { useQueuedTurnStore } from "../queuedTurnStore";
+import { IDLE_QUEUED_TURN_DISPATCH_STATE, useQueuedTurnStore } from "../queuedTurnStore";
 import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   type TerminalContextDraft,
@@ -2935,8 +2935,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
           const queueState = useQueuedTurnStore.getState().threadsByThreadId[THREAD_ID];
           expect(queueState?.pauseReason).toBe("session-error");
           expect(queueState?.items.map((item) => item.text)).toEqual([
+            "Send exactly this paused queued follow-up",
             "Keep this queued follow-up paused",
           ]);
+          expect(queueState?.dispatch.queuedTurnId).toBe("queued-send-now-turn");
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -2994,6 +2996,94 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("does not drain multiple active-thread queued follow-ups before the first dispatch is acknowledged", async () => {
+    useQueuedTurnStore.setState({
+      threadsByThreadId: {
+        [THREAD_ID]: {
+          items: [
+            {
+              id: "queued-active-head",
+              text: "First queued follow-up",
+              attachments: [],
+              terminalContexts: [],
+              modelSelection: null,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              createdAt: isoAt(2_120),
+              updatedAt: isoAt(2_120),
+            },
+            {
+              id: "queued-active-second",
+              text: "Second queued follow-up",
+              attachments: [],
+              terminalContexts: [],
+              modelSelection: null,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              createdAt: isoAt(2_121),
+              updatedAt: isoAt(2_121),
+            },
+          ],
+          pauseReason: null,
+          updatedAt: isoAt(2_121),
+          dispatch: IDLE_QUEUED_TURN_DISPATCH_STATE,
+        },
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-active-queue-lock" as MessageId,
+        targetText: "active queue lock target",
+      }),
+      resolveRpc: (request) => {
+        if (request._tag !== ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return undefined;
+        }
+        return {
+          sequence: listDispatchCommandsByType("thread.turn.start").length + 1,
+        };
+      },
+    });
+
+    try {
+      await vi.waitFor(
+        () => {
+          const turnStartRequests = listDispatchCommandsByType("thread.turn.start") as Array<{
+            message?: { text?: string };
+          }>;
+          expect(turnStartRequests).toHaveLength(1);
+          expect(turnStartRequests[0]?.message?.text).toBe("First queued follow-up");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await vi.waitFor(
+        () => {
+          const queueState = useQueuedTurnStore.getState().threadsByThreadId[THREAD_ID];
+          expect(queueState?.items.map((item) => item.text)).toEqual([
+            "First queued follow-up",
+            "Second queued follow-up",
+          ]);
+          expect(queueState?.dispatch.queuedTurnId).toBe("queued-active-head");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await new Promise((resolve) => {
+        globalThis.setTimeout(resolve, 100);
+      });
+
+      const turnStartRequests = listDispatchCommandsByType("thread.turn.start") as Array<{
+        message?: { text?: string };
+      }>;
+      expect(turnStartRequests).toHaveLength(1);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("does not auto-dispatch queued follow-ups while a stale session error still has an unsettled turn", async () => {
     const baseSnapshot = createSnapshotForTargetUser({
       targetMessageId: "msg-user-unsettled-error-queue" as MessageId,
@@ -3022,6 +3112,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           ],
           pauseReason: null,
           updatedAt: isoAt(2_101),
+          dispatch: IDLE_QUEUED_TURN_DISPATCH_STATE,
         },
       },
     });
@@ -3093,6 +3184,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           ],
           pauseReason: null,
           updatedAt: isoAt(2_151),
+          dispatch: IDLE_QUEUED_TURN_DISPATCH_STATE,
         },
       },
     });
@@ -3535,6 +3627,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           ],
           pauseReason: null,
           updatedAt: isoAt(801),
+          dispatch: IDLE_QUEUED_TURN_DISPATCH_STATE,
         },
       },
     });
@@ -3563,7 +3656,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
             useQueuedTurnStore
               .getState()
               .threadsByThreadId[THREAD_ID]?.items.map((item) => item.text),
-          ).toEqual(["Queued refresh follow-up two"]);
+          ).toEqual(["Queued refresh follow-up one", "Queued refresh follow-up two"]);
+          expect(
+            useQueuedTurnStore.getState().threadsByThreadId[THREAD_ID]?.dispatch.queuedTurnId,
+          ).toBe("queued-refresh-follow-up-one");
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -3595,7 +3691,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
             useQueuedTurnStore
               .getState()
               .threadsByThreadId[THREAD_ID]?.items.map((item) => item.text),
-          ).toEqual(["Queued refresh follow-up two"]);
+          ).toEqual(["Queued refresh follow-up one", "Queued refresh follow-up two"]);
         },
         { timeout: 2_000, interval: 16 },
       );
@@ -3634,6 +3730,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           ],
           pauseReason: null,
           updatedAt: isoAt(821),
+          dispatch: IDLE_QUEUED_TURN_DISPATCH_STATE,
         },
       },
     });
