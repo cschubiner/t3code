@@ -291,6 +291,7 @@ const make = Effect.gen(function* () {
     const existingSessionThreadId =
       thread.session && thread.session.status !== "stopped" && activeSession ? thread.id : null;
     if (existingSessionThreadId) {
+      const sessionErrored = thread.session?.status === "error";
       const runtimeModeChanged = thread.runtimeMode !== thread.session?.runtimeMode;
       const providerChanged =
         requestedModelSelection !== undefined &&
@@ -310,6 +311,7 @@ const make = Effect.gen(function* () {
         !Equal.equals(previousModelSelection, requestedModelSelection);
 
       if (
+        !sessionErrored &&
         !runtimeModeChanged &&
         !providerChanged &&
         !shouldRestartForModelChange &&
@@ -329,6 +331,7 @@ const make = Effect.gen(function* () {
         desiredProvider: desiredModelSelection.provider,
         currentRuntimeMode: thread.session?.runtimeMode,
         desiredRuntimeMode: thread.runtimeMode,
+        sessionErrored,
         runtimeModeChanged,
         providerChanged,
         modelChanged,
