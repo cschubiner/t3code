@@ -211,7 +211,9 @@ import {
   revokeUserMessagePreviewUrls,
   shouldEnqueueComposerTurn,
   threadHasStarted,
+  waitForPromiseWithTimeout,
   waitForStartedServerThread,
+  WORKTREE_PREPARATION_TIMEOUT_MS,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import {
@@ -3615,10 +3617,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
       if (baseBranchForWorktree) {
         beginLocalDispatch({ preparingWorktree: true });
         const newBranch = buildTemporaryWorktreeBranchName();
-        const result = await createWorktreeMutation.mutateAsync({
-          cwd: activeProject.cwd,
-          branch: baseBranchForWorktree,
-          newBranch,
+        const result = await waitForPromiseWithTimeout({
+          promise: createWorktreeMutation.mutateAsync({
+            cwd: activeProject.cwd,
+            branch: baseBranchForWorktree,
+            newBranch,
+          }),
+          timeoutMs: WORKTREE_PREPARATION_TIMEOUT_MS,
+          timeoutMessage:
+            "Preparing the new worktree timed out before the message could be sent. Try again.",
         });
         nextThreadBranch = result.worktree.branch;
         nextThreadWorktreePath = result.worktree.path;
