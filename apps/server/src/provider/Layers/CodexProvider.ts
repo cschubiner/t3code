@@ -65,8 +65,6 @@ const DEFAULT_CODEX_MODEL_CAPABILITIES: ModelCapabilities = {
 
 const PROVIDER = "codex" as const;
 const OPENAI_AUTH_PROVIDERS = new Set(["openai"]);
-const accountProbeCacheKey = (binaryPath: string, homePath: string | undefined): string =>
-  JSON.stringify([binaryPath, homePath] as const);
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
     slug: "gpt-5.4",
