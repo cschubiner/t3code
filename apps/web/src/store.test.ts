@@ -352,6 +352,57 @@ describe("store read model sync", () => {
     expect(next.threads[0]?.error).toBe("Provider runtime error");
   });
 
+  it("normalizes a running session without an active turn back to ready", () => {
+    const initialState = makeState(
+      makeThread({
+        latestTurn: {
+          turnId: TurnId.makeUnsafe("turn-1"),
+          state: "completed",
+          requestedAt: "2026-02-25T12:28:00.000Z",
+          startedAt: "2026-02-25T12:28:30.000Z",
+          completedAt: "2026-02-25T12:29:00.000Z",
+          assistantMessageId: MessageId.makeUnsafe("assistant-1"),
+        },
+        session: {
+          provider: "codex",
+          status: "running",
+          orchestrationStatus: "running",
+          activeTurnId: TurnId.makeUnsafe("turn-1"),
+          createdAt: "2026-02-25T12:28:30.000Z",
+          updatedAt: "2026-02-25T12:28:30.000Z",
+        },
+      }),
+    );
+
+    const next = applyOrchestrationEvent(initialState, {
+      type: "thread.session-set",
+      occurredAt: "2026-02-25T12:29:05.000Z",
+      payload: {
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        session: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: DEFAULT_RUNTIME_MODE,
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: "2026-02-25T12:29:05.000Z",
+        },
+      },
+    } as never);
+
+    expect(next.threads[0]?.session).toMatchObject({
+      status: "ready",
+      orchestrationStatus: "ready",
+      activeTurnId: undefined,
+    });
+    expect(next.threads[0]?.latestTurn).toMatchObject({
+      turnId: TurnId.makeUnsafe("turn-1"),
+      state: "completed",
+      completedAt: "2026-02-25T12:29:00.000Z",
+    });
+  });
+
   it("maps archivedAt from the read model", () => {
     const initialState = makeState(makeThread());
     const archivedAt = "2026-02-28T00:00:00.000Z";

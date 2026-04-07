@@ -3156,6 +3156,91 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("auto-dispatches queued follow-ups when a completed turn no longer has an active session turn", async () => {
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-stale-running-session-queue" as MessageId,
+      targetText: "stale running session queue target",
+    });
+    const thread = baseSnapshot.threads[0];
+    if (!thread?.session) {
+      throw new Error("Expected browser fixture thread session.");
+    }
+
+    useQueuedTurnStore.setState({
+      threadsByThreadId: {
+        [THREAD_ID]: {
+          items: [
+            {
+              id: "queued-after-completed-turn",
+              text: "Queued after a completed turn",
+              attachments: [],
+              terminalContexts: [],
+              modelSelection: null,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              createdAt: isoAt(2_125),
+              updatedAt: isoAt(2_126),
+            },
+          ],
+          pauseReason: null,
+          updatedAt: isoAt(2_126),
+          dispatch: IDLE_QUEUED_TURN_DISPATCH_STATE,
+        },
+      },
+    });
+
+    const snapshot: OrchestrationReadModel = {
+      ...baseSnapshot,
+      threads: [
+        {
+          ...thread,
+          latestTurn: {
+            turnId: "turn-completed-with-stale-session" as TurnId,
+            state: "completed",
+            requestedAt: isoAt(2_000),
+            startedAt: isoAt(2_001),
+            completedAt: isoAt(2_004),
+            assistantMessageId: "assistant-stale-session-turn" as MessageId,
+          },
+          session: {
+            ...thread.session,
+            status: "running",
+            activeTurnId: null,
+            updatedAt: isoAt(2_005),
+          },
+        },
+      ],
+    };
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+      resolveRpc: (request) => {
+        if (request._tag !== ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return undefined;
+        }
+        return {
+          sequence: listDispatchCommandsByType("thread.turn.start").length + 1,
+        };
+      },
+    });
+
+    try {
+      await vi.waitFor(
+        () => {
+          const turnStartRequests = listDispatchCommandsByType("thread.turn.start") as Array<{
+            message?: { text?: string };
+          }>;
+          expect(turnStartRequests).toHaveLength(1);
+          expect(turnStartRequests[0]?.message?.text).toBe("Queued after a completed turn");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("keeps send-now disabled for a running queued thread until the current turn finishes", async () => {
     const baseSnapshot = createSnapshotForTargetUser({
       targetMessageId: "msg-user-running-queue-send-now-disabled" as MessageId,
@@ -3832,10 +3917,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
   it("shows a pointer cursor for the running stop button", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
-      snapshot: createSnapshotForTargetUser({
+      snapshot: createRunningSnapshotForTargetUser({
         targetMessageId: "msg-user-stop-button-cursor" as MessageId,
         targetText: "stop button cursor target",
-        sessionStatus: "running",
       }),
     });
 

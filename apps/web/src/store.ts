@@ -117,11 +117,19 @@ function mapProjectScripts(scripts: ReadonlyArray<Project["scripts"][number]>): 
   return scripts.map((script) => ({ ...script }));
 }
 
+function normalizeSessionStatus(session: OrchestrationSession): OrchestrationSession["status"] {
+  if (session.status === "running" && session.activeTurnId == null) {
+    return "ready";
+  }
+  return session.status;
+}
+
 function mapSession(session: OrchestrationSession): Thread["session"] {
+  const normalizedStatus = normalizeSessionStatus(session);
   return {
     provider: toLegacyProvider(session.providerName),
-    status: toLegacySessionStatus(session.status),
-    orchestrationStatus: session.status,
+    status: toLegacySessionStatus(normalizedStatus),
+    orchestrationStatus: normalizedStatus,
     activeTurnId: session.activeTurnId ?? undefined,
     createdAt: session.updatedAt,
     updatedAt: session.updatedAt,

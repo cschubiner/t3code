@@ -13,6 +13,7 @@ import { render } from "vitest-browser-react";
 import { __resetNativeApiForTests } from "../nativeApi";
 import { useQueuedTurnStore } from "../queuedTurnStore";
 import { useStore } from "../store";
+import { useThreadActivityStore } from "../threadActivityStore";
 import type { Thread } from "../types";
 import { QueuedTurnBackgroundDispatcher } from "./QueuedTurnBackgroundDispatcher";
 import { createLocalDispatchSnapshot } from "../localDispatch";
@@ -91,6 +92,9 @@ describe("QueuedTurnBackgroundDispatcher", () => {
       threadIdsByProjectId: {},
       bootstrapComplete: true,
       sidebarThreadListMode: "grouped",
+    });
+    useThreadActivityStore.setState({
+      transientWorkByThreadId: {},
     });
     await useQueuedTurnStore.persist.rehydrate();
   });
@@ -212,6 +216,67 @@ describe("QueuedTurnBackgroundDispatcher", () => {
           .getState()
           .threadsByThreadId[ACTIVE_THREAD_ID]?.items.map((item) => item.text),
       ).toEqual(["Should stay queued on the active thread"]);
+    } finally {
+      await screen.unmount();
+      host.remove();
+    }
+  });
+
+  it("does not dispatch inactive queued turns while the thread still has transient local work", async () => {
+    const dispatchCommand = vi.fn().mockResolvedValue(undefined);
+    window.nativeApi = {
+      orchestration: {
+        dispatchCommand,
+      },
+    } as unknown as NativeApi;
+
+    useStore.setState({
+      threads: [makeThread(ACTIVE_THREAD_ID), makeThread(BACKGROUND_THREAD_ID)],
+    });
+
+    useQueuedTurnStore.getState().enqueueTurn(BACKGROUND_THREAD_ID, {
+      id: "queued-background-transient-work",
+      text: "Should wait for local send acknowledgement",
+      attachments: [],
+      terminalContexts: [],
+      modelSelection: null,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdAt: "2026-04-05T12:03:30.000Z",
+      updatedAt: "2026-04-05T12:03:30.000Z",
+    });
+    useThreadActivityStore.setState({
+      transientWorkByThreadId: {
+        [BACKGROUND_THREAD_ID]: true,
+      },
+    });
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const screen = await render(
+      <QueuedTurnBackgroundDispatcher activeThreadId={ACTIVE_THREAD_ID} />,
+      { container: host },
+    );
+
+    try {
+      await new Promise((resolve) => window.setTimeout(resolve, 75));
+      expect(dispatchCommand).not.toHaveBeenCalled();
+
+      useThreadActivityStore.setState({
+        transientWorkByThreadId: {},
+      });
+
+      await vi.waitFor(() => {
+        expect(dispatchCommand).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: "thread.turn.start",
+            threadId: BACKGROUND_THREAD_ID,
+            message: expect.objectContaining({
+              text: "Should wait for local send acknowledgement",
+            }),
+          }),
+        );
+      });
     } finally {
       await screen.unmount();
       host.remove();
