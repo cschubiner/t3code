@@ -106,6 +106,22 @@ describe("deriveQueuedTurnThreadAction", () => {
     expect(action).toEqual({ type: "none" });
   });
 
+  it("does not dispatch while a queued turn is already dispatching", () => {
+    const action = deriveQueuedTurnThreadAction({
+      thread: makeThread(),
+      queueState: makeQueueState({
+        dispatch: {
+          status: "dispatching",
+          queuedTurnId: "queued-1",
+          localDispatch: createLocalDispatchSnapshot(makeThread()),
+        },
+      }),
+      isLocalDispatchInFlight: false,
+    });
+
+    expect(action).toEqual({ type: "none" });
+  });
+
   it("pauses an idle errored session instead of dispatching", () => {
     const action = deriveQueuedTurnThreadAction({
       thread: makeThread({

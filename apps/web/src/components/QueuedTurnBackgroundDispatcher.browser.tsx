@@ -15,6 +15,7 @@ import { useQueuedTurnStore } from "../queuedTurnStore";
 import { useStore } from "../store";
 import type { Thread } from "../types";
 import { QueuedTurnBackgroundDispatcher } from "./QueuedTurnBackgroundDispatcher";
+import { createLocalDispatchSnapshot } from "../localDispatch";
 
 const PROJECT_ID = ProjectId.makeUnsafe("project-background-dispatcher");
 const ACTIVE_THREAD_ID = ThreadId.makeUnsafe("thread-active");
@@ -326,6 +327,68 @@ describe("QueuedTurnBackgroundDispatcher", () => {
           .getState()
           .threadsByThreadId[BACKGROUND_THREAD_ID]?.items.map((item) => item.text),
       ).toEqual(["Should pause for session error"]);
+    } finally {
+      await screen.unmount();
+      host.remove();
+    }
+  });
+
+  it("does not redispatch an inactive queued turn that is already awaiting acknowledgement", async () => {
+    const dispatchCommand = vi.fn().mockResolvedValue(undefined);
+    window.nativeApi = {
+      orchestration: {
+        dispatchCommand,
+      },
+    } as unknown as NativeApi;
+
+    const backgroundThread = makeThread(BACKGROUND_THREAD_ID);
+    useStore.setState({
+      threads: [makeThread(ACTIVE_THREAD_ID), backgroundThread],
+    });
+
+    useQueuedTurnStore.setState({
+      threadsByThreadId: {
+        [BACKGROUND_THREAD_ID]: {
+          items: [
+            {
+              id: "queued-background-awaiting-ack",
+              text: "Should not redispatch after rehydrate",
+              attachments: [],
+              terminalContexts: [],
+              modelSelection: null,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              createdAt: "2026-04-05T12:05:00.000Z",
+              updatedAt: "2026-04-05T12:05:00.000Z",
+            },
+          ],
+          pauseReason: null,
+          updatedAt: "2026-04-05T12:05:00.000Z",
+          dispatch: {
+            status: "awaiting-ack",
+            queuedTurnId: "queued-background-awaiting-ack",
+            localDispatch: createLocalDispatchSnapshot(backgroundThread),
+          },
+        },
+      },
+    });
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const screen = await render(
+      <QueuedTurnBackgroundDispatcher activeThreadId={ACTIVE_THREAD_ID} />,
+      { container: host },
+    );
+
+    try {
+      await new Promise((resolve) => window.setTimeout(resolve, 75));
+      expect(dispatchCommand).not.toHaveBeenCalled();
+      expect(
+        useQueuedTurnStore.getState().threadsByThreadId[BACKGROUND_THREAD_ID]?.dispatch,
+      ).toMatchObject({
+        status: "awaiting-ack",
+        queuedTurnId: "queued-background-awaiting-ack",
+      });
     } finally {
       await screen.unmount();
       host.remove();
