@@ -47,12 +47,13 @@ import {
 } from "../codexAccount";
 import { probeCodexAccount } from "../codexAppServer";
 import { CodexProvider } from "../Services/CodexProvider";
-import type { CodexProviderShape } from "../Services/CodexProvider";
 import { ServerSettingsService } from "../../serverSettings";
 import { ServerSettingsError } from "@t3tools/contracts";
 
 const PROVIDER = "codex" as const;
 const OPENAI_AUTH_PROVIDERS = new Set(["openai"]);
+const accountProbeCacheKey = (binaryPath: string, homePath: string | undefined): string =>
+  JSON.stringify([binaryPath, homePath] as const);
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
     slug: "gpt-5.4",
@@ -585,7 +586,7 @@ export const CodexProviderLive = Layer.effect(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
 
-    const managedProvider = yield* makeManagedServerProvider<CodexSettings>({
+    return yield* makeManagedServerProvider<CodexSettings>({
       getSettings: serverSettings.getSettings.pipe(
         Effect.map((settings) => settings.providers.codex),
         Effect.orDie,
@@ -595,26 +596,18 @@ export const CodexProviderLive = Layer.effect(
       ),
       haveSettingsChanged: (previous, next) => !Equal.equals(previous, next),
       checkProvider,
+      beforeRefresh: serverSettings.getSettings.pipe(
+        Effect.map((settings) => settings.providers.codex),
+        Effect.flatMap((settings) =>
+          Cache.invalidate(
+            accountProbeCache,
+            codexAccountProbeCacheKey({
+              binaryPath: settings.binaryPath,
+              ...(settings.homePath ? { homePath: settings.homePath } : {}),
+            }),
+          ),
+        ),
+      ),
     });
-
-    const refresh = Effect.gen(function* () {
-      const settings = yield* serverSettings.getSettings.pipe(
-        Effect.map((nextSettings) => nextSettings.providers.codex),
-        Effect.orDie,
-      );
-      yield* Cache.invalidate(
-        accountProbeCache,
-        codexAccountProbeCacheKey({
-          binaryPath: settings.binaryPath,
-          ...(settings.homePath ? { homePath: settings.homePath } : {}),
-        }),
-      );
-      return yield* managedProvider.refresh;
-    });
-
-    return {
-      ...managedProvider,
-      refresh,
-    } satisfies CodexProviderShape;
   }),
 );
