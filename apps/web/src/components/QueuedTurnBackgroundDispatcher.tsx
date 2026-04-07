@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { createLocalDispatchSnapshot } from "../localDispatch";
 import { readNativeApi } from "../nativeApi";
 import { useStore } from "../store";
+import { useThreadActivityStore } from "../threadActivityStore";
 import type { Thread } from "../types";
 import { dispatchQueuedTurnCommand } from "../queuedTurnDispatch";
 import {
@@ -24,6 +25,9 @@ function selectNextInactiveDispatchCandidate(input: {
   activeThreadId: ThreadId | null;
   threads: readonly Thread[];
   queuedThreadsByThreadId: ReturnType<typeof useQueuedTurnStore.getState>["threadsByThreadId"];
+  transientWorkByThreadId: ReturnType<
+    typeof useThreadActivityStore.getState
+  >["transientWorkByThreadId"];
 }): { thread: Thread; queuedTurnId: string } | null {
   let nextCandidate: { thread: Thread; queuedTurnId: string; createdAt: string } | null = null;
 
@@ -36,7 +40,7 @@ function selectNextInactiveDispatchCandidate(input: {
     const action = deriveQueuedTurnThreadAction({
       thread,
       queueState,
-      isLocalDispatchInFlight: false,
+      isLocalDispatchInFlight: Boolean(input.transientWorkByThreadId[thread.id]),
     });
 
     if (action.type !== "dispatch") {
@@ -72,6 +76,7 @@ export function QueuedTurnBackgroundDispatcher({
   const pauseThreadQueue = useQueuedTurnStore((store) => store.pauseThreadQueue);
   const threads = useStore((store) => store.threads);
   const setThreadError = useStore((store) => store.setError);
+  const transientWorkByThreadId = useThreadActivityStore((store) => store.transientWorkByThreadId);
 
   useEffect(() => {
     if (!hasHydratedQueuedTurnStore) {
@@ -133,7 +138,7 @@ export function QueuedTurnBackgroundDispatcher({
       const action = deriveQueuedTurnThreadAction({
         thread,
         queueState,
-        isLocalDispatchInFlight: false,
+        isLocalDispatchInFlight: Boolean(transientWorkByThreadId[thread.id]),
       });
 
       if (action.type === "pause") {
@@ -145,6 +150,7 @@ export function QueuedTurnBackgroundDispatcher({
     hasHydratedQueuedTurnStore,
     pauseThreadQueue,
     queuedThreadsByThreadId,
+    transientWorkByThreadId,
     threads,
   ]);
 
@@ -156,6 +162,7 @@ export function QueuedTurnBackgroundDispatcher({
     const nextCandidate = selectNextInactiveDispatchCandidate({
       activeThreadId,
       queuedThreadsByThreadId,
+      transientWorkByThreadId,
       threads,
     });
     if (!nextCandidate) {
@@ -204,6 +211,7 @@ export function QueuedTurnBackgroundDispatcher({
     queuedThreadsByThreadId,
     resetDispatch,
     setThreadError,
+    transientWorkByThreadId,
     threads,
   ]);
 
