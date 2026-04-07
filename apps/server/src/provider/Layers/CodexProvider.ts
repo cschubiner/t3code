@@ -52,6 +52,8 @@ import { ServerSettingsError } from "@t3tools/contracts";
 
 const PROVIDER = "codex" as const;
 const OPENAI_AUTH_PROVIDERS = new Set(["openai"]);
+const accountProbeCacheKey = (binaryPath: string, homePath: string | undefined): string =>
+  JSON.stringify([binaryPath, homePath] as const);
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
     slug: "gpt-5.4",
@@ -566,7 +568,7 @@ export const CodexProviderLive = Layer.effect(
     });
 
     const checkProvider = checkCodexProviderStatus((input) =>
-      Cache.get(accountProbeCache, JSON.stringify([input.binaryPath, input.homePath])),
+      Cache.get(accountProbeCache, accountProbeCacheKey(input.binaryPath, input.homePath)),
     ).pipe(
       Effect.provideService(ServerSettingsService, serverSettings),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -584,6 +586,15 @@ export const CodexProviderLive = Layer.effect(
       ),
       haveSettingsChanged: (previous, next) => !Equal.equals(previous, next),
       checkProvider,
+      beforeRefresh: serverSettings.getSettings.pipe(
+        Effect.map((settings) => settings.providers.codex),
+        Effect.flatMap((settings) =>
+          Cache.invalidate(
+            accountProbeCache,
+            accountProbeCacheKey(settings.binaryPath, settings.homePath),
+          ),
+        ),
+      ),
     });
   }),
 );
