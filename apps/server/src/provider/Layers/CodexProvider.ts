@@ -47,6 +47,7 @@ import {
 } from "../codexAccount";
 import { probeCodexAccount } from "../codexAppServer";
 import { CodexProvider } from "../Services/CodexProvider";
+import type { CodexProviderShape } from "../Services/CodexProvider";
 import { ServerSettingsService } from "../../serverSettings";
 import { ServerSettingsError } from "@t3tools/contracts";
 
@@ -303,6 +304,16 @@ const probeCodexCapabilities = (input: {
         : Effect.fail(new Error("Codex account probe timed out.")),
     ),
   );
+
+function codexAccountProbeCacheKey(input: {
+  readonly binaryPath: string;
+  readonly homePath?: string;
+}) {
+  return JSON.stringify([
+    input.binaryPath,
+    input.homePath && input.homePath.trim().length > 0 ? input.homePath : undefined,
+  ]);
+}
 
 const runCodexCommand = Effect.fn("runCodexCommand")(function* (args: ReadonlyArray<string>) {
   const settingsService = yield* ServerSettingsService;
@@ -566,7 +577,7 @@ export const CodexProviderLive = Layer.effect(
     });
 
     const checkProvider = checkCodexProviderStatus((input) =>
-      Cache.get(accountProbeCache, JSON.stringify([input.binaryPath, input.homePath])),
+      Cache.get(accountProbeCache, codexAccountProbeCacheKey(input)),
     ).pipe(
       Effect.provideService(ServerSettingsService, serverSettings),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -574,7 +585,7 @@ export const CodexProviderLive = Layer.effect(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
 
-    return yield* makeManagedServerProvider<CodexSettings>({
+    const managedProvider = yield* makeManagedServerProvider<CodexSettings>({
       getSettings: serverSettings.getSettings.pipe(
         Effect.map((settings) => settings.providers.codex),
         Effect.orDie,
@@ -585,5 +596,25 @@ export const CodexProviderLive = Layer.effect(
       haveSettingsChanged: (previous, next) => !Equal.equals(previous, next),
       checkProvider,
     });
+
+    const refresh = Effect.gen(function* () {
+      const settings = yield* serverSettings.getSettings.pipe(
+        Effect.map((nextSettings) => nextSettings.providers.codex),
+        Effect.orDie,
+      );
+      yield* Cache.invalidate(
+        accountProbeCache,
+        codexAccountProbeCacheKey({
+          binaryPath: settings.binaryPath,
+          ...(settings.homePath ? { homePath: settings.homePath } : {}),
+        }),
+      );
+      return yield* managedProvider.refresh;
+    });
+
+    return {
+      ...managedProvider,
+      refresh,
+    } satisfies CodexProviderShape;
   }),
 );

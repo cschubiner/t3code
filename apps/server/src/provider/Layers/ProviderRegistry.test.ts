@@ -22,6 +22,7 @@ import {
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { deepMerge } from "@t3tools/shared/Struct";
+import { afterEach, vi } from "vitest";
 
 import {
   checkCodexProviderStatus,
@@ -33,6 +34,7 @@ import { checkClaudeProviderStatus, parseClaudeAuthStatusFromOutput } from "./Cl
 import { haveProvidersChanged, ProviderRegistryLive } from "./ProviderRegistry";
 import { ServerSettingsService, type ServerSettingsShape } from "../../serverSettings";
 import { ProviderRegistry } from "../Services/ProviderRegistry";
+import * as codexAppServer from "../codexAppServer";
 
 // ── Test helpers ────────────────────────────────────────────────────
 
@@ -153,6 +155,10 @@ function withTempCodexHome(configContent?: string) {
     return { tmpDir } as const;
   });
 }
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
   "ProviderRegistry",
@@ -606,6 +612,68 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
               updated.find((status) => status.provider === "codex")?.status,
               "error",
             );
+          }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
+
+      it.effect("invalidates the codex account probe cache on manual refresh", () =>
+        Effect.gen(function* () {
+          yield* withTempCodexHome();
+          const accountSnapshots = [
+            {
+              type: "apiKey" as const,
+              planType: null,
+              sparkEnabled: false,
+            },
+            {
+              type: "chatgpt" as const,
+              planType: "pro" as const,
+              sparkEnabled: true,
+            },
+          ];
+          let probeCallCount = 0;
+          vi.spyOn(codexAppServer, "probeCodexAccount").mockImplementation(async () => {
+            const snapshot =
+              accountSnapshots[Math.min(probeCallCount, accountSnapshots.length - 1)]!;
+            probeCallCount += 1;
+            return snapshot;
+          });
+
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const serverSettingsLayer = ServerSettingsService.layerTest();
+          const providerRegistryLayer = ProviderRegistryLive.pipe(
+            Layer.provideMerge(serverSettingsLayer),
+            Layer.provideMerge(
+              mockCommandSpawnerLayer((_command, args) => {
+                const joined = args.join(" ");
+                if (joined === "--version") {
+                  return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
+                }
+                if (joined === "login status") {
+                  return { stdout: "Logged in\n", stderr: "", code: 0 };
+                }
+                return { stdout: "", stderr: "spawn ENOENT", code: 1 };
+              }),
+            ),
+          );
+          const runtimeServices = yield* Layer.build(
+            Layer.mergeAll(serverSettingsLayer, providerRegistryLayer),
+          ).pipe(Scope.provide(scope));
+
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry;
+
+            const initial = yield* registry.getProviders;
+            const initialCodex = initial.find((status) => status.provider === "codex");
+            assert.strictEqual(initialCodex?.auth.type, "apiKey");
+            assert.strictEqual(initialCodex?.auth.label, "OpenAI API Key");
+
+            const refreshed = yield* registry.refresh("codex");
+            const refreshedCodex = refreshed.find((status) => status.provider === "codex");
+            assert.strictEqual(refreshedCodex?.auth.type, "pro");
+            assert.strictEqual(refreshedCodex?.auth.label, "ChatGPT Pro Subscription");
+            assert.strictEqual(probeCallCount, 2);
           }).pipe(Effect.provide(runtimeServices));
         }),
       );
