@@ -501,6 +501,30 @@ describe("wsNativeApi", () => {
     expect(rpcClientMock.server.refreshProviders).toHaveBeenCalledWith();
   });
 
+  it("updates the cached server config when provider refreshes resolve", async () => {
+    const nextProviders: ReadonlyArray<ServerProvider> = [
+      {
+        ...defaultProviders[0]!,
+        status: "warning",
+        checkedAt: "2026-01-03T00:00:00.000Z",
+        message: "temporary issue",
+      },
+    ];
+    rpcClientMock.server.refreshProviders.mockResolvedValue({ providers: nextProviders });
+    const serverState = await import("./rpc/serverState");
+    serverState.setServerConfigSnapshot(baseServerConfig);
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+
+    await api.server.refreshProviders();
+
+    expect(serverState.getServerConfig()).toEqual({
+      ...baseServerConfig,
+      providers: nextProviders,
+    });
+  });
+
   it("forwards server settings updates directly to the RPC client", async () => {
     const nextSettings = {
       ...DEFAULT_SERVER_SETTINGS,
