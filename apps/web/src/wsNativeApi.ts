@@ -1,7 +1,7 @@
 import { type ContextMenuItem, type NativeApi } from "@t3tools/contracts";
 
 import { showContextMenuFallback } from "./contextMenuFallback";
-import { resetServerStateForTests } from "./rpc/serverState";
+import { applyProvidersUpdated, resetServerStateForTests } from "./rpc/serverState";
 import { __resetWsRpcClientForTests, getWsRpcClient } from "./wsRpcClient";
 
 let instance: { api: NativeApi } | null = null;
@@ -98,7 +98,11 @@ export function createWsNativeApi(): NativeApi {
     },
     server: {
       getConfig: rpcClient.server.getConfig,
-      refreshProviders: rpcClient.server.refreshProviders,
+      refreshProviders: () =>
+        rpcClient.server.refreshProviders().then((payload) => {
+          applyProvidersUpdated(payload);
+          return payload;
+        }),
       upsertKeybinding: rpcClient.server.upsertKeybinding,
       getSettings: rpcClient.server.getSettings,
       updateSettings: rpcClient.server.updateSettings,
