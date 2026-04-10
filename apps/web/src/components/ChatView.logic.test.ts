@@ -7,6 +7,7 @@ import {
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   hasServerAcknowledgedLocalDispatch,
+  isDuplicateThreadCreateError,
   shouldEnqueueComposerTurn,
   waitForPromiseWithTimeout,
   waitForStartedServerThread,
@@ -153,6 +154,24 @@ describe("shouldEnqueueComposerTurn", () => {
         },
       }),
     ).toBe(true);
+  });
+});
+
+describe("isDuplicateThreadCreateError", () => {
+  it("matches duplicate thread-create failures nested under a dispatch wrapper", () => {
+    const error = new Error("Failed to dispatch orchestration command", {
+      cause: new Error("Thread 'thread-1' already exists and cannot be created twice."),
+    });
+
+    expect(isDuplicateThreadCreateError(error)).toBe(true);
+  });
+
+  it("ignores unrelated dispatch failures", () => {
+    const error = new Error("Failed to dispatch orchestration command", {
+      cause: new Error("Project 'missing' does not exist."),
+    });
+
+    expect(isDuplicateThreadCreateError(error)).toBe(false);
   });
 });
 

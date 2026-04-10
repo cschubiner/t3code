@@ -318,6 +318,46 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
         ),
       );
 
+      it.effect("surfaces a parent OPENAI_ORGANIZATION notice for codex api key auth", () =>
+        Effect.gen(function* () {
+          yield* withTempCodexHome();
+          const previousOrganization = process.env.OPENAI_ORGANIZATION;
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              if (previousOrganization === undefined) {
+                delete process.env.OPENAI_ORGANIZATION;
+                return;
+              }
+              process.env.OPENAI_ORGANIZATION = previousOrganization;
+            }),
+          );
+          process.env.OPENAI_ORGANIZATION = "org-mismatch";
+
+          const status = yield* checkCodexProviderStatus(() =>
+            Effect.succeed({
+              type: "apiKey" as const,
+              planType: null,
+              sparkEnabled: false,
+            }),
+          );
+
+          assert.strictEqual(status.auth.status, "authenticated");
+          assert.strictEqual(status.auth.type, "apiKey");
+          assert.strictEqual(status.auth.label, "OpenAI API Key");
+          assert.match(status.message ?? "", /OPENAI_ORGANIZATION/);
+          assert.match(status.message ?? "", /ignores it for Codex/);
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
+              if (joined === "login status") return { stdout: "Logged in\n", stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
       it.effect.skipIf(process.platform === "win32")(
         "inherits PATH when launching the codex probe with a CODEX_HOME override",
         () =>

@@ -1543,6 +1543,65 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("continues sending from a local draft when thread.create loses a stale materialization race", async () => {
+    setDraftThreadWithoutWorktree();
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      resolveRpc: (request) => {
+        if (request._tag === ORCHESTRATION_WS_METHODS.getSnapshot) {
+          return addThreadToSnapshot(createDraftOnlySnapshot(), THREAD_ID);
+        }
+        if (request._tag !== ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return undefined;
+        }
+        if (request.type === "thread.create") {
+          return Promise.reject(
+            new Error(
+              `Orchestration command invariant failed (thread.create): Thread '${THREAD_ID}' already exists and cannot be created twice.`,
+            ),
+          );
+        }
+        return {
+          sequence: wsRequests.filter(
+            (entry) => entry._tag === ORCHESTRATION_WS_METHODS.dispatchCommand,
+          ).length,
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+
+      useComposerDraftStore
+        .getState()
+        .setPrompt(THREAD_ID, "Recover draft send after duplicate create");
+      await waitForLayout();
+
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          const dispatches = listDispatchCommandsByType("thread.turn.start") as Array<{
+            message?: { text?: string };
+          }>;
+          expect(dispatches).toHaveLength(1);
+          expect(dispatches[0]?.message?.text).toBe("Recover draft send after duplicate create");
+          expect(listDispatchCommandsByType("thread.delete")).toHaveLength(0);
+          expect(document.body.textContent).not.toContain(
+            "Failed to dispatch orchestration command",
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("opens the project cwd for draft threads without a worktree path", async () => {
     setDraftThreadWithoutWorktree();
 

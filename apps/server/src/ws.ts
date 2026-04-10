@@ -43,6 +43,13 @@ import { WorkspaceEntries } from "./workspace/Services/WorkspaceEntries";
 import { WorkspaceFileSystem } from "./workspace/Services/WorkspaceFileSystem";
 import { WorkspacePathOutsideRootError } from "./workspace/Services/WorkspacePaths";
 
+export function formatDispatchCommandErrorMessage(cause: unknown): string {
+  if (cause instanceof Error && cause.message.trim().length > 0) {
+    return cause.message;
+  }
+  return "Failed to dispatch orchestration command";
+}
+
 const WsRpcLayer = WsRpcGroup.toLayer(
   Effect.gen(function* () {
     const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
@@ -103,7 +110,7 @@ const WsRpcLayer = WsRpcGroup.toLayer(
             Schema.is(OrchestrationDispatchCommandError)(cause)
               ? cause
               : new OrchestrationDispatchCommandError({
-                  message: "Failed to dispatch orchestration command",
+                  message: formatDispatchCommandErrorMessage(cause),
                   cause,
                 }),
           ),

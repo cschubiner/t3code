@@ -46,6 +46,7 @@ import {
   type CodexAccountSnapshot,
 } from "../codexAccount";
 import { probeCodexAccount } from "../codexAppServer";
+import { buildCodexProcessEnv, getCodexApiKeyEnvironmentNotice } from "../codexEnv";
 import { CodexProvider } from "../Services/CodexProvider";
 import { ServerSettingsService } from "../../serverSettings";
 import { ServerSettingsError } from "@t3tools/contracts";
@@ -321,10 +322,7 @@ const runCodexCommand = Effect.fn("runCodexCommand")(function* (args: ReadonlyAr
   );
   const command = ChildProcess.make(codexSettings.binaryPath, [...args], {
     shell: process.platform === "win32",
-    env: {
-      ...process.env,
-      ...(codexSettings.homePath ? { CODEX_HOME: codexSettings.homePath } : {}),
-    },
+    env: buildCodexProcessEnv({ homePath: codexSettings.homePath }),
   });
   return yield* spawnAndCollect(codexSettings.binaryPath, command);
 });
@@ -537,6 +535,10 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   }
   const authType = codexAuthSubType(account);
   const authLabel = codexAuthSubLabel(account);
+  const environmentNotice = getCodexApiKeyEnvironmentNotice({ authType });
+  const message = [parsed.message, environmentNotice]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .join(" ");
   return buildServerProvider({
     provider: PROVIDER,
     enabled: codexSettings.enabled,
@@ -551,7 +553,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         ...(authType ? { type: authType } : {}),
         ...(authLabel ? { label: authLabel } : {}),
       },
-      ...(parsed.message ? { message: parsed.message } : {}),
+      ...(message ? { message } : {}),
     },
   });
 });

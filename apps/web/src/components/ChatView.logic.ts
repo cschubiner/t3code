@@ -223,6 +223,49 @@ export function shouldEnqueueComposerTurn(input: {
   );
 }
 
+function collectErrorStrings(error: unknown, seen = new Set<unknown>()): string[] {
+  if (error == null) {
+    return [];
+  }
+  if (typeof error === "string") {
+    return error.trim().length > 0 ? [error] : [];
+  }
+  if (typeof error !== "object") {
+    const fallback = String(error);
+    return fallback.trim().length > 0 ? [fallback] : [];
+  }
+  if (seen.has(error)) {
+    return [];
+  }
+  seen.add(error);
+
+  const strings: string[] = [];
+  if (error instanceof Error && error.message.trim().length > 0) {
+    strings.push(error.message);
+  }
+  if ("message" in error && typeof error.message === "string" && error.message.trim().length > 0) {
+    strings.push(error.message);
+  }
+  if ("cause" in error) {
+    strings.push(...collectErrorStrings(error.cause, seen));
+  }
+  try {
+    const serialized = JSON.stringify(error);
+    if (typeof serialized === "string" && serialized.trim().length > 0) {
+      strings.push(serialized);
+    }
+  } catch {
+    // Ignore JSON serialization failures and fall back to the collected messages.
+  }
+  return strings;
+}
+
+export function isDuplicateThreadCreateError(error: unknown): boolean {
+  return collectErrorStrings(error).some((message) =>
+    message.includes("already exists and cannot be created twice"),
+  );
+}
+
 export function threadHasStarted(thread: Thread | null | undefined): boolean {
   return Boolean(
     thread && (thread.latestTurn !== null || thread.messages.length > 0 || thread.session !== null),

@@ -1055,8 +1055,8 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="Assistant output"
-          description="Show token-by-token output while a response is in progress."
+          title="Stream assistant output"
+          description="Show output as it arrives while a response is in progress."
           resetAction={
             settings.enableAssistantStreaming !==
             DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming ? (
