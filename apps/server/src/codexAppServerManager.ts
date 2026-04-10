@@ -31,6 +31,7 @@ import {
   resolveCodexModelForAccount,
   type CodexAccountSnapshot,
 } from "./provider/codexAccount";
+import { buildCodexProcessEnv } from "./provider/codexEnv";
 import { buildCodexInitializeParams, killCodexChildProcess } from "./provider/codexAppServer";
 
 export { buildCodexInitializeParams } from "./provider/codexAppServer";
@@ -466,10 +467,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       });
       const child = spawn(codexBinaryPath, ["app-server"], {
         cwd: resolvedCwd,
-        env: {
-          ...process.env,
-          ...(codexHomePath ? { CODEX_HOME: codexHomePath } : {}),
-        },
+        env: buildCodexProcessEnv({ homePath: codexHomePath }),
         stdio: ["pipe", "pipe", "pipe"],
         shell: process.platform === "win32",
       });
@@ -1529,10 +1527,7 @@ function assertSupportedCodexCliVersion(input: {
 }): void {
   const result = spawnSync(input.binaryPath, ["--version"], {
     cwd: input.cwd,
-    env: {
-      ...process.env,
-      ...(input.homePath ? { CODEX_HOME: input.homePath } : {}),
-    },
+    env: buildCodexProcessEnv({ homePath: input.homePath }),
     encoding: "utf8",
     shell: process.platform === "win32",
     stdio: ["ignore", "pipe", "pipe"],

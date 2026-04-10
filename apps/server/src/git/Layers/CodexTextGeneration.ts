@@ -29,6 +29,7 @@ import {
   toJsonSchemaObject,
 } from "../Utils.ts";
 import { getCodexModelCapabilities } from "../../provider/Layers/CodexProvider.ts";
+import { buildCodexProcessEnv } from "../../provider/codexEnv.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { normalizeCodexModelOptionsWithCapabilities } from "@t3tools/shared/model";
 
@@ -181,10 +182,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
           "-",
         ],
         {
-          env: {
-            ...process.env,
-            ...(codexSettings?.homePath ? { CODEX_HOME: codexSettings.homePath } : {}),
-          },
+          env: buildCodexProcessEnv({ homePath: codexSettings?.homePath }),
           cwd,
           shell: process.platform === "win32",
           stdin: {

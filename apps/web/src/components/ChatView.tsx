@@ -202,6 +202,7 @@ import {
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   hasServerAcknowledgedLocalDispatch,
+  isDuplicateThreadCreateError,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
   type LocalDispatchSnapshot,
@@ -3564,6 +3565,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     setComposerTrigger(null);
 
     let createdServerThreadForLocalDraft = false;
+    let recoveredExistingServerThreadForLocalDraft = false;
     let turnStartSucceeded = false;
     let nextThreadBranch = activeThread.branch;
     let nextThreadWorktreePath = activeThread.worktreePath;
@@ -3596,21 +3598,37 @@ export default function ChatView({ threadId }: ChatViewProps) {
       };
 
       if (isLocalDraftThread) {
-        await api.orchestration.dispatchCommand({
-          type: "thread.create",
-          commandId: newCommandId(),
-          threadId: threadIdForSend,
-          projectId: activeProject.id,
-          title,
-          modelSelection: threadCreateModelSelection,
-          runtimeMode,
-          interactionMode,
-          branch: nextThreadBranch,
-          worktreePath: nextThreadWorktreePath,
-          createdAt: activeThread.createdAt,
-        });
-        createdServerThreadForLocalDraft = true;
+        try {
+          await api.orchestration.dispatchCommand({
+            type: "thread.create",
+            commandId: newCommandId(),
+            threadId: threadIdForSend,
+            projectId: activeProject.id,
+            title,
+            modelSelection: threadCreateModelSelection,
+            runtimeMode,
+            interactionMode,
+            branch: nextThreadBranch,
+            worktreePath: nextThreadWorktreePath,
+            createdAt: activeThread.createdAt,
+          });
+          createdServerThreadForLocalDraft = true;
+        } catch (error) {
+          const serverAlreadyHasDraftThread = await api.orchestration
+            .getSnapshot()
+            .then((snapshot) => snapshot.threads.some((thread) => thread.id === threadIdForSend))
+            .catch(() => false);
+          if (!serverAlreadyHasDraftThread && !isDuplicateThreadCreateError(error)) {
+            throw error;
+          }
+          recoveredExistingServerThreadForLocalDraft = true;
+        }
       }
+
+      const hasServerThreadForDraftFlow =
+        isServerThread ||
+        createdServerThreadForLocalDraft ||
+        recoveredExistingServerThreadForLocalDraft;
 
       // On first message in worktree mode, persist the thread immediately and
       // attach worktree metadata once preparation finishes.
@@ -3629,7 +3647,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         });
         nextThreadBranch = result.worktree.branch;
         nextThreadWorktreePath = result.worktree.path;
-        if (isServerThread || createdServerThreadForLocalDraft) {
+        if (hasServerThreadForDraftFlow) {
           await api.orchestration.dispatchCommand({
             type: "thread.meta.update",
             commandId: newCommandId(),
@@ -3651,10 +3669,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
         let shouldRunSetupScript = false;
         if (isServerThread) {
           shouldRunSetupScript = true;
-        } else {
-          if (createdServerThreadForLocalDraft) {
-            shouldRunSetupScript = true;
-          }
+        } else if (hasServerThreadForDraftFlow) {
+          shouldRunSetupScript = true;
         }
         if (shouldRunSetupScript) {
           const setupScriptOptions: Parameters<typeof runProjectScript>[1] = {
@@ -3669,7 +3685,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
 
       // Auto-title from first message
-      if (isFirstThreadMessage && isServerThread) {
+      if (isFirstThreadMessage && (isServerThread || recoveredExistingServerThreadForLocalDraft)) {
         await api.orchestration.dispatchCommand({
           type: "thread.meta.update",
           commandId: newCommandId(),
@@ -3678,7 +3694,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         });
       }
 
-      if (isServerThread) {
+      if (isServerThread || recoveredExistingServerThreadForLocalDraft) {
         await persistThreadSettingsForNextTurn({
           threadId: threadIdForSend,
           createdAt: messageCreatedAt,

@@ -1,126 +1,102 @@
 # Codex Auth Refresh And Send QA
 
-Date: 2026-04-07
-Repo: `/Users/canal/.codex/worktrees/1cce/t3code`
-Desktop state: `~/.t3/userdata`
-Build under test: local desktop rebuild from this worktree
-
-## Scope
-
-Verify the reported auth-refresh/send failure:
-
-1. The visible provider refresh control should complete instead of spinning forever.
-2. A resend on a previously errored Codex thread should recover instead of inheriting the stale `Quota exceeded` session state.
-3. A brand-new Codex thread should still send and receive a response normally.
+Date: 2026-04-09
+Repo: `/Users/canal/.codex/worktrees/84db/t3code`
+State dir: `/Users/canal/.t3/userdata`
+QA tier: Standard
 
 ## Inventory
 
-- Visible settings refresh on the running desktop app
-- Existing errored thread recovery via the live orchestration websocket
-- Fresh thread send via the live orchestration websocket
+- Settings should still show Codex authenticated after startup.
+- A real Codex runtime turn should succeed even when the parent shell still exports a mismatched `OPENAI_ORGANIZATION`.
+- The desktop app should be rebuilt from this worktree and relaunched against the main local persisted state.
 
-## Environment
+## Reproduction
 
-- Desktop app launched with `bun run start:desktop:main-state`
-- Live ports from the patched launch:
-  - `http://127.0.0.1:61902`
-  - `http://127.0.0.1:61903`
-- Codex provider reported `Authenticated · ChatGPT Pro Subscription`
+Confirmed the failure outside T3 first:
 
-## Results
+- `OPENAI_ORGANIZATION="$OPENAI_ORGANIZATION" codex exec --skip-git-repo-check --model gpt-5.4-mini 'Reply with OK and nothing else.'`
+  - Failed with `401 Unauthorized` and `mismatched_organization`
+- `env -u OPENAI_ORGANIZATION codex exec --skip-git-repo-check --model gpt-5.4-mini 'Reply with OK and nothing else.'`
+  - Succeeded
 
-### 1. Visible refresh control
+That isolated the bug to inherited environment passed into Codex subprocesses.
 
-Status: Passed
+## Fix Verification
 
-Steps:
+### Automated tests
 
-1. Opened `http://127.0.0.1:61903/settings/general`
-2. Clicked `Refresh provider status`
-3. Waited for the checked timestamp to update
+- `cd apps/server && bun run test src/provider/codexEnv.test.ts src/provider/Layers/ProviderRegistry.test.ts src/codexAppServerManager.test.ts`
+  - Passed
+- `bun run fmt`
+  - Passed
+- `bun run lint`
+  - Passed
+- `bun run typecheck`
+  - Passed
 
-Evidence:
+### Electron settings verification
 
-- Page text updated to `Checked just now`
-- Provider row still showed `Codex v0.118.0`
-- Auth label still showed `Authenticated · ChatGPT Pro Subscription`
-- Refresh button was re-enabled after completion
+Launched the rebuilt Electron app from this worktree under Playwright control against `/Users/canal/.t3/userdata`.
 
-### 2. Existing errored thread recovery
+Observed on Settings:
 
-Status: Passed
+- `Codex v0.118.0`
+- `Authenticated · OpenAI API Key`
+- `Claude v2.1.97`
+- `Authenticated`
 
-Target thread:
+### Live Codex runtime verification
 
-- Thread id: `a7172a15-7002-4de4-8942-221f1ce58f9c`
-- Existing title: `test123`
-- Previous persisted state before retry:
-  - session status: `error`
-  - last error: `Quota exceeded. Check your plan and billing details.`
+Ran a real `CodexAppServerManager` session in the same shell where `OPENAI_ORGANIZATION` is still set to the mismatched value.
 
-Action:
+Result:
 
-- Dispatched a new `thread.turn.start` against that same thread with:
-  - user text: `Reply with exactly OK. QA_AUTH_RETRY_1775590365845`
+- `startSession()` succeeded
+- `sendTurn()` succeeded
+- Turn completed successfully
+- No `mismatched_organization`
+- No `401 Unauthorized`
 
-Observed outcome:
+Observed completion marker:
 
-- Provider log showed a fresh session restart:
-  - `session/connecting`
-  - `session/threadOpenRequested` with `Attempting to resume thread 019d6909-55e7-7e00-adb6-ef516eea229c.`
-  - `session/threadOpenResolved`
-- Persisted session row moved to:
-  - status: `ready`
-  - last_error: `NULL`
-  - updated_at: `2026-04-07T19:32:56.517Z`
-- Persisted messages now include:
-  - user: `Reply with exactly OK. QA_AUTH_RETRY_1775590365845`
-  - assistant: `OK`
+- `TURN_COMPLETED 1`
 
-Interpretation:
+## Notes
 
-- This is the exact stale-session recovery path we needed.
-- The old errored thread no longer stays poisoned after a resend.
+- The empty-state UI in this persisted state currently opens project creation through the native folder picker on macOS, which is awkward to script cleanly in Playwright. I verified the user-visible provider state in Settings and verified the exact backend send path directly through `CodexAppServerManager`, which is the runtime path the UI ultimately uses.
 
-### 3. Fresh thread send
+## Follow-up Debug Findings
 
-Status: Passed
+The apparently contradictory "CLI works" evidence came from different Codex processes inheriting different OpenAI environments.
 
-Target thread:
+### Proven states
 
-- Project id: `2dd348e7-e576-411c-98ba-dd161318420a` (`t3code`)
-- New thread id: `c244983d-5fb8-44dc-9941-0f63d57429d4`
-- Title: `QA_AUTH_FRESH_1775590432926`
+1. Current shell used by this Codex session:
+   - `OPENAI_API_KEY=sk-svcacct-68ap...`
+   - `OPENAI_ORGANIZATION=org-aAqY...`
+   - `codex login status` reports `Logged in using an API key`
+   - `codex exec ...` fails with `mismatched_organization`
+   - `env -u OPENAI_ORGANIZATION codex exec ...` succeeds
 
-Action:
+2. Successful interactive TUI session from `2026-04-09 17:14`:
+   - Shell snapshot: `/Users/canal/.codex/shell_snapshots/019d733d-3688-7b82-9d7b-5ac4cc9498a9.1775754884820642000.sh`
+   - Contains `OPENAI_API_KEY`
+   - Does **not** contain `OPENAI_ORGANIZATION`
+   - `codex-tui.log` shows a successful websocket-backed turn with no `mismatched_organization`
 
-1. Created a new thread in `t3code`
-2. Sent:
-   - `Reply with exactly OK. QA_AUTH_FRESH_1775590432926`
+3. Current parent Codex desktop app-server process:
+   - `ps eww -p <codex-app-server-pid>` shows:
+     - stale broken `OPENAI_API_KEY=sk-svcacct-J6U6...`
+     - `OPENAI_ORGANIZATION=org-aAqY...`
+   - This environment does not match current dotfiles and indicates the app process was started from an older shell state
 
-Observed outcome:
+### Conclusion
 
-- Provider log showed a fresh Codex thread start
-- Persisted session row ended in:
-  - status: `ready`
-  - last_error: `NULL`
-  - updated_at: `2026-04-07T19:34:02.480Z`
-- Persisted messages now include:
-  - user: `Reply with exactly OK. QA_AUTH_FRESH_1775590432926`
-  - assistant: `OK`
+There is no single "the CLI environment". Different Codex invocations on this machine are inheriting different OpenAI env combinations:
 
-## Ship Readiness
+- `API key only` works
+- `API key + mismatched organization` breaks websocket/runtime flows
+- long-running GUI/app processes may still be carrying stale env from earlier shell launches
 
-Passed:
-
-- Visible provider refresh control
-- Existing errored-thread resend recovery
-- Fresh thread send/response
-
-Not directly verified:
-
-- The exact same click path inside the Electron sidebar/composer chrome, because this desktop shell was still rendering the empty `No projects yet` sidebar state in automation even while the underlying state DB and websocket server were healthy.
-
-Residual risk:
-
-- There may still be a separate Electron/sidebar state hydration issue, but the auth refresh path and the Codex send/recovery path both behaved correctly against the patched backend/runtime.
+This explains why one visible interactive Codex session could work while `codex exec` and T3 runtime paths failed.
