@@ -316,6 +316,16 @@ const probeCodexCapabilities = (input: {
     }),
   );
 
+function codexAccountProbeCacheKey(input: {
+  readonly binaryPath: string;
+  readonly homePath?: string;
+}) {
+  return JSON.stringify([
+    input.binaryPath,
+    input.homePath && input.homePath.trim().length > 0 ? input.homePath : undefined,
+  ]);
+}
+
 const runCodexCommand = Effect.fn("runCodexCommand")(function* (args: ReadonlyArray<string>) {
   const settingsService = yield* ServerSettingsService;
   const codexSettings = yield* settingsService.getSettings.pipe(
@@ -644,6 +654,18 @@ export const CodexProviderLive = Layer.effect(
       haveSettingsChanged: (previous, next) => !Equal.equals(previous, next),
       initialSnapshot: makePendingCodexProvider,
       checkProvider,
+      beforeRefresh: serverSettings.getSettings.pipe(
+        Effect.map((settings) => settings.providers.codex),
+        Effect.flatMap((settings) =>
+          Cache.invalidate(
+            accountProbeCache,
+            codexAccountProbeCacheKey({
+              binaryPath: settings.binaryPath,
+              ...(settings.homePath ? { homePath: settings.homePath } : {}),
+            }),
+          ),
+        ),
+      ),
     });
   }),
 );
