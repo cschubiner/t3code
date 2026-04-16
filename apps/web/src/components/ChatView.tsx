@@ -139,6 +139,8 @@ import {
 } from "../lib/terminalContext";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
+import { QueuedFollowUpsPanel } from "./QueuedFollowUpsPanel";
+import { useQueuedTurnStore, type QueuedTurnDraft } from "../queuedTurnStore";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
@@ -801,6 +803,26 @@ export default function ChatView(props: ChatViewProps) {
     [activeThread],
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
+
+  // ---- Queued follow-ups (client-side steering queue) ----
+  const EMPTY_QUEUED_ITEMS = useMemo(() => [] as readonly QueuedTurnDraft[], []);
+  const queuedItems = useQueuedTurnStore((store) =>
+    activeThreadKey
+      ? (store.threadsByThreadKey[activeThreadKey]?.items ?? EMPTY_QUEUED_ITEMS)
+      : EMPTY_QUEUED_ITEMS,
+  );
+  const enqueueQueuedTurn = useQueuedTurnStore((store) => store.enqueue);
+  const removeQueuedTurnById = useQueuedTurnStore((store) => store.removeById);
+  const popNextQueuedTurn = useQueuedTurnStore((store) => store.popNext);
+  const replaceQueuedTurnText = useQueuedTurnStore((store) => store.replaceText);
+  const clearQueuedTurnsForThread = useQueuedTurnStore((store) => store.clearThread);
+
+  // Guard so we don't re-pop the queue between `isSendBusy` flipping false
+  // and the next turn's `isSendBusy` flipping true: the auto-dispatch writes
+  // into the composer and re-calls onSend, which will eventually flip the
+  // flag, but there is a render or two in between.
+  const queueAutoDispatchInFlightRef = useRef(false);
+
   const existingOpenTerminalThreadKeys = useMemo(() => {
     const existingThreadKeys = new Set<string>([...serverThreadKeys, ...draftThreadKeys]);
     return openTerminalThreadKeys.filter((nextThreadKey) => existingThreadKeys.has(nextThreadKey));
@@ -2401,7 +2423,30 @@ export default function ChatView(props: ChatViewProps) {
   const onSend = async (e?: { preventDefault: () => void }) => {
     e?.preventDefault();
     const api = readEnvironmentApi(environmentId);
-    if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
+    if (!api || !activeThread) return;
+    // --- Steering queue interception --------------------------------------
+    // If a turn is already in-flight (locally dispatching or server-running)
+    // and the composer has non-empty plain text, push it onto the per-thread
+    // queue instead of silently dropping the submit. Images / terminal
+    // contexts / slash commands fall through to the normal blocked behavior
+    // because they don't round-trip through the queue today.
+    if (isSendBusy || isConnecting || sendInFlightRef.current) {
+      if (activeThreadRef) {
+        const pending = (promptRef.current ?? "").trim();
+        const ctx = composerRef.current?.getSendContext();
+        const hasAttachmentsOrContext =
+          (ctx?.images?.length ?? 0) > 0 || (ctx?.terminalContexts?.length ?? 0) > 0;
+        if (pending.length > 0 && !hasAttachmentsOrContext) {
+          const enqueued = enqueueQueuedTurn(activeThreadRef, pending);
+          if (enqueued) {
+            promptRef.current = "";
+            clearComposerDraftContent(composerDraftTarget);
+            composerRef.current?.resetCursorState();
+          }
+        }
+      }
+      return;
+    }
     if (activePendingProgress) {
       onAdvanceActivePendingUserInput();
       return;
@@ -2692,6 +2737,49 @@ export default function ChatView(props: ChatViewProps) {
       resetLocalDispatch();
     }
   };
+
+  // ---- Auto-dispatch next queued follow-up when the thread idles ----
+  useEffect(() => {
+    if (!activeThreadRef) return;
+    if (queuedItems.length === 0) return;
+    if (isSendBusy || isConnecting || sendInFlightRef.current) return;
+    if (activePendingApproval || pendingUserInputs.length > 0 || activePendingProgress) return;
+    if (queueAutoDispatchInFlightRef.current) return;
+
+    const head = queuedItems[0];
+    if (!head) return;
+
+    // Avoid stomping over a user who is currently typing something new.
+    const currentPrompt = (promptRef.current ?? "").trim();
+    if (currentPrompt.length > 0) return;
+
+    queueAutoDispatchInFlightRef.current = true;
+    popNextQueuedTurn(activeThreadRef);
+    promptRef.current = head.text;
+    setComposerDraftPrompt(composerDraftTarget, head.text);
+    composerRef.current?.resetCursorState({ prompt: head.text });
+
+    const frameId = window.requestAnimationFrame(() => {
+      queueAutoDispatchInFlightRef.current = false;
+      void onSend();
+    });
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      queueAutoDispatchInFlightRef.current = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onSend is stable per render within this component scope
+  }, [
+    activeThreadRef,
+    queuedItems,
+    isSendBusy,
+    isConnecting,
+    activePendingApproval,
+    pendingUserInputs.length,
+    activePendingProgress,
+    composerDraftTarget,
+    popNextQueuedTurn,
+    setComposerDraftPrompt,
+  ]);
 
   const onInterrupt = async () => {
     const api = readEnvironmentApi(environmentId);
@@ -3382,6 +3470,34 @@ export default function ChatView(props: ChatViewProps) {
                 : "pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:pb-[calc(env(safe-area-inset-bottom)+1rem)]",
             )}
           >
+            {activeThreadRef && queuedItems.length > 0 ? (
+              <div className="mx-auto w-full min-w-0 max-w-208">
+                <QueuedFollowUpsPanel
+                  threadRef={activeThreadRef}
+                  queuedItems={queuedItems}
+                  canSendNow={!isSendBusy && !isConnecting && !sendInFlightRef.current}
+                  onSendNow={(draft) => {
+                    // Remove from queue first so the dispatcher effect does not
+                    // re-pop the same item on the next settle event.
+                    removeQueuedTurnById(activeThreadRef, draft.id);
+                    // Seed the composer (both promptRef and the persisted
+                    // draft store, so the visible editor reflects the
+                    // queued text), then trigger the existing send path.
+                    promptRef.current = draft.text;
+                    setComposerDraftPrompt(composerDraftTarget, draft.text);
+                    composerRef.current?.resetCursorState({ prompt: draft.text });
+                    window.requestAnimationFrame(() => {
+                      void onSend();
+                    });
+                  }}
+                  onDelete={(draft) => removeQueuedTurnById(activeThreadRef, draft.id)}
+                  onClearAll={() => clearQueuedTurnsForThread(activeThreadRef)}
+                  onReplaceText={(draft, nextText) =>
+                    replaceQueuedTurnText(activeThreadRef, draft.id, nextText)
+                  }
+                />
+              </div>
+            ) : null}
             <ChatComposer
               ref={composerRef}
               composerDraftTarget={composerDraftTarget}
