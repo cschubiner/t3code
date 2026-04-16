@@ -74,6 +74,7 @@ import {
 } from "./updateMachine";
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch";
 import { resolveDesktopAppBranding } from "./appBranding";
+import { readTailnetInfo } from "./tailnetInfo";
 
 syncShellEnvironment();
 
@@ -100,6 +101,7 @@ const SET_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:set-saved-environment-secr
 const REMOVE_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:remove-saved-environment-secret";
 const GET_SERVER_EXPOSURE_STATE_CHANNEL = "desktop:get-server-exposure-state";
 const SET_SERVER_EXPOSURE_MODE_CHANNEL = "desktop:set-server-exposure-mode";
+const GET_TAILNET_INFO_CHANNEL = "desktop:get-tailnet-info";
 const BASE_DIR = process.env.T3CODE_HOME?.trim() || Path.join(OS.homedir(), ".t3");
 const STATE_DIR = Path.join(BASE_DIR, "userdata");
 const DESKTOP_SETTINGS_PATH = Path.join(STATE_DIR, "desktop-settings.json");
@@ -1659,6 +1661,9 @@ function registerIpcHandlers(): void {
 
   ipcMain.removeHandler(GET_SERVER_EXPOSURE_STATE_CHANNEL);
   ipcMain.handle(GET_SERVER_EXPOSURE_STATE_CHANNEL, async () => getDesktopServerExposureState());
+
+  ipcMain.removeHandler(GET_TAILNET_INFO_CHANNEL);
+  ipcMain.handle(GET_TAILNET_INFO_CHANNEL, async () => readTailnetInfo());
 
   ipcMain.removeHandler(SET_SERVER_EXPOSURE_MODE_CHANNEL);
   ipcMain.handle(SET_SERVER_EXPOSURE_MODE_CHANNEL, async (_event, rawMode: unknown) => {
