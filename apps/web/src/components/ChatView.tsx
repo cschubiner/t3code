@@ -141,6 +141,11 @@ import { selectThreadTerminalState, useTerminalStateStore } from "../terminalSta
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { QueuedFollowUpsPanel } from "./QueuedFollowUpsPanel";
 import { useQueuedTurnStore, type QueuedTurnDraft } from "../queuedTurnStore";
+import { SnippetPickerDialog } from "./SnippetPickerDialog";
+import { snippetListQueryOptions, snippetQueryKeys } from "../lib/snippetReactQuery";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ensureLocalApi } from "../localApi";
+import type { Snippet, SnippetId } from "@t3tools/contracts";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
@@ -822,6 +827,30 @@ export default function ChatView(props: ChatViewProps) {
   // into the composer and re-calls onSend, which will eventually flip the
   // flag, but there is a render or two in between.
   const queueAutoDispatchInFlightRef = useRef(false);
+
+  // ---- Snippet picker (cmd+; / ctrl+;) ----
+  const [snippetPickerOpen, setSnippetPickerOpen] = useState(false);
+  const [snippetPickerFocusRequest, setSnippetPickerFocusRequest] = useState(0);
+  const [deletingSnippetId, setDeletingSnippetId] = useState<SnippetId | null>(null);
+  const snippetQueryClient = useQueryClient();
+  const snippetListQuery = useQuery(snippetListQueryOptions());
+  const snippets = snippetListQuery.data?.snippets ?? [];
+  const createSnippetMutation = useMutation({
+    mutationFn: (text: string) => ensureLocalApi().snippets.create({ text }),
+    onSuccess: () => {
+      void snippetQueryClient.invalidateQueries({ queryKey: snippetQueryKeys.all });
+    },
+  });
+  const deleteSnippetMutation = useMutation({
+    mutationFn: (snippetId: SnippetId) => ensureLocalApi().snippets.delete({ snippetId }),
+    onMutate: (snippetId) => {
+      setDeletingSnippetId(snippetId);
+    },
+    onSettled: () => {
+      setDeletingSnippetId(null);
+      void snippetQueryClient.invalidateQueries({ queryKey: snippetQueryKeys.all });
+    },
+  });
 
   const existingOpenTerminalThreadKeys = useMemo(() => {
     const existingThreadKeys = new Set<string>([...serverThreadKeys, ...draftThreadKeys]);
@@ -2738,6 +2767,27 @@ export default function ChatView(props: ChatViewProps) {
     }
   };
 
+  // ---- Global shortcut: open snippet picker with cmd/ctrl + ; ----
+  useEffect(() => {
+    const onWindowKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.repeat) return;
+      const isSemicolon = event.key === ";" || event.code === "Semicolon";
+      if (!isSemicolon) return;
+      const usesMod = event.metaKey || event.ctrlKey;
+      if (!usesMod || event.shiftKey || event.altKey) return;
+      // Don't hijack cmd+; when the user is inside a text input that has its
+      // own semicolon handling.
+      const target = event.target;
+      if (target instanceof HTMLInputElement && target.type === "password") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setSnippetPickerFocusRequest((previous) => previous + 1);
+      setSnippetPickerOpen(true);
+    };
+    window.addEventListener("keydown", onWindowKeyDown);
+    return () => window.removeEventListener("keydown", onWindowKeyDown);
+  }, []);
+
   // ---- Auto-dispatch next queued follow-up when the thread idles ----
   //
   // Preconditions (all must hold or we bail without touching the queue):
@@ -3489,6 +3539,28 @@ export default function ChatView(props: ChatViewProps) {
                 : "pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:pb-[calc(env(safe-area-inset-bottom)+1rem)]",
             )}
           >
+            <SnippetPickerDialog
+              open={snippetPickerOpen}
+              onOpenChange={setSnippetPickerOpen}
+              snippets={snippets}
+              focusRequestId={snippetPickerFocusRequest}
+              deletingSnippetId={deletingSnippetId}
+              onSelectSnippet={(snippet: Snippet) => {
+                // Append snippet text into the composer (don't overwrite any
+                // existing draft). The composer is the single source of truth
+                // for its visible content via composerDraftStore.setPrompt.
+                const existing = (promptRef.current ?? "").trim();
+                const nextPrompt =
+                  existing.length === 0 ? snippet.text : `${existing}\n\n${snippet.text}`;
+                promptRef.current = nextPrompt;
+                setComposerDraftPrompt(composerDraftTarget, nextPrompt);
+                composerRef.current?.resetCursorState({ prompt: nextPrompt });
+                setSnippetPickerOpen(false);
+              }}
+              onDeleteSnippet={(snippet: Snippet) => {
+                deleteSnippetMutation.mutate(snippet.id);
+              }}
+            />
             {activeThreadRef && queuedItems.length > 0 ? (
               <div className="mx-auto w-full min-w-0 max-w-208">
                 <QueuedFollowUpsPanel
@@ -3514,6 +3586,11 @@ export default function ChatView(props: ChatViewProps) {
                   onReplaceText={(draft, nextText) =>
                     replaceQueuedTurnText(activeThreadRef, draft.id, nextText)
                   }
+                  onSaveAsSnippet={(draft) => {
+                    const text = draft.text.trim();
+                    if (text.length === 0) return;
+                    createSnippetMutation.mutate(text);
+                  }}
                 />
               </div>
             ) : null}
