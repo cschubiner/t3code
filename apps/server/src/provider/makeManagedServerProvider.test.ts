@@ -12,6 +12,8 @@ const codexSnapshot = (authType: "apiKey" | "chatgpt"): ServerProvider => ({
   version: "1.0.0",
   checkedAt: "2026-04-07T00:00:00.000Z",
   models: [],
+  slashCommands: [],
+  skills: [],
   auth: {
     status: "authenticated",
     type: authType,
@@ -33,6 +35,7 @@ describe("makeManagedServerProvider", () => {
             getSettings: Ref.get(settingsRef),
             streamSettings: Stream.fromPubSub(changes),
             haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+            initialSnapshot: () => codexSnapshot("apiKey"),
             checkProvider: Ref.get(authTypeRef).pipe(Effect.map(codexSnapshot)),
             beforeRefresh: Ref.update(refreshCountRef, (count) => count + 1).pipe(
               Effect.flatMap(() => Ref.set(authTypeRef, "chatgpt")),

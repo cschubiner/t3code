@@ -699,22 +699,28 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
       it.effect("invalidates the codex account probe cache on manual refresh", () =>
         Effect.gen(function* () {
           yield* withTempCodexHome();
-          const accountSnapshots = [
+          const discoverySnapshots = [
             {
-              type: "apiKey" as const,
-              planType: null,
-              sparkEnabled: false,
+              account: {
+                type: "apiKey" as const,
+                planType: null,
+                sparkEnabled: false,
+              },
+              skills: [] as ReadonlyArray<never>,
             },
             {
-              type: "chatgpt" as const,
-              planType: "pro" as const,
-              sparkEnabled: true,
+              account: {
+                type: "chatgpt" as const,
+                planType: "pro" as const,
+                sparkEnabled: true,
+              },
+              skills: [] as ReadonlyArray<never>,
             },
           ];
           let probeCallCount = 0;
-          vi.spyOn(codexAppServer, "probeCodexAccount").mockImplementation(async () => {
+          vi.spyOn(codexAppServer, "probeCodexDiscovery").mockImplementation(async () => {
             const snapshot =
-              accountSnapshots[Math.min(probeCallCount, accountSnapshots.length - 1)]!;
+              discoverySnapshots[Math.min(probeCallCount, discoverySnapshots.length - 1)]!;
             probeCallCount += 1;
             return snapshot;
           });
@@ -724,6 +730,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           const serverSettingsLayer = ServerSettingsService.layerTest();
           const providerRegistryLayer = ProviderRegistryLive.pipe(
             Layer.provideMerge(serverSettingsLayer),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), {
+                prefix: "t3-provider-registry-",
+              }),
+            ),
             Layer.provideMerge(
               mockCommandSpawnerLayer((_command, args) => {
                 const joined = args.join(" ");
