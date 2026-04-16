@@ -149,6 +149,20 @@ export interface DesktopServerExposureState {
   advertisedHost: string | null;
 }
 
+/**
+ * Summary of the local machine's Tailscale network membership, surfaced to
+ * the renderer so the UI can show the user a "reach me at <hostname>" URL.
+ * Populated via the `tailscale status --json` CLI — if the binary isn't
+ * installed, `available` is false and the renderer should hide the chip.
+ */
+export interface DesktopTailnetInfo {
+  available: boolean;
+  connected: boolean;
+  hostname: string | null;
+  ipv4: string | null;
+  error: string | null;
+}
+
 export interface PickFolderOptions {
   initialPath?: string | null;
 }
@@ -167,6 +181,7 @@ export interface DesktopBridge {
   removeSavedEnvironmentSecret: (environmentId: EnvironmentId) => Promise<void>;
   getServerExposureState: () => Promise<DesktopServerExposureState>;
   setServerExposureMode: (mode: DesktopServerExposureMode) => Promise<DesktopServerExposureState>;
+  getTailnetInfo: () => Promise<DesktopTailnetInfo>;
   pickFolder: (options?: PickFolderOptions) => Promise<string | null>;
   confirm: (message: string) => Promise<boolean>;
   setTheme: (theme: DesktopTheme) => Promise<void>;
