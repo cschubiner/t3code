@@ -43,6 +43,12 @@ import type {
 } from "./terminal.ts";
 import type { ServerUpsertKeybindingInput } from "./server.ts";
 import type {
+  SnippetCreateInput,
+  SnippetCreateResult,
+  SnippetDeleteInput,
+  SnippetListResult,
+} from "./snippets";
+import type {
   ClientOrchestrationCommand,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetFullThreadDiffResult,
@@ -229,6 +235,11 @@ export interface LocalApi {
     getSettings: () => Promise<ServerSettings>;
     updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;
     discoverSourceControl: () => Promise<SourceControlDiscoveryResult>;
+  };
+  snippets: {
+    list: () => Promise<SnippetListResult>;
+    create: (input: SnippetCreateInput) => Promise<SnippetCreateResult>;
+    delete: (input: SnippetDeleteInput) => Promise<unknown>;
   };
 }
 
