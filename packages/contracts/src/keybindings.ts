@@ -58,6 +58,8 @@ const STATIC_KEYBINDING_COMMANDS = [
   "chat.newLocal",
   "editor.openFavorite",
   ...MODEL_PICKER_KEYBINDING_COMMANDS,
+  "sidebar.history.previous",
+  "sidebar.history.next",
   ...THREAD_KEYBINDING_COMMANDS,
 ] as const;
 
