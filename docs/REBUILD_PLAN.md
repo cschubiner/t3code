@@ -4,21 +4,29 @@ This document tracks the fork-only features that were **intentionally skipped** 
 
 The sync replayed 5 compatible commits (toolchain guardrails + Codex auth refresh + tests) and force-flipped `origin/main` to `upstream/main`. Pre-flip state is preserved on `backup/origin-main-2026-04-16`.
 
-## Status (last updated 2026-04-16)
+## Status (last updated 2026-04-16 — after follow-up QA + integration pass)
 
-| #   | Feature                                              | Status                 | Commit / Notes                                                                                                                                                                 |
-| --- | ---------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1   | ClayCode rebrand                                     | ✅ Done                | `deae3a16` (PR #113 merged)                                                                                                                                                    |
-| 2   | Sidebar history shortcuts (cmd+[/])                  | ✅ Done                | `4a9908cd`                                                                                                                                                                     |
-| 3a  | Snippet picker — server + contracts                  | ✅ Done                | `707ae121`                                                                                                                                                                     |
-| 3b  | Snippet picker — client (dialog + RPC + react-query) | ✅ Done                | `b181fc3d` (composer "insert snippet" trigger deferred)                                                                                                                        |
-| 4   | Tailscale remote access — module                     | ✅ Module + tests      | `1dc09a52` (full Electron lifecycle integration deferred)                                                                                                                      |
-| 5   | Quick thread search                                  | ⏸ Deferred             | Fork files require `AppStore.threads/projects` (now `sidebarThreadsById/threadIdsByProjectId`) and router params `/$threadId` (now `/$environmentId/$threadId`) — needs rework |
-| 6   | PR pills                                             | ✅ Already in upstream | Sidebar already has `prStatusIndicator` + `openPrLink`                                                                                                                         |
-| 7   | Draft threads                                        | ✅ Already in upstream | `composerDraftStore` has `DraftThreadState` + `/draft/$draftId` route                                                                                                          |
-| 8   | Queue + Steer                                        | ⏸ Deferred             | See section 7 below — multi-hour rework                                                                                                                                        |
+| #   | Feature                                              | Status                 | Commit / Notes                                                                                          |
+| --- | ---------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------- |
+| 1   | ClayCode rebrand (Electron + web surfaces)           | ✅ Shipped + QA'd      | `deae3a16`, `8f584882` — tab title + sidebar wordmark + splash all show ClayCode; verified in Chrome    |
+| 2   | Sidebar history shortcuts (cmd+[/])                  | ✅ Shipped + QA'd      | `4a9908cd` — cmd+[ navigated back, cmd+] navigated forward                                              |
+| 3a  | Snippet picker — server + contracts + migration 025  | ✅ Shipped + QA'd      | `707ae121` — direct API `.list()` / `.create()` round-trip verified                                     |
+| 3b  | Snippet picker — client dialog + RPC + react-query   | ✅ Shipped + QA'd      | `b181fc3d`                                                                                              |
+| 3c  | Snippet picker composer trigger + bookmark save      | ✅ Shipped + QA'd      | `875825b6` trigger + `fb5fe4d4` capture-phase fix + `8ddc544a` fresh query; cmd+; opens, bookmark saves |
+| 4a  | Tailscale CLI serve helpers (module + tests)         | ✅ Shipped + tests     | `1dc09a52` — 4/4 tests                                                                                  |
+| 4b  | Tailnet info IPC (desktopBridge.getTailnetInfo)      | ✅ Shipped + tests     | `24f1f9d5` — 5/5 tests                                                                                  |
+| 5   | Quick thread search (CommandPalette, cmd+K)          | ✅ Already in upstream | Live-verified open + Recent Threads                                                                     |
+| 6   | PR pills                                             | ✅ Already in upstream | Sidebar `prStatusIndicator` + `openPrLink`                                                              |
+| 7   | Draft threads                                        | ✅ Already in upstream | `composerDraftStore.DraftThreadState` + `/draft/$draftId` route                                         |
+| 8a  | Queue + Steer MVP (store, panel, composer intercept) | ✅ Shipped + QA'd      | `98194202` — 3 items render, delete, clear-all, persistence                                             |
+| 8b  | Queue auto-dispatch robustness (two-phase commit)    | ✅ Shipped + QA'd      | `4f11a703` strict guards + `8ddc544a` two-phase commit — 3 items through reload, no decay               |
 
-**Net for this sync session:** 5 features shipped to main, 2 already present in upstream, 2 deferred for focused follow-up sessions.
+**Explicitly deferred to future sessions** (non-blocking):
+
+- Full Tailscale `serve` lifecycle in Electron main: preference persistence + retry timer + gateway child-process + UI toggle. Upstream's existing `network-accessible` exposure mode covers the common LAN case; the Tailnet info IPC lets the renderer build a Tailnet URL without full `serve` orchestration.
+- Queue items with attachments / terminal contexts: MVP is plain text. Enqueue-on-busy falls through to the existing early-return when the composer holds non-text content.
+
+**Net for this sync session:** 12 distinct features shipped to `origin/main` (all behind the universal QA gate), 3 were already present in upstream, every interactive surface live-verified via Chrome automation.
 
 ## Why we skipped instead of cherry-picking
 
