@@ -12,6 +12,8 @@ import {
   isChatNewLocalShortcut,
   isDiffToggleShortcut,
   isOpenFavoriteEditorShortcut,
+  isSidebarHistoryNextShortcut,
+  isSidebarHistoryPreviousShortcut,
   isTerminalClearShortcut,
   isTerminalCloseShortcut,
   isTerminalNewShortcut,
@@ -112,6 +114,16 @@ const DEFAULT_BINDINGS = compile([
   { shortcut: modShortcut("o"), command: "editor.openFavorite" },
   { shortcut: modShortcut("[", { shiftKey: true }), command: "thread.previous" },
   { shortcut: modShortcut("]", { shiftKey: true }), command: "thread.next" },
+  {
+    shortcut: modShortcut("["),
+    command: "sidebar.history.previous",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
+    shortcut: modShortcut("]"),
+    command: "sidebar.history.next",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
   { shortcut: modShortcut("1"), command: "thread.jump.1" },
   { shortcut: modShortcut("2"), command: "thread.jump.2" },
   { shortcut: modShortcut("3"), command: "thread.jump.3" },
@@ -389,6 +401,65 @@ describe("chat/editor shortcuts", () => {
       isOpenFavoriteEditorShortcut(event({ key: "o", ctrlKey: true }), DEFAULT_BINDINGS, {
         platform: "Linux",
       }),
+    );
+  });
+
+  it("matches sidebar.history.previous shortcut outside terminal focus", () => {
+    assert.isTrue(
+      isSidebarHistoryPreviousShortcut(event({ key: "[", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+    );
+    assert.isTrue(
+      isSidebarHistoryPreviousShortcut(event({ key: "[", ctrlKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+    );
+    assert.isFalse(
+      isSidebarHistoryPreviousShortcut(event({ key: "[", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+    );
+  });
+
+  it("matches sidebar.history.next shortcut outside terminal focus", () => {
+    assert.isTrue(
+      isSidebarHistoryNextShortcut(event({ key: "]", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+    );
+    assert.isTrue(
+      isSidebarHistoryNextShortcut(event({ key: "]", ctrlKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+    );
+    assert.isFalse(
+      isSidebarHistoryNextShortcut(event({ key: "]", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+    );
+  });
+
+  it("does not match sidebar.history shortcuts when shift held (cmd+shift+[ stays as thread.previous)", () => {
+    assert.isFalse(
+      isSidebarHistoryPreviousShortcut(
+        event({ key: "[", metaKey: true, shiftKey: true }),
+        DEFAULT_BINDINGS,
+        { platform: "MacIntel", context: { terminalFocus: false } },
+      ),
+    );
+    assert.isFalse(
+      isSidebarHistoryNextShortcut(
+        event({ key: "]", metaKey: true, shiftKey: true }),
+        DEFAULT_BINDINGS,
+        { platform: "MacIntel", context: { terminalFocus: false } },
+      ),
     );
   });
 
