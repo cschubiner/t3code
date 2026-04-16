@@ -1,4 +1,4 @@
-import { Cause, Duration, Effect, Layer, Option, Queue, Ref, Schema, Stream } from "effect";
+import { Cause, Duration, Effect, Layer, Option, PubSub, Queue, Ref, Schema, Stream } from "effect";
 import {
   type AuthAccessStreamEvent,
   AuthSessionId,
@@ -18,6 +18,8 @@ import {
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
   FilesystemBrowseError,
+  SnippetLibraryError,
+  type SnippetLibraryUpdatedPayload,
   ThreadId,
   type TerminalEvent,
   WS_METHODS,
@@ -43,6 +45,7 @@ import {
   observeRpcStreamEffect,
 } from "./observability/RpcInstrumentation";
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry";
+import { SnippetRepository } from "./persistence/Services/Snippets";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup";
 import { ServerSettingsService } from "./serverSettings";
@@ -153,6 +156,11 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const serverAuth = yield* ServerAuth;
       const bootstrapCredentials = yield* BootstrapCredentialService;
       const sessions = yield* SessionCredentialService;
+      const snippetRepository = yield* SnippetRepository;
+      const snippetsUpdatedPubSub = yield* Effect.acquireRelease(
+        PubSub.unbounded<SnippetLibraryUpdatedPayload>(),
+        (pubsub) => PubSub.shutdown(pubsub),
+      );
       const serverCommandId = (tag: string) =>
         CommandId.make(`server:${tag}:${crypto.randomUUID()}`);
 
@@ -731,6 +739,76 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcEffect(WS_METHODS.serverGetSettings, serverSettings.getSettings, {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.snippetsList]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.snippetsList,
+            snippetRepository.listAll().pipe(
+              Effect.map((snippets) => ({ snippets })),
+              Effect.mapError(
+                (cause) =>
+                  new SnippetLibraryError({
+                    message: "Failed to load snippets.",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.snippetsCreate]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.snippetsCreate,
+            Effect.gen(function* () {
+              const result = yield* snippetRepository
+                .upsertByExactText({
+                  text: input.text,
+                  updatedAt: new Date().toISOString(),
+                })
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new SnippetLibraryError({
+                        message: "Failed to save snippet.",
+                        cause,
+                      }),
+                  ),
+                );
+              yield* PubSub.publish(snippetsUpdatedPubSub, {
+                kind: "upsert" as const,
+                snippetId: result.snippet.id,
+                updatedAt: result.snippet.updatedAt,
+              });
+              return result;
+            }),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.snippetsDelete]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.snippetsDelete,
+            Effect.gen(function* () {
+              yield* snippetRepository.deleteById(input).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new SnippetLibraryError({
+                      message: "Failed to delete snippet.",
+                      cause,
+                    }),
+                ),
+              );
+              yield* PubSub.publish(snippetsUpdatedPubSub, {
+                kind: "delete" as const,
+                snippetId: input.snippetId,
+                updatedAt: new Date().toISOString(),
+              });
+              return {};
+            }),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.subscribeSnippetsUpdated]: (_input) =>
+          observeRpcStream(
+            WS_METHODS.subscribeSnippetsUpdated,
+            Stream.fromPubSub(snippetsUpdatedPubSub),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.serverUpdateSettings]: ({ patch }) =>
           observeRpcEffect(WS_METHODS.serverUpdateSettings, serverSettings.updateSettings(patch), {
             "rpc.aggregate": "server",

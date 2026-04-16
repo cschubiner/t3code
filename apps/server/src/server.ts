@@ -40,6 +40,7 @@ import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderComma
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor";
 import { ProviderRegistryLive } from "./provider/Layers/ProviderRegistry";
 import { ServerSettingsLive } from "./serverSettings";
+import { SnippetRepositoryLive } from "./persistence/Layers/Snippets";
 import { ProjectFaviconResolverLive } from "./project/Layers/ProjectFaviconResolver";
 import { RepositoryIdentityResolverLive } from "./project/Layers/RepositoryIdentityResolver";
 import { WorkspaceEntriesLive } from "./workspace/Layers/WorkspaceEntries";
@@ -205,6 +206,7 @@ const RuntimeDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(KeybindingsLive),
   Layer.provideMerge(ProviderRegistryLive),
   Layer.provideMerge(ServerSettingsLive),
+  Layer.provideMerge(SnippetRepositoryLive),
   Layer.provideMerge(WorkspaceLayerLive),
   Layer.provideMerge(ProjectFaviconResolverLive),
   Layer.provideMerge(RepositoryIdentityResolverLive),

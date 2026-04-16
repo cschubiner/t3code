@@ -32,6 +32,14 @@ import {
 } from "./git";
 import { KeybindingsConfigError } from "./keybindings";
 import {
+  SnippetCreateInput,
+  SnippetCreateResult,
+  SnippetDeleteInput,
+  SnippetLibraryError,
+  SnippetLibraryUpdatedPayload,
+  SnippetListResult,
+} from "./snippets";
+import {
   ClientOrchestrationCommand,
   ORCHESTRATION_WS_METHODS,
   OrchestrationDispatchCommandError,
@@ -115,12 +123,18 @@ export const WS_METHODS = {
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
 
+  // Snippet library
+  snippetsList: "snippets.list",
+  snippetsCreate: "snippets.create",
+  snippetsDelete: "snippets.delete",
+
   // Streaming subscriptions
   subscribeGitStatus: "subscribeGitStatus",
   subscribeTerminalEvents: "subscribeTerminalEvents",
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
+  subscribeSnippetsUpdated: "subscribeSnippetsUpdated",
 } as const;
 
 export const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -351,6 +365,30 @@ export const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess,
   stream: true,
 });
 
+export const WsSnippetsListRpc = Rpc.make(WS_METHODS.snippetsList, {
+  payload: Schema.Struct({}),
+  success: SnippetListResult,
+  error: SnippetLibraryError,
+});
+
+export const WsSnippetsCreateRpc = Rpc.make(WS_METHODS.snippetsCreate, {
+  payload: SnippetCreateInput,
+  success: SnippetCreateResult,
+  error: SnippetLibraryError,
+});
+
+export const WsSnippetsDeleteRpc = Rpc.make(WS_METHODS.snippetsDelete, {
+  payload: SnippetDeleteInput,
+  success: Schema.Struct({}),
+  error: SnippetLibraryError,
+});
+
+export const WsSubscribeSnippetsUpdatedRpc = Rpc.make(WS_METHODS.subscribeSnippetsUpdated, {
+  payload: Schema.Struct({}),
+  success: SnippetLibraryUpdatedPayload,
+  stream: true,
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
@@ -389,4 +427,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationReplayEventsRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationSubscribeThreadRpc,
+  WsSnippetsListRpc,
+  WsSnippetsCreateRpc,
+  WsSnippetsDeleteRpc,
+  WsSubscribeSnippetsUpdatedRpc,
 );
