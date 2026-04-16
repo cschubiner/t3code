@@ -116,6 +116,11 @@ export function createLocalApi(rpcClient: WsRpcClient): LocalApi {
       getSettings: rpcClient.server.getSettings,
       updateSettings: rpcClient.server.updateSettings,
     },
+    snippets: {
+      list: rpcClient.snippets.list,
+      create: rpcClient.snippets.create,
+      delete: rpcClient.snippets.delete,
+    },
   };
 }
 
