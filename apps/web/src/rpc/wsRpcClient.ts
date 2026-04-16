@@ -112,6 +112,12 @@ export interface WsRpcClient {
     readonly subscribeLifecycle: RpcStreamMethod<typeof WS_METHODS.subscribeServerLifecycle>;
     readonly subscribeAuthAccess: RpcStreamMethod<typeof WS_METHODS.subscribeAuthAccess>;
   };
+  readonly snippets: {
+    readonly list: RpcUnaryNoArgMethod<typeof WS_METHODS.snippetsList>;
+    readonly create: RpcUnaryMethod<typeof WS_METHODS.snippetsCreate>;
+    readonly delete: RpcUnaryMethod<typeof WS_METHODS.snippetsDelete>;
+    readonly subscribeUpdated: RpcStreamMethod<typeof WS_METHODS.subscribeSnippetsUpdated>;
+  };
   readonly orchestration: {
     readonly dispatchCommand: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.dispatchCommand>;
     readonly getTurnDiff: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.getTurnDiff>;
@@ -228,6 +234,17 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
       subscribeAuthAccess: (listener, options) =>
         transport.subscribe(
           (client) => client[WS_METHODS.subscribeAuthAccess]({}),
+          listener,
+          options,
+        ),
+    },
+    snippets: {
+      list: () => transport.request((client) => client[WS_METHODS.snippetsList]({})),
+      create: (input) => transport.request((client) => client[WS_METHODS.snippetsCreate](input)),
+      delete: (input) => transport.request((client) => client[WS_METHODS.snippetsDelete](input)),
+      subscribeUpdated: (listener, options) =>
+        transport.subscribe(
+          (client) => client[WS_METHODS.subscribeSnippetsUpdated]({}),
           listener,
           options,
         ),

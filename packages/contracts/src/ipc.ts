@@ -42,6 +42,12 @@ import type {
 } from "./terminal";
 import type { ServerUpsertKeybindingInput } from "./server";
 import type {
+  SnippetCreateInput,
+  SnippetCreateResult,
+  SnippetDeleteInput,
+  SnippetListResult,
+} from "./snippets";
+import type {
   ClientOrchestrationCommand,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetFullThreadDiffResult,
@@ -218,6 +224,11 @@ export interface LocalApi {
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
     getSettings: () => Promise<ServerSettings>;
     updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;
+  };
+  snippets: {
+    list: () => Promise<SnippetListResult>;
+    create: (input: SnippetCreateInput) => Promise<SnippetCreateResult>;
+    delete: (input: SnippetDeleteInput) => Promise<unknown>;
   };
 }
 
