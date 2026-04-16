@@ -2675,17 +2675,34 @@ export default function ChatView(props: ChatViewProps) {
   };
 
   // ---- Auto-dispatch next queued follow-up when the thread idles ----
+  //
+  // Preconditions (all must hold or we bail without touching the queue):
+  //   • activeThread is fully resolved (not just activeThreadRef being non-null
+  //     while the thread shell is still loading)
+  //   • an EnvironmentApi exists for this environment — otherwise onSend would
+  //     early-return at `if (!api || !activeThread) return;` and we would
+  //     silently drop the popped item
+  //   • no turn in-flight (isSendBusy, isConnecting, or sendInFlightRef)
+  //   • no pending approvals / user inputs / progress prompts
+  //   • composer is empty — we don't stomp a draft the user is typing
+  //   • queueAutoDispatchInFlightRef isn't already set (guards re-entry
+  //     during the rAF → onSend → isSendBusy-becomes-true window)
+  //
+  // IMPORTANT: we pop the head synchronously before scheduling onSend, so
+  // if onSend fails the item is lost. The strict preconditions above are
+  // how we avoid that: onSend's own guards match these, so once we decide
+  // to pop, onSend will dispatch. Future work can add a rollback path.
   useEffect(() => {
-    if (!activeThreadRef) return;
+    if (!activeThreadRef || !activeThread) return;
     if (queuedItems.length === 0) return;
     if (isSendBusy || isConnecting || sendInFlightRef.current) return;
     if (activePendingApproval || pendingUserInputs.length > 0 || activePendingProgress) return;
     if (queueAutoDispatchInFlightRef.current) return;
+    if (!readEnvironmentApi(environmentId)) return;
 
     const head = queuedItems[0];
     if (!head) return;
 
-    // Avoid stomping over a user who is currently typing something new.
     const currentPrompt = (promptRef.current ?? "").trim();
     if (currentPrompt.length > 0) return;
 
@@ -2705,7 +2722,9 @@ export default function ChatView(props: ChatViewProps) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- onSend is stable per render within this component scope
   }, [
+    activeThread,
     activeThreadRef,
+    environmentId,
     queuedItems,
     isSendBusy,
     isConnecting,
