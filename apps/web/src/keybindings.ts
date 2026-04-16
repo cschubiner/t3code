@@ -403,6 +403,22 @@ export function isOpenFavoriteEditorShortcut(
   return matchesCommandShortcut(event, keybindings, "editor.openFavorite", options);
 }
 
+export function isSidebarHistoryPreviousShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "sidebar.history.previous", options);
+}
+
+export function isSidebarHistoryNextShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "sidebar.history.next", options);
+}
+
 export function isTerminalClearShortcut(
   event: ShortcutEventLike,
   platform = navigator.platform,

@@ -3133,6 +3133,22 @@ export default function Sidebar() {
         platform,
         context: shortcutContext,
       });
+      if (command === "sidebar.history.previous") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (typeof window !== "undefined") {
+          window.history.back();
+        }
+        return;
+      }
+      if (command === "sidebar.history.next") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (typeof window !== "undefined") {
+          window.history.forward();
+        }
+        return;
+      }
       const traversalDirection = threadTraversalDirectionFromCommand(command);
       if (traversalDirection !== null) {
         const targetThreadKey = resolveAdjacentThreadId({
