@@ -2784,8 +2784,10 @@ export default function ChatView(props: ChatViewProps) {
       setSnippetPickerFocusRequest((previous) => previous + 1);
       setSnippetPickerOpen(true);
     };
-    window.addEventListener("keydown", onWindowKeyDown);
-    return () => window.removeEventListener("keydown", onWindowKeyDown);
+    // Capture phase so composer editors / modals can't `stopPropagation` the
+    // shortcut before it reaches us.
+    window.addEventListener("keydown", onWindowKeyDown, true);
+    return () => window.removeEventListener("keydown", onWindowKeyDown, true);
   }, []);
 
   // ---- Auto-dispatch next queued follow-up when the thread idles ----
