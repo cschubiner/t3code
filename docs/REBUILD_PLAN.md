@@ -35,10 +35,33 @@ Ordered by ascending scope. Commit each to its own PR for isolated review and QA
 - Upstream rebrand helper: `apps/desktop/src/main.ts` (search `resolveDesktopAppBranding`)
 - Fork pre-rebrand state: `git show backup/origin-main-2026-04-16:apps/desktop/scripts/electron-launcher.mjs`
 
-**QA:**
-- `bun fmt && bun lint && bun typecheck`
-- `bun run build:desktop` (confirms electron-builder picks up new names)
-- Run the built app and verify menu bar / window title / about dialog show `ClayCode`
+**Feature-specific QA (in addition to universal gate):**
+
+Visual / brand audit
+- [ ] macOS menu bar shows `ClayCode (Dev)` / `ClayCode (Alpha)` per env
+- [ ] Window title bar correct
+- [ ] About dialog (`ClayCode → About`) shows correct name + version
+- [ ] Dock icon tooltip correct
+- [ ] cmd+Tab app switcher label correct
+- [ ] Notification banner (when app sends one) shows correct sender name
+- [ ] Spotlight search finds the app under the new name
+- [ ] `Get Info` in Finder on the `.app` bundle shows correct `CFBundleName`
+
+Bundle / install integrity
+- [ ] Bundle ID is still upstream's per-env scheme (don't regress to fork's single ID — would clash with upstream installs)
+- [ ] Auto-updater feed URL still resolves correctly (rebrand should not change update channel)
+- [ ] Existing installed app with old name does not double-install — confirm Squirrel/electron-updater honors bundle ID for upgrades
+- [ ] Code-signing passes (`codesign --verify --deep --strict --verbose=2 <Path.app>`)
+
+Cross-platform (if applicable)
+- [ ] Linux `.AppImage` shows correct `Name=` in `.desktop` file
+- [ ] Windows `.exe` shows correct `ProductName` in file properties
+- [ ] Squirrel.Windows install/uninstall uses correct shortcut name
+
+Regression
+- [ ] All existing keyboard shortcuts still work (cmd+N, cmd+W, cmd+Q, etc.)
+- [ ] Deep links (if any) still resolve
+- [ ] Restart the app — settings persist, doesn't show first-run wizard
 
 ### 2. Sidebar history keyboard shortcuts (~1 hour)
 
@@ -51,7 +74,29 @@ Ordered by ascending scope. Commit each to its own PR for isolated review and QA
 - Upstream shortcut plumbing: `git grep -nE "useHotkey|registerShortcut|KeyboardShortcut" apps/web/src/`
 - Fork shortcut IDs: `git show backup/origin-main-2026-04-16:apps/web/src/components/Sidebar.tsx | grep -n 'sidebar.history'`
 
-**QA:** load app, hit cmd+[ / cmd+] in multiple threads; confirm router back/forward works.
+**Feature-specific QA (in addition to universal gate):**
+
+Behavior
+- [ ] cmd+[ navigates back, cmd+] navigates forward — verify across at least 5 navigation steps
+- [ ] Shortcuts work from inside threads, sidebar, settings, modals
+- [ ] Shortcuts do **not** fire when focus is in a text input / textarea / contenteditable (don't hijack typing)
+- [ ] Shortcuts do **not** fire when focus is in the composer (cmd+[ in composer should not navigate)
+- [ ] When at the start of history, cmd+[ is a no-op (or shows visual indication) — does not crash
+- [ ] When at the end of history, cmd+] is a no-op
+- [ ] Shortcuts persist across hard reload (re-register on mount)
+
+Conflict checks
+- [ ] No conflict with browser-native cmd+[ / cmd+] (they should be intercepted)
+- [ ] No conflict with composer-internal shortcuts (e.g., outdent in code editor)
+- [ ] No conflict with terminal pane shortcuts
+- [ ] cmd+shift+[ / cmd+shift+] (tab navigation in some apps) still works correctly if used elsewhere
+
+Regression
+- [ ] Other keyboard shortcuts unaffected (cmd+N new thread, cmd+K command palette, etc.)
+- [ ] Sidebar collapse/expand state preserved across navigation
+
+Cross-platform
+- [ ] On Linux/Windows, ctrl+[ / ctrl+] equivalent works (verify keymap binding uses platform-correct modifier)
 
 ### 3. Snippet picker (~3-4 hours)
 
@@ -65,7 +110,51 @@ Ordered by ascending scope. Commit each to its own PR for isolated review and QA
 - Add "insert snippet" affordance in composer
 - Add "save as snippet" in QueuedFollowUpsPanel row actions (depends on Queue+Steer #8)
 
-**QA:** Create, edit, delete snippets; insert into composer; filter list.
+**Feature-specific QA (in addition to universal gate):**
+
+CRUD happy path
+- [ ] Create snippet from scratch — appears in list immediately
+- [ ] Create snippet from "Save as snippet" affordance in QueuedFollowUpsPanel (when Queue+Steer is built)
+- [ ] Edit snippet — changes persist across reload
+- [ ] Delete snippet — confirms removal, gone from list
+- [ ] Snippet list orders consistently (alphabetical or recently-used; pick one and verify)
+
+Insertion behavior
+- [ ] Insert snippet into empty composer — text appears, cursor at end
+- [ ] Insert snippet into mid-text composer — text inserts at cursor, doesn't replace
+- [ ] Insert snippet with multiline content — newlines preserved
+- [ ] Insert snippet with special chars (markdown, backticks, emojis) — encoding preserved
+
+Filter / search
+- [ ] Type in filter — list narrows incrementally
+- [ ] Empty filter — full list returns
+- [ ] No-match filter — empty state with clear messaging
+- [ ] Filter is case-insensitive
+- [ ] Filter is debounced (no flicker on fast typing)
+
+Modal / dialog UX
+- [ ] Esc closes dialog without saving
+- [ ] Click-outside closes dialog
+- [ ] Cmd+Enter in edit form saves
+- [ ] Focus moves into dialog on open, returns to trigger on close
+- [ ] Dialog is responsive (mobile-width viewport doesn't break layout)
+
+Persistence / migration
+- [ ] Snippets survive page reload (DB-backed)
+- [ ] Snippets survive server restart
+- [ ] Migration test: legacy DB without `snippets` table → migrate → empty snippets list, no crash
+- [ ] Inspect SQLite file with `sqlite3` CLI to confirm schema correct
+- [ ] Snippets are scoped correctly (per-project? per-user? document the choice and verify)
+
+Edge cases
+- [ ] Snippet with empty title — rejected with clear error
+- [ ] Snippet with 10KB body — saves and loads correctly
+- [ ] 100 snippets in list — UI stays responsive (consider virtualization)
+- [ ] Two clients adding snippets simultaneously — no key collision, both persist
+
+Regression
+- [ ] Composer drafts still persist correctly
+- [ ] No new console errors when opening picker
 
 ### 4. Quick thread search (~3-4 hours)
 
@@ -76,7 +165,45 @@ Ordered by ascending scope. Commit each to its own PR for isolated review and QA
 - `packages/shared/src/searchRanking` — may already be in upstream; confirm with `grep -r searchRanking packages/shared/`
 - Modal-open hotkey wired in a root provider or `_chat.tsx`
 
-**QA:** cmd+k opens modal; typing filters threads across all projects; enter navigates.
+**Feature-specific QA (in addition to universal gate):**
+
+Open / close
+- [ ] cmd+k (or chosen hotkey) opens modal from anywhere in app
+- [ ] Esc closes modal
+- [ ] Click outside closes modal
+- [ ] Modal restores focus to previously-focused element on close
+- [ ] Modal is centered + sized appropriately at mobile / tablet / desktop widths
+
+Search behavior
+- [ ] Empty input shows recent threads (or top-N) — document and verify
+- [ ] Type one char — list filters; further chars narrow further
+- [ ] Backspace widens results
+- [ ] Search matches across thread title (and body if scoped)
+- [ ] Search is fuzzy (substring + typo-tolerant per searchRanking)
+- [ ] Ranking puts most-recent / most-active threads first when scores tie
+- [ ] Diacritics / unicode handled (search "café" matches "cafe"? document and verify)
+- [ ] Special chars in query don't break (`*`, `\`, `'`, `"`)
+
+Navigation
+- [ ] Arrow up/down moves selection
+- [ ] Enter navigates to selected thread, modal closes
+- [ ] Click navigates same as Enter
+- [ ] After navigation, sidebar selection updates to new thread
+- [ ] Navigation works across project boundaries (search in project A, navigate to project B's thread, project context updates)
+
+Performance
+- [ ] 1000 threads — open + type stays under 100ms perceived latency
+- [ ] Typing fast does not stutter (debounced rendering or virtualization)
+- [ ] Memory does not balloon when modal opens repeatedly
+
+Regression
+- [ ] cmd+K does not collide with composer paste-image shortcut or terminal shortcut
+- [ ] Other hotkeys still work
+- [ ] Sidebar still navigable normally after using quick search
+
+Persistence
+- [ ] Recent searches saved between sessions (or document explicit decision not to)
+- [ ] Search index rebuilds correctly when threads added/removed/renamed
 
 ### 5. Draft threads (~4-6 hours)
 
@@ -90,7 +217,38 @@ Ordered by ascending scope. Commit each to its own PR for isolated review and QA
 
 **Backup reference:** `git log backup/origin-main-2026-04-16 --oneline -- 'apps/web/src/**draft**'`
 
-**QA:** Create draft; it persists across reload; edits don't race; Send promotes to real thread.
+**Feature-specific QA (in addition to universal gate):**
+
+Lifecycle
+- [ ] "New draft" affordance creates draft visible in sidebar
+- [ ] Multiple drafts coexist — each has independent state
+- [ ] Editing a draft persists (debounced to localStorage and/or server)
+- [ ] Draft survives hard reload
+- [ ] Draft survives server restart (if server-backed) or localStorage clear shows graceful degradation
+- [ ] Hitting Send promotes draft to real thread; sidebar entry updates from "draft" styling to normal
+- [ ] Promoted thread retains all draft content (text, attachments, model selection)
+- [ ] Discard draft removes it from sidebar + storage
+
+Sidebar treatment
+- [ ] Drafts visually distinct from real threads (italic? badge? document the convention)
+- [ ] Drafts ordered consistently (top? grouped section? document)
+- [ ] Selecting a draft loads its composer state (not blank composer)
+- [ ] Drafts respect per-project scoping
+
+Concurrent edits
+- [ ] Open draft in two tabs — last-write-wins or conflict UX (document the choice and verify)
+- [ ] Switching threads while typing in draft saves intermediate state
+
+Edge cases
+- [ ] Draft with no text but attachment — Send works
+- [ ] Draft with text + 5 attachments — promotes correctly
+- [ ] Draft created on a now-deleted project — graceful error / cleanup
+- [ ] 50 drafts — sidebar still performant
+
+Regression
+- [ ] Real threads still create normally (Send from a fresh non-draft path works)
+- [ ] Composer drafts (per-thread persistent text) still work in real threads
+- [ ] No localStorage key collision with `composerDraftStore` or `queuedTurnStore`
 
 ### 6. GitHub PR pills (~4-6 hours)
 
@@ -103,7 +261,51 @@ Ordered by ascending scope. Commit each to its own PR for isolated review and QA
 - `packages/shared/src/githubPullRequest` — shared parsing/types
 - `packages/shared/package.json` — add `githubPullRequest` to exports
 
-**QA:** Thread with linked PR shows pill with correct status color; status refreshes on interval.
+**Feature-specific QA (in addition to universal gate):**
+
+Status accuracy
+- [ ] Open PR → green "open" pill
+- [ ] Merged PR → purple "merged" pill
+- [ ] Closed (not merged) PR → red/grey "closed" pill
+- [ ] Draft PR → grey "draft" pill (if drafts supported)
+- [ ] PR with failing CI → status reflects (or separate indicator)
+- [ ] PR with pending review → reflects review status
+- [ ] PR that doesn't exist (deleted/wrong number) → graceful error pill, not crash
+
+Refresh behavior
+- [ ] Status auto-refreshes on a documented interval (e.g., 60s)
+- [ ] Manual refresh affordance (right-click? button?) — works
+- [ ] Status update on focus (window regains focus after switching apps)
+- [ ] No refresh storm when many threads open simultaneously
+- [ ] Backoff on rate-limit errors — does not hammer GitHub API
+
+Auth / network
+- [ ] Without `gh auth` configured → pill shows "auth required" + clear remediation copy
+- [ ] With expired `gh` token → graceful re-auth prompt, not silent failure
+- [ ] Network offline → cached status shown with "stale" indicator
+- [ ] Private repos still work with proper auth
+- [ ] GitHub Enterprise (if supported) — works with custom host
+
+PR detection
+- [ ] Thread linked to a PR via branch name → auto-detected
+- [ ] Thread linked via explicit URL paste in description/title → detected
+- [ ] Thread with no linked PR → no pill rendered (no empty space leak)
+- [ ] Multiple PRs for one thread → handles (show most recent or all? document)
+
+Sidebar layout
+- [ ] Pill renders at consistent location per thread row
+- [ ] Pill truncation handled at narrow sidebar widths
+- [ ] Hover shows full PR title + number tooltip
+- [ ] Click navigates to PR in browser (or shows menu of options)
+
+Performance
+- [ ] 100 threads with PRs — sidebar render stays under 16ms per frame
+- [ ] PR status fetches batched / parallelized, not serial
+
+Regression
+- [ ] Sidebar still works for threads without PRs
+- [ ] Thread renaming / deletion still works
+- [ ] Server doesn't leak GitHub tokens in any log path
 
 ### 7. Queue + Steer (~6-10 hours) — the marquee feature
 
@@ -140,13 +342,100 @@ Ordered by ascending scope. Commit each to its own PR for isolated review and QA
 - Fork's `AppStore` had `threads` and `projects` as root keys — upstream does too but shape/contents differ (confirm with `apps/web/src/types.ts`).
 - Fork's `useThreadById` may not exist upstream — use `useAppStore((s) => s.threads.find((t) => t.id === id))` or whatever selector exists.
 
-**QA:**
-- Queue 3 messages; confirm they appear in panel
-- Drag reorder; confirm order persists across reload
-- First message sends; observe server acks; next auto-dispatches
-- Pause queue; new messages stop dispatching; resume works
-- Session error pauses queue automatically
-- Pending approval/user-input pauses queue until resolved
+**Feature-specific QA (in addition to universal gate):**
+
+Enqueue / display
+- [ ] First message in idle thread → sends immediately, NOT enqueued (queue only kicks in when busy)
+- [ ] Message during in-flight turn → enqueues, panel appears with item
+- [ ] Queue 5 messages → all 5 visible in panel in order
+- [ ] Each item shows: index badge, "Next" indicator on first, interaction mode tag, image count
+- [ ] Long message text truncates at the documented limit (72 chars?) with ellipsis + tooltip
+- [ ] Messages with images show count badge
+- [ ] Messages with terminal context show context badge
+
+Reorder / edit
+- [ ] Drag item up — order updates, animation smooth
+- [ ] Drag item down — order updates
+- [ ] Drag item to same position — no-op, no flicker
+- [ ] Edit row → inline editor opens with current text
+- [ ] Save edit → text updates, item stays in place
+- [ ] Cancel edit (Esc) → reverts unsaved changes
+- [ ] Delete row → item removed, others reindex
+- [ ] Send Now on a row → item dispatched immediately (jumps the queue)
+- [ ] Clear All → confirms then empties queue
+
+Auto-dispatch sequencing
+- [ ] First turn completes → next queued auto-dispatches within 1s
+- [ ] Engine respects local-dispatch ack: doesn't fire next until server confirms previous
+- [ ] No double-dispatch if React re-renders during ack window
+- [ ] Server-side ordering matches client queue order (verify in server logs)
+- [ ] Last message dispatches and queue empties cleanly
+
+Pause / resume
+- [ ] Manual Pause → "Paused" banner appears, no auto-dispatch
+- [ ] Resume → next item dispatches (if eligible)
+- [ ] Pause persists across reload
+- [ ] Resume after error clears pause reason
+
+Auto-pause triggers
+- [ ] Pending approval appears → queue auto-pauses with `pending-approval` reason
+- [ ] Approve → queue resumes
+- [ ] Reject → queue stays paused (or resumes? document)
+- [ ] Pending user-input → auto-pauses with `pending-user-input`
+- [ ] Resolve user-input → resumes
+- [ ] Session error → auto-pauses with `session-error`
+- [ ] Session interrupted → auto-pauses with `session-interrupted`
+- [ ] Thread error → auto-pauses with `thread-error`
+
+Block reasons (transient, not paused)
+- [ ] Session connecting → block reason "connecting", auto-resumes when ready
+- [ ] Session running → block reason "running"
+- [ ] Local dispatch in flight → block reason "local-dispatch"
+- [ ] All three render distinct status copy in panel
+
+Persistence
+- [ ] Reload mid-queue → items + pause state restored from localStorage
+- [ ] Items survive across browser restart (not just reload)
+- [ ] Storage key versioning: simulate v1 legacy data → migrates to v2 cleanly without data loss
+- [ ] Clear localStorage → queue empties, no crash
+- [ ] Two tabs open same project → both see same queue (or document last-write-wins behavior)
+
+DB-side correctness (migrations 025/026)
+- [ ] Fresh DB → migrate → `projection_thread_queued_turns` table exists with correct schema
+- [ ] Existing DB → migrate → no data corruption, no queue table conflict
+- [ ] Drop table, re-migrate → clean state
+- [ ] `sort_order` column populated correctly for backfilled rows
+- [ ] Index on `(thread_id, sort_order, queued_at)` exists and used (verify with EXPLAIN QUERY PLAN)
+
+Edge cases
+- [ ] Queue 50 items → UI stays responsive, drag still works
+- [ ] Queue with attachments totaling 50MB → memory does not balloon (lazy load thumbnails)
+- [ ] Queue across thread switch → items stay scoped to original thread, don't leak
+- [ ] Delete the active thread while queue has items → graceful cleanup, no orphaned items
+- [ ] Network disconnect mid-dispatch → engine retries on reconnect, doesn't double-send
+- [ ] Server crash mid-dispatch → on restart, queue state recoverable
+
+Steering integration (if part of this feature)
+- [ ] User can interrupt running turn → queue pauses
+- [ ] User can re-prioritize a queued item via Send Now
+- [ ] Plan mode + queue → interaction mode preserved per item
+
+Concurrent ops
+- [ ] Two browser tabs queueing into same thread → no duplicate dispatch
+- [ ] Server receives single ack stream — verify in server logs
+
+Regression
+- [ ] Single-message send (no queue) still works exactly as before
+- [ ] Composer drafts unaffected
+- [ ] Snippet picker (when built) integrates: "Save as snippet" from queue row works
+- [ ] Thread archival / deletion works for thread with queued items
+- [ ] No new console warnings or errors during normal use
+- [ ] Existing `ChatView.logic.test.ts` tests still pass
+
+Telemetry
+- [ ] Server logs show "queue dispatch begin" / "queue dispatch ack" with thread/turn IDs
+- [ ] Client logs show queue state transitions (in dev mode)
+- [ ] No PII (message text) logged at info level
 
 ### 8. Tailscale remote access (~6-10 hours)
 
@@ -163,20 +452,193 @@ Ordered by ascending scope. Commit each to its own PR for isolated review and QA
 **Hazards:**
 - Upstream added `wsTransport.ts` refactor that deleted the file fork's Tailscale commit referenced — expect integration rewrite.
 
-**QA:** Desktop app shows Tailnet URL; accessing it from phone on Tailscale loads UI.
+**Feature-specific QA (in addition to universal gate):**
+
+Discovery
+- [ ] Desktop app starts on machine with Tailscale running → detects Tailscale, shows Tailnet IP/hostname
+- [ ] Desktop app starts on machine with Tailscale stopped → graceful fallback (only localhost), no crash
+- [ ] Tailscale not installed at all → graceful skip, clear log message
+- [ ] Tailscale logged out → clear "log into Tailscale" prompt, not silent failure
+
+Network exposure
+- [ ] Server binds to Tailnet interface in addition to 127.0.0.1
+- [ ] Server does NOT bind to all interfaces (0.0.0.0) — verify with `netstat -an | grep <port>`
+- [ ] HTTPS / TLS handled correctly if Tailscale Funnel/Serve used
+- [ ] Auth still required from remote — no auth bypass over Tailnet
+
+Connectivity
+- [ ] iPhone on same Tailnet → loads UI at Tailnet URL, full functionality
+- [ ] Laptop on same Tailnet (different machine) → loads UI, full functionality
+- [ ] Device not on Tailnet → connection refused (verifies network isolation)
+
+Concurrent clients
+- [ ] Local browser + remote device connected simultaneously → both see consistent state
+- [ ] WebSocket multiplexing handles both connections
+- [ ] Sending message from one device shows on the other in real-time
+- [ ] No state divergence between clients
+
+UI affordance
+- [ ] App displays Tailnet URL prominently for easy sharing (copy button, QR code?)
+- [ ] URL updates if Tailscale IP changes (e.g., new Tailnet device)
+- [ ] Status indicator shows Tailscale connected / disconnected
+
+Security
+- [ ] Tailnet exposure is opt-in (default off) OR clearly disclosed at first launch
+- [ ] No sensitive data leaks in URLs or query params
+- [ ] CORS / origin checks still enforced for Tailnet origin
+
+Failure modes
+- [ ] Tailscale daemon stops mid-session → server keeps serving on localhost, UI shows "Tailnet disconnected" indicator
+- [ ] Tailscale daemon restarts → re-detect, re-bind
+- [ ] Network partition between client and server (Tailscale relay outage) → graceful UX, retry logic
+
+Regression
+- [ ] Localhost access still works exactly as before
+- [ ] Single-machine flow unaffected when Tailscale not running
+- [ ] Existing electron app launch / quit / reload works
+- [ ] No new permission prompts on macOS (or document expected ones: e.g., network access)
+
+Cross-platform
+- [ ] macOS Tailscale detection works
+- [ ] Linux Tailscale detection works
+- [ ] Windows Tailscale detection works (if Windows desktop builds shipped)
 
 ## Session execution rhythm
 
-For each feature above:
+For each feature:
 
 1. `git switch -c feature/<name> origin/main` (fresh branch off latest main)
 2. Implement
-3. `bun fmt && bun lint && bun typecheck && bun run test`
+3. **Run universal QA gate (see below) — must be 100% green before opening PR**
 4. Commit, push, open PR
-5. Manual QA (build + run + exercise feature)
+5. **Run feature-specific QA scenarios (see per-feature sections)**
 6. Iterate on review feedback
-7. Merge to main
-8. Next feature
+7. Re-run universal + feature QA after every change
+8. Merge to main only when both QA passes are clean
+9. Smoke-check `main` after merge (build, run, sanity test) before starting next feature
+
+## Universal QA gate (every feature — non-negotiable)
+
+This is the floor. No PR opens until all of these pass.
+
+### Static checks
+
+- [ ] `bun fmt` — formatting clean
+- [ ] `bun lint` — 0 errors, 0 new warnings
+- [ ] `bun typecheck` — 0 errors across all packages (server, web, contracts, shared, desktop)
+- [ ] `bun run test` — full Vitest suite green
+- [ ] No new `// eslint-disable` directives without inline justification comment
+- [ ] No new `any` / `as unknown as` casts without inline justification comment
+- [ ] No new `@ts-expect-error` / `@ts-ignore` without inline justification comment
+
+### Test coverage
+
+- [ ] **Unit tests** for every new pure function / hook / store action (in `*.test.ts`)
+- [ ] **Browser tests** (`*.browser.tsx`) for every new component with interactive behavior
+- [ ] **Integration test** covering at least one happy-path end-to-end flow through the new feature
+- [ ] **Snapshot test** stability: no unexpected snapshot churn in unrelated files
+- [ ] If feature touches server: **server-side test** in `apps/server/src/**/*.test.ts` covering the new route/handler/migration
+- [ ] If feature adds DB migration: **migration `.test.ts`** verifies up/down + idempotency
+
+### Build verification
+
+- [ ] `bun run build` (full Turborepo build) succeeds
+- [ ] `bun run build:desktop` succeeds and produces working binary on macOS (and confirm Linux/Windows builds if CI runs them)
+- [ ] Bundle size delta ≤ 5% (check `.vite/build/stats` or similar). Flag larger jumps.
+- [ ] No new runtime warnings in dev server console (`bun run dev`)
+
+### DB / migration safety (when applicable)
+
+- [ ] New migration is **append-only** (never modifies an existing migration file)
+- [ ] New migration has `IF NOT EXISTS` guards on `CREATE TABLE` / `CREATE INDEX`
+- [ ] Migration test covers: fresh DB → migrate → expected schema; existing DB with legacy data → migrate → no data loss
+- [ ] Roll-back rehearsal: revert the PR locally, observe that DB still works (data may be inert but server must start)
+- [ ] Test on a **realistic-size DB** (export your real local DB, copy to test path, run migrations, verify success)
+
+### Cross-cutting regression checks
+
+Run these end-to-end scenarios on a real running app **before** opening the PR. Use a fresh project (`/tmp/qa-project-N`) for each session so state is isolated.
+
+- [ ] **Send a single message** in a fresh thread — completes normally, response renders
+- [ ] **Send second message** in same thread — turn ordering correct
+- [ ] **Switch threads mid-stream** — UI doesn't crash, returning to original thread shows full state
+- [ ] **Switch projects** — sidebar updates, no stale data leaks across project boundaries
+- [ ] **Reload page mid-stream** — server-side state recovers, client reconnects
+- [ ] **Disconnect WiFi for 10s, reconnect** — websocket recovers, UI shows connection state correctly
+- [ ] **Kill server (Ctrl-C)** — UI shows error state, recovers when server restarts
+- [ ] **Open second browser tab on same project** — both tabs see consistent state, no duplicate sends
+- [ ] **Hard reload (cmd+shift+R)** — no localStorage corruption, state rehydrates
+- [ ] **Clear localStorage manually** — app degrades gracefully, no runtime errors
+
+### Accessibility (for any UI feature)
+
+- [ ] All interactive elements reachable by keyboard (Tab / Shift-Tab)
+- [ ] Focus visible on every focusable element
+- [ ] No focus traps that can't be escaped with Esc
+- [ ] Buttons / inputs have accessible labels (`aria-label` or visible text)
+- [ ] Color is not the only indicator of state (use icons + text)
+- [ ] Modals trap focus correctly and restore on close
+
+### Telemetry / observability (when applicable)
+
+- [ ] Server logs show expected events for the new feature path
+- [ ] Errors propagate to client with actionable messages, not opaque "internal error"
+- [ ] No secrets logged (check for `process.env`, tokens, paths in log lines)
+
+### Documentation
+
+- [ ] User-facing behavior change → update `README.md` or relevant docs
+- [ ] Internal architecture change → update `AGENTS.md` if conventions shift
+- [ ] New env var or CLI flag → documented in `apps/server/src/cliArgs.ts` help text and README
+
+## Final integration QA (after all 8 features merged)
+
+After every feature is independently merged + QA'd, run this combined pass on `main`:
+
+### End-to-end user journeys
+
+- [ ] **New user first run**: launch app → onboarding → create project → start first thread → send message → response renders
+- [ ] **Power user daily flow**: open app → cmd+K to find thread → resume → queue 3 follow-ups → each dispatches in order → save one as snippet → reuse snippet in another thread
+- [ ] **Multi-thread juggling**: create 3 threads in 2 projects → switch between them rapidly → each maintains its own queue, drafts, and state
+- [ ] **PR workflow**: create thread linked to a real PR → see pill update as PR moves through open → reviewed → merged
+- [ ] **Remote access**: pair desktop on laptop with iPhone via Tailscale → continue conversation from phone
+
+### Cross-feature interactions
+
+- [ ] Queue + Drafts: queue items in a draft thread, then promote — items follow promotion correctly
+- [ ] Queue + Snippets: insert snippet into composer while queue has items — doesn't interfere with queue
+- [ ] Queue + PR pills: thread with PR pill + active queue — both render, no layout collision
+- [ ] Search + Drafts: quick search finds drafts as well as real threads (or document explicit exclusion)
+- [ ] Sidebar shortcuts + Search: cmd+[ does NOT close cmd+K modal (modal traps keys)
+- [ ] Rebrand + everything: app shows consistent ClayCode branding across all new feature surfaces
+
+### Performance baseline
+
+- [ ] Cold start time within 10% of pre-rebuild baseline (measure with `time` or built-in metrics)
+- [ ] Idle memory footprint unchanged
+- [ ] CPU usage during typing in composer unchanged
+- [ ] CPU usage during streaming response unchanged
+- [ ] Bundle size delta for cumulative web app < 15%
+
+### Data safety
+
+- [ ] Migrate a real production-size DB (export from your daily-driver install) → all migrations succeed, no data loss
+- [ ] Roll back to pre-rebuild commit → app still runs (data may show "missing feature" gracefully)
+- [ ] Forward-roll again → state restored
+
+### Documentation pass
+
+- [ ] README updated with new features and screenshots
+- [ ] CHANGELOG entry summarizing the rebuild milestone
+- [ ] AGENTS.md updated if conventions changed
+- [ ] Any new env vars / CLI flags documented
+
+### Production readiness
+
+- [ ] All builds (web, desktop) shipped through CI green for at least 3 consecutive runs (no flakes)
+- [ ] No `console.log` left in production code paths
+- [ ] No `TODO` / `FIXME` / `XXX` comments without an accompanying issue
+- [ ] Sentry / error reporting (if configured) shows no new error classes from feature paths in 24h soak
 
 ## Deferred (not rebuilding)
 
