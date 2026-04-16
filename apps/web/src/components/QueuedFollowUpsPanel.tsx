@@ -10,7 +10,14 @@
  * actions and passes them in as callbacks.
  */
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { CheckIcon, PencilIcon, SendHorizontalIcon, Trash2Icon, XIcon } from "lucide-react";
+import {
+  BookmarkPlusIcon,
+  CheckIcon,
+  PencilIcon,
+  SendHorizontalIcon,
+  Trash2Icon,
+  XIcon,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { cn } from "../lib/utils";
@@ -26,6 +33,8 @@ export interface QueuedFollowUpsPanelProps {
   onDelete: (draft: QueuedTurnDraft) => void;
   onClearAll: () => void;
   onReplaceText: (draft: QueuedTurnDraft, nextText: string) => void;
+  /** If provided, shows a bookmark button that saves this row as a snippet. */
+  onSaveAsSnippet?: (draft: QueuedTurnDraft) => void;
 }
 
 const PREVIEW_MAX_CHARS = 120;
@@ -43,6 +52,7 @@ export function QueuedFollowUpsPanel({
   onDelete,
   onClearAll,
   onReplaceText,
+  onSaveAsSnippet,
 }: QueuedFollowUpsPanelProps) {
   if (queuedItems.length === 0) return null;
 
@@ -76,6 +86,7 @@ export function QueuedFollowUpsPanel({
             onSendNow={() => onSendNow(item)}
             onDelete={() => onDelete(item)}
             onReplaceText={(text) => onReplaceText(item, text)}
+            {...(onSaveAsSnippet ? { onSaveAsSnippet: () => onSaveAsSnippet(item) } : {})}
           />
         ))}
       </ul>
@@ -90,6 +101,7 @@ function QueuedFollowUpRow({
   onSendNow,
   onDelete,
   onReplaceText,
+  onSaveAsSnippet,
 }: {
   item: QueuedTurnDraft;
   isNext: boolean;
@@ -97,6 +109,7 @@ function QueuedFollowUpRow({
   onSendNow: () => void;
   onDelete: () => void;
   onReplaceText: (text: string) => void;
+  onSaveAsSnippet?: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draftText, setDraftText] = useState(item.text);
@@ -199,6 +212,18 @@ function QueuedFollowUpRow({
           >
             <PencilIcon className="size-3" />
           </Button>
+          {onSaveAsSnippet ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6 text-muted-foreground hover:text-foreground"
+              onClick={onSaveAsSnippet}
+              aria-label="Save as snippet"
+              title="Save as snippet"
+            >
+              <BookmarkPlusIcon className="size-3" />
+            </Button>
+          ) : null}
           <Button
             variant="ghost"
             size="icon"
