@@ -19,7 +19,13 @@ export function snippetListQueryOptions() {
       const api = ensureLocalApi();
       return api.snippets.list();
     },
-    staleTime: Infinity,
+    // Keep data around but refetch on window focus + component remount so
+    // opening the snippet picker dialog always shows the latest server state.
+    // The snippet library is server-side truth; in-flight mutations also
+    // invalidate this key explicitly, so the network cost is minimal.
+    staleTime: 15_000,
+    refetchOnWindowFocus: true,
+    refetchOnMount: true,
     placeholderData: EMPTY_SNIPPET_LIST_RESULT,
   });
 }

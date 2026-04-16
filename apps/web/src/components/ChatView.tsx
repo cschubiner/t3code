@@ -810,11 +810,16 @@ export default function ChatView(props: ChatViewProps) {
   const replaceQueuedTurnText = useQueuedTurnStore((store) => store.replaceText);
   const clearQueuedTurnsForThread = useQueuedTurnStore((store) => store.clearThread);
 
-  // Guard so we don't re-pop the queue between `isSendBusy` flipping false
-  // and the next turn's `isSendBusy` flipping true: the auto-dispatch writes
-  // into the composer and re-calls onSend, which will eventually flip the
-  // flag, but there is a render or two in between.
+  // Queue auto-dispatch bookkeeping:
+  //   - queueAutoDispatchInFlightRef: true between seeding the composer and
+  //     the next render observing isSendBusy=true. Blocks re-entry.
+  //   - queuePendingCommitRef: the id of a queued item that we've seeded
+  //     into the composer + called onSend for, but haven't yet seen
+  //     `isSendBusy` flip true for. When we DO see that flip, we commit by
+  //     removing this item from the queue. If onSend early-returned and the
+  //     flip never came, the item is still in the queue — safe no-op.
   const queueAutoDispatchInFlightRef = useRef(false);
+  const queuePendingCommitRef = useRef<string | null>(null);
 
   // ---- Snippet picker (cmd+; / ctrl+;) ----
   const [snippetPickerOpen, setSnippetPickerOpen] = useState(false);
@@ -2728,28 +2733,23 @@ export default function ChatView(props: ChatViewProps) {
 
   // ---- Auto-dispatch next queued follow-up when the thread idles ----
   //
-  // Preconditions (all must hold or we bail without touching the queue):
-  //   • activeThread is fully resolved (not just activeThreadRef being non-null
-  //     while the thread shell is still loading)
-  //   • an EnvironmentApi exists for this environment — otherwise onSend would
-  //     early-return at `if (!api || !activeThread) return;` and we would
-  //     silently drop the popped item
-  //   • no turn in-flight (isSendBusy, isConnecting, or sendInFlightRef)
-  //   • no pending approvals / user inputs / progress prompts
-  //   • composer is empty — we don't stomp a draft the user is typing
-  //   • queueAutoDispatchInFlightRef isn't already set (guards re-entry
-  //     during the rAF → onSend → isSendBusy-becomes-true window)
+  // Two-phase commit:
+  //   1. Peek the head item, seed the composer, call onSend. Mark the item
+  //      id in queuePendingCommitRef but DON'T remove it from the queue yet.
+  //   2. Observe isSendBusy transition to true → dispatch is confirmed →
+  //      remove the pending item from the queue via `removeQueuedTurnById`.
   //
-  // IMPORTANT: we pop the head synchronously before scheduling onSend, so
-  // if onSend fails the item is lost. The strict preconditions above are
-  // how we avoid that: onSend's own guards match these, so once we decide
-  // to pop, onSend will dispatch. Future work can add a rollback path.
+  // If onSend early-returns (e.g. api not ready, thread shell not loaded),
+  // isSendBusy stays false, we clear the pending commit marker on the next
+  // render, and the item remains at the head of the queue. Next idle cycle
+  // will retry it.
   useEffect(() => {
     if (!activeThreadRef || !activeThread) return;
     if (queuedItems.length === 0) return;
     if (isSendBusy || isConnecting || sendInFlightRef.current) return;
     if (activePendingApproval || pendingUserInputs.length > 0 || activePendingProgress) return;
     if (queueAutoDispatchInFlightRef.current) return;
+    if (queuePendingCommitRef.current !== null) return;
     if (!readEnvironmentApi(environmentId)) return;
 
     const head = queuedItems[0];
@@ -2759,7 +2759,7 @@ export default function ChatView(props: ChatViewProps) {
     if (currentPrompt.length > 0) return;
 
     queueAutoDispatchInFlightRef.current = true;
-    popNextQueuedTurn(activeThreadRef);
+    queuePendingCommitRef.current = head.id;
     promptRef.current = head.text;
     setComposerDraftPrompt(composerDraftTarget, head.text);
     composerRef.current?.resetCursorState({ prompt: head.text });
@@ -2784,9 +2784,44 @@ export default function ChatView(props: ChatViewProps) {
     pendingUserInputs.length,
     activePendingProgress,
     composerDraftTarget,
-    popNextQueuedTurn,
     setComposerDraftPrompt,
   ]);
+
+  // Confirm-commit side of the two-phase queue dispatch: when we see
+  // `isSendBusy` flip true while a pending commit is outstanding, it means
+  // onSend actually started a dispatch for the seeded text. Remove the
+  // corresponding item from the queue. If the user or some other flow
+  // has already removed it (ID not in the queue anymore), that's fine —
+  // removeById is a no-op on missing IDs.
+  useEffect(() => {
+    const pendingId = queuePendingCommitRef.current;
+    if (!pendingId || !activeThreadRef) return;
+    if (!isSendBusy) return;
+    removeQueuedTurnById(activeThreadRef, pendingId);
+    queuePendingCommitRef.current = null;
+  }, [isSendBusy, activeThreadRef, removeQueuedTurnById]);
+
+  // Recovery: if the thread idles back down and a pending commit never got
+  // confirmed (onSend early-returned), clear the marker so the next cycle
+  // can retry. `queuedItems` still contains the item at head.
+  useEffect(() => {
+    if (
+      queuePendingCommitRef.current !== null &&
+      !isSendBusy &&
+      !isConnecting &&
+      !sendInFlightRef.current
+    ) {
+      // One extra render tick before clearing, so we don't race the commit
+      // effect above in the same render cycle.
+      const handle = setTimeout(() => {
+        if (!isSendBusy && !isConnecting && !sendInFlightRef.current) {
+          queuePendingCommitRef.current = null;
+        }
+      }, 250);
+      return () => clearTimeout(handle);
+    }
+    return undefined;
+  }, [isSendBusy, isConnecting]);
 
   const onInterrupt = async () => {
     const api = readEnvironmentApi(environmentId);
