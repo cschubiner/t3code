@@ -77,6 +77,7 @@ import {
   type ProjectionSnapshotQueryShape,
 } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
+import { SnippetRepository, type SnippetRepositoryShape } from "./persistence/Services/Snippets.ts";
 import {
   ProviderRegistry,
   type ProviderRegistryShape,
@@ -337,6 +338,7 @@ const buildAppUnderTest = (options?: {
     serverRuntimeStartup?: Partial<ServerRuntimeStartupShape>;
     serverEnvironment?: Partial<ServerEnvironmentShape>;
     repositoryIdentityResolver?: Partial<RepositoryIdentityResolverShape>;
+    snippetRepository?: Partial<SnippetRepositoryShape>;
   };
 }) =>
   Effect.gen(function* () {
@@ -543,6 +545,23 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provideMerge(authTestLayer),
       Layer.provide(workspaceAndProjectServicesLayer),
+      Layer.provide(
+        Layer.mock(SnippetRepository)({
+          listAll: () => Effect.succeed([]),
+          upsertByExactText: ({ text, updatedAt }) =>
+            Effect.succeed({
+              snippet: {
+                id: "snippet-test" as never,
+                text,
+                createdAt: updatedAt,
+                updatedAt,
+              },
+              deduped: false,
+            }),
+          deleteById: () => Effect.void,
+          ...options?.layers?.snippetRepository,
+        }),
+      ),
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provide(layerConfig),
     );
