@@ -183,6 +183,13 @@ function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridg
       endpointUrl: null,
       advertisedHost: null,
     }),
+    getTailnetInfo: async () => ({
+      available: false,
+      connected: false,
+      hostname: null,
+      ipv4: null,
+      error: null,
+    }),
     pickFolder: async () => null,
     confirm: async () => true,
     setTheme: async () => undefined,
