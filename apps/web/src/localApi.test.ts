@@ -555,6 +555,7 @@ describe("wsApi", () => {
       diffWordWrap: true,
       sidebarProjectSortOrder: "manual",
       sidebarThreadSortOrder: "created_at",
+      sidebarViewMode: "grouped",
       timestampFormat: "24-hour",
     });
     const setClientSettings = vi.fn().mockResolvedValue(undefined);
@@ -583,6 +584,7 @@ describe("wsApi", () => {
       diffWordWrap: true,
       sidebarProjectSortOrder: "manual",
       sidebarThreadSortOrder: "created_at",
+      sidebarViewMode: "grouped",
       timestampFormat: "24-hour",
     });
     await api.persistence.getSavedEnvironmentRegistry();
@@ -601,6 +603,7 @@ describe("wsApi", () => {
       diffWordWrap: true,
       sidebarProjectSortOrder: "manual",
       sidebarThreadSortOrder: "created_at",
+      sidebarViewMode: "grouped",
       timestampFormat: "24-hour",
     });
     expect(getSavedEnvironmentRegistry).toHaveBeenCalledWith();
@@ -620,6 +623,7 @@ describe("wsApi", () => {
       diffWordWrap: true,
       sidebarProjectSortOrder: "manual",
       sidebarThreadSortOrder: "created_at",
+      sidebarViewMode: "grouped",
       timestampFormat: "24-hour",
     });
     await api.persistence.setSavedEnvironmentRegistry([
@@ -643,6 +647,7 @@ describe("wsApi", () => {
       diffWordWrap: true,
       sidebarProjectSortOrder: "manual",
       sidebarThreadSortOrder: "created_at",
+      sidebarViewMode: "grouped",
       timestampFormat: "24-hour",
     });
     await expect(api.persistence.getSavedEnvironmentRegistry()).resolves.toEqual([
