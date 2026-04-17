@@ -1,27 +1,43 @@
 /**
- * ImportFromCodexDialog — read-only MVP.
+ * ImportFromCodexDialog
  *
- * Lists the user's Codex transcripts (`~/.codex/sessions/**\/rollout-*.jsonl`)
- * and lets them preview one. Actually importing a session as a ClayCode
- * thread returns a "not yet implemented" error from the server; the dialog
- * surfaces that clearly rather than pretending to work.
+ * Lists the user's Codex transcripts (`~/.codex/sessions/...rollout-*.jsonl`)
+ * and lets the user import one as a new ClayCode draft thread.
  *
- * Ported from the fork's full dialog, simplified to skip the import-actions
- * column and the session-kind tabs (since the backing query is currently
- * just "direct"+filter). Once we wire the `thread.import` orchestration
- * command, the Import button path can be re-enabled.
+ * Implementation notes:
+ * - Server's `importSessions` is a no-op acknowledgement (returns "imported"
+ *   for each session). Real injection of past messages into the projection DB
+ *   would require a new `thread.import.codex` orchestration command. See
+ *   docs/REBUILD_PLAN.md.
+ * - The actual "import" the user perceives is implemented client-side: we
+ *   peek the full transcript, format it as markdown, create a new draft
+ *   thread on the chosen project, pre-populate the composer with the
+ *   formatted transcript so the user can review/edit/send, and navigate
+ *   to the new draft.
  */
-import type { CodexImportPeekSessionResult, CodexImportSessionSummary } from "@t3tools/contracts";
+import type {
+  CodexImportPeekSessionResult,
+  CodexImportSessionSummary,
+  ScopedProjectRef,
+} from "@t3tools/contracts";
+import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { useRouter } from "@tanstack/react-router";
 import { RefreshCwIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 
 import { ensureLocalApi } from "../localApi";
+import { type DraftId, useComposerDraftStore } from "../composerDraftStore";
+import { newDraftId, newThreadId } from "../lib/utils";
+import { deriveLogicalProjectKey } from "../logicalProject";
+import { selectProjectsAcrossEnvironments, useStore } from "../store";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Dialog, DialogDescription, DialogHeader, DialogPopup, DialogTitle } from "./ui/dialog";
 import { Input } from "./ui/input";
 import { ScrollArea } from "./ui/scroll-area";
+import { toastManager } from "./ui/toast";
 
 interface ImportFromCodexDialogProps {
   open: boolean;
@@ -48,6 +64,25 @@ function summarize(text: string | null, maxChars = 120): string {
   return `${normalized.slice(0, maxChars - 1)}…`;
 }
 
+function formatTranscriptAsMarkdown(peek: CodexImportPeekSessionResult): string {
+  const header = [
+    `# Imported from Codex: ${peek.title}`,
+    peek.model ? `Model: ${peek.model}` : null,
+    peek.updatedAt ? `Last updated: ${peek.updatedAt}` : null,
+    "",
+    "_Original transcript shown below. Continue the conversation as your next user message._",
+    "",
+    "---",
+    "",
+  ]
+    .filter((line): line is string => line !== null)
+    .join("\n");
+  const body = peek.messages
+    .map((m) => `**${m.role.toUpperCase()}** (${m.createdAt})\n\n${m.text}`)
+    .join("\n\n---\n\n");
+  return `${header}${body}\n`;
+}
+
 export function ImportFromCodexDialog({
   open,
   codexHomePath,
@@ -55,6 +90,33 @@ export function ImportFromCodexDialog({
 }: ImportFromCodexDialogProps) {
   const [query, setQuery] = useState("");
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [targetProjectKey, setTargetProjectKey] = useState<string | null>(null);
+
+  const router = useRouter();
+
+  const projects = useStore(useShallow((store) => selectProjectsAcrossEnvironments(store)));
+  const projectsByKey = useMemo(() => {
+    const map = new Map<string, { ref: ScopedProjectRef; name: string; logicalKey: string }>();
+    for (const p of projects) {
+      const ref = scopeProjectRef(p.environmentId, p.id);
+      map.set(scopedProjectKey(ref), {
+        ref,
+        name: p.name,
+        logicalKey: deriveLogicalProjectKey(p),
+      });
+    }
+    return map;
+  }, [projects]);
+
+  // Default project selection: first project once projects are loaded.
+  useEffect(() => {
+    if (!open) return;
+    if (targetProjectKey && projectsByKey.has(targetProjectKey)) return;
+    const first = projects[0];
+    if (first) {
+      setTargetProjectKey(scopedProjectKey(scopeProjectRef(first.environmentId, first.id)));
+    }
+  }, [open, projects, projectsByKey, targetProjectKey]);
 
   const sessionsQuery = useQuery({
     queryKey: ["codexImport", "listSessions", codexHomePath ?? null],
@@ -91,21 +153,92 @@ export function ImportFromCodexDialog({
       return api.codexImport.peekSession({
         ...(trimmedHome ? { homePath: trimmedHome } : {}),
         sessionId: selectedSessionId,
+        // Pull a generous slice for import preview; backend caps anyway.
+        messageCount: 200,
       });
     },
     staleTime: 60_000,
   });
 
   const importMutation = useMutation({
-    mutationFn: async (sessionId: string) => {
+    mutationFn: async ({
+      peek,
+      projectRef,
+      logicalKey,
+    }: {
+      peek: CodexImportPeekSessionResult;
+      projectRef: ScopedProjectRef;
+      logicalKey: string;
+    }) => {
       const api = ensureLocalApi();
       const trimmedHome = codexHomePath?.trim();
-      return api.codexImport.importSessions({
+      // Acknowledge with server (no-op today; reserved for future
+      // server-side projection writes via thread.import.codex).
+      await api.codexImport.importSessions({
         ...(trimmedHome ? { homePath: trimmedHome } : {}),
-        sessionIds: [sessionId],
+        sessionIds: [peek.sessionId],
+      });
+
+      const transcript = formatTranscriptAsMarkdown(peek);
+      const draftId = newDraftId();
+      const threadId = newThreadId();
+      const createdAt = new Date().toISOString();
+
+      const draftStore = useComposerDraftStore.getState();
+      draftStore.setLogicalProjectDraftThreadId(logicalKey, projectRef, draftId, {
+        threadId,
+        createdAt,
+        branch: null,
+        worktreePath: null,
+        envMode: "local",
+      });
+      draftStore.setPrompt(draftId as DraftId, transcript);
+
+      await router.navigate({ to: "/draft/$draftId", params: { draftId } });
+      return { draftId };
+    },
+    onSuccess: () => {
+      toastManager.add({
+        type: "success",
+        title: "Imported as new draft thread",
+        description:
+          "Codex transcript loaded into the composer. Review, then send to start the conversation.",
+      });
+      onOpenChange(false);
+    },
+    onError: (error) => {
+      toastManager.add({
+        type: "error",
+        title: "Failed to import Codex session",
+        description: error instanceof Error ? error.message : "An error occurred.",
       });
     },
   });
+
+  const handleImportClick = () => {
+    const peek = peekQuery.data;
+    if (!peek) return;
+    if (!targetProjectKey) {
+      toastManager.add({
+        type: "warning",
+        title: "Choose a target project first",
+      });
+      return;
+    }
+    const target = projectsByKey.get(targetProjectKey);
+    if (!target) {
+      toastManager.add({
+        type: "error",
+        title: "Selected project no longer exists",
+      });
+      return;
+    }
+    importMutation.mutate({
+      peek,
+      projectRef: target.ref,
+      logicalKey: target.logicalKey,
+    });
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -113,8 +246,8 @@ export function ImportFromCodexDialog({
         <DialogHeader>
           <DialogTitle>Import from Codex</DialogTitle>
           <DialogDescription>
-            Browse Codex transcripts and preview them. Full import as a ClayCode thread will land
-            once the thread.import orchestration command is wired.
+            Browse Codex transcripts and import one as a new ClayCode draft thread. The transcript
+            is pre-loaded into the composer so you can review, edit, and continue the conversation.
           </DialogDescription>
         </DialogHeader>
         <div className="grid grid-cols-[320px_1fr] gap-4" style={{ height: 480 }}>
@@ -203,10 +336,19 @@ export function ImportFromCodexDialog({
             ) : peekQuery.data ? (
               <PeekPanel
                 peek={peekQuery.data}
-                onImport={() => importMutation.mutate(peekQuery.data!.sessionId)}
+                projects={projects.map((p) => {
+                  const ref = scopeProjectRef(p.environmentId, p.id);
+                  return {
+                    key: scopedProjectKey(ref),
+                    name: p.name,
+                  };
+                })}
+                targetProjectKey={targetProjectKey}
+                onTargetProjectChange={setTargetProjectKey}
+                onImport={handleImportClick}
                 importPending={importMutation.isPending}
-                importError={
-                  importMutation.error instanceof Error ? importMutation.error.message : null
+                importDisabled={
+                  !targetProjectKey || projects.length === 0 || importMutation.isPending
                 }
               />
             ) : null}
@@ -219,14 +361,20 @@ export function ImportFromCodexDialog({
 
 function PeekPanel({
   peek,
+  projects,
+  targetProjectKey,
+  onTargetProjectChange,
   onImport,
   importPending,
-  importError,
+  importDisabled,
 }: {
   peek: CodexImportPeekSessionResult;
+  projects: ReadonlyArray<{ key: string; name: string }>;
+  targetProjectKey: string | null;
+  onTargetProjectChange: (key: string) => void;
   onImport: () => void;
   importPending: boolean;
-  importError: string | null;
+  importDisabled: boolean;
 }) {
   return (
     <>
@@ -243,27 +391,42 @@ function PeekPanel({
             ) : null}
           </span>
         </div>
-        <Button
-          type="button"
-          variant="default"
-          size="sm"
-          onClick={onImport}
-          disabled={importPending}
-          title="Importing is not yet implemented; this will show the server's response."
-        >
-          {importPending ? "Importing…" : "Import (stub)"}
-        </Button>
-      </div>
-      {importError ? (
-        <div className="rounded border border-destructive/40 bg-destructive/5 p-2 text-[11px] text-destructive">
-          {importError}
+        <div className="flex items-center gap-2">
+          {projects.length > 0 ? (
+            <select
+              className="h-8 max-w-[180px] rounded-md border border-border bg-background px-2 text-xs"
+              value={targetProjectKey ?? ""}
+              onChange={(e) => onTargetProjectChange(e.target.value)}
+              aria-label="Target project"
+              data-testid="codex-import-target-project"
+            >
+              {projects.map((p) => (
+                <option key={p.key} value={p.key}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span className="text-[11px] text-muted-foreground">No projects available</span>
+          )}
+          <Button
+            type="button"
+            variant="default"
+            size="sm"
+            onClick={onImport}
+            disabled={importDisabled}
+            data-testid="codex-import-submit"
+          >
+            {importPending ? "Importing…" : "Import as draft"}
+          </Button>
         </div>
-      ) : null}
+      </div>
       <ScrollArea className="min-h-0 flex-1 rounded-md border border-border">
         <div className="flex flex-col gap-2 p-3 text-xs">
           {peek.messages.map((message, index) => (
             <div
-              key={index}
+              // eslint-disable-next-line react/no-array-index-key -- transcript messages have no stable ID
+              key={`${message.createdAt}-${index}`}
               className={
                 "rounded-md p-2 " +
                 (message.role === "user"

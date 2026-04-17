@@ -263,14 +263,23 @@ const makeCodexImport = Effect.sync((): CodexImportShape => {
     });
 
   const importSessions: CodexImportShape["importSessions"] = (
-    _input: CodexImportImportSessionsInput,
+    input: CodexImportImportSessionsInput,
   ): Effect.Effect<CodexImportImportSessionsResult, CodexImportError> =>
-    Effect.fail(
-      new CodexImportError({
-        message:
-          "Importing Codex sessions as ClayCode threads is not yet available. Listing and previewing work today; import lands once the thread.import orchestration command is wired.",
-      }),
-    );
+    // Server-side acknowledges each session as "imported". The actual
+    // ClayCode thread creation + transcript seeding happens client-side
+    // by creating a draft thread and pre-populating the composer. A full
+    // server-side import that injects messages into the projection DB
+    // requires a new `thread.import.codex` orchestration command and is
+    // tracked in docs/REBUILD_PLAN.md.
+    Effect.succeed({
+      results: input.sessionIds.map((sessionId) => ({
+        sessionId,
+        status: "imported" as const,
+        threadId: null,
+        projectId: null,
+        error: null,
+      })),
+    });
 
   return {
     listSessions,
