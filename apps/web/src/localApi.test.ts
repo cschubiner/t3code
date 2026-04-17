@@ -540,8 +540,8 @@ describe("wsApi", () => {
         {
           sessionId: "session-1",
           status: "imported",
-          threadId: null,
-          projectId: null,
+          threadId: ThreadId.make("thread-imported"),
+          projectId: ProjectId.make("project-1"),
           error: null,
         },
       ],
@@ -555,13 +555,18 @@ describe("wsApi", () => {
       sessionId: "session-1",
       messages: [{ text: "hello" }],
     });
-    await expect(api.codexImport.importSessions({ sessionIds: ["session-1"] })).resolves.toEqual({
+    await expect(
+      api.codexImport.importSessions({
+        targetProjectId: ProjectId.make("project-1"),
+        sessionIds: ["session-1"],
+      }),
+    ).resolves.toEqual({
       results: [
         {
           sessionId: "session-1",
           status: "imported",
-          threadId: null,
-          projectId: null,
+          threadId: ThreadId.make("thread-imported"),
+          projectId: ProjectId.make("project-1"),
           error: null,
         },
       ],
@@ -572,6 +577,7 @@ describe("wsApi", () => {
       sessionId: "session-1",
     });
     expect(rpcClientMock.codexImport.importSessions).toHaveBeenCalledWith({
+      targetProjectId: ProjectId.make("project-1"),
       sessionIds: ["session-1"],
     });
   });

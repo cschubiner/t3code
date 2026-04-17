@@ -4,18 +4,16 @@ import type {
   ScopedProjectRef,
 } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { Loader2Icon, RefreshCwIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useShallow } from "zustand/react/shallow";
 
-import { type DraftId, useComposerDraftStore } from "../composerDraftStore";
-import { deriveLogicalProjectKey } from "../logicalProject";
+import { getPrimaryEnvironmentConnection } from "../environments/runtime";
 import { ensureLocalApi } from "../localApi";
-import { newDraftId, newThreadId } from "../lib/utils";
 import { selectProjectsAcrossEnvironments, useStore } from "../store";
-import { buildDraftThreadRouteParams } from "../threadRoutes";
+import { buildThreadRouteParams } from "../threadRoutes";
 import { Button } from "./ui/button";
 import {
   Dialog,
@@ -44,7 +42,6 @@ interface ImportTargetProject {
   readonly key: string;
   readonly ref: ScopedProjectRef;
   readonly name: string;
-  readonly logicalProjectKey: string;
   readonly environmentLabel: string;
 }
 
@@ -75,42 +72,27 @@ function summarize(text: string | null, maxChars = 160): string {
   return `${normalized.slice(0, maxChars - 1)}…`;
 }
 
-function formatTranscriptAsMarkdown(peek: CodexImportPeekSessionResult): string {
-  const headerLines = [
-    `# Imported from Codex: ${peek.title}`,
-    peek.model ? `Model: ${peek.model}` : null,
-    peek.updatedAt ? `Last updated: ${peek.updatedAt}` : null,
-    "",
-    "_Original Codex transcript below. Review or edit it, then send to continue the conversation._",
-    "",
-    "---",
-    "",
-  ].filter((line): line is string => line !== null);
-
-  const body = peek.messages
-    .map((message) => `**${message.role.toUpperCase()}** (${message.createdAt})\n\n${message.text}`)
-    .join("\n\n---\n\n");
-
-  return `${headerLines.join("\n")}${body ? `\n${body}\n` : "\n"}`;
-}
-
 export function ImportFromCodexDialog(props: ImportFromCodexDialogProps) {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [query, setQuery] = useState("");
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [targetProjectKey, setTargetProjectKey] = useState<string | null>(null);
+  const normalizedHomePath = props.codexHomePath?.trim() || null;
+  const sessionsQueryKey = ["codex-import", "sessions", normalizedHomePath] as const;
 
+  const localEnvironmentId = getPrimaryEnvironmentConnection().environmentId;
   const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
   const projectOptions = useMemo<ImportTargetProject[]>(() => {
     return projects
+      .filter((project) => project.environmentId === localEnvironmentId)
       .map((project) => {
         const ref = scopeProjectRef(project.environmentId, project.id);
         return {
           key: scopedProjectKey(ref),
           ref,
           name: project.name,
-          logicalProjectKey: deriveLogicalProjectKey(project),
           environmentLabel: project.environmentId,
         };
       })
@@ -121,7 +103,7 @@ export function ImportFromCodexDialog(props: ImportFromCodexDialogProps) {
         }
         return left.environmentLabel.localeCompare(right.environmentLabel);
       });
-  }, [projects]);
+  }, [localEnvironmentId, projects]);
 
   useEffect(() => {
     if (!props.open) {
@@ -160,13 +142,12 @@ export function ImportFromCodexDialog(props: ImportFromCodexDialogProps) {
   }, [projectOptions, props.open, props.preferredProjectRef, targetProjectKey]);
 
   const sessionsQuery = useQuery({
-    queryKey: ["codex-import", "sessions", props.codexHomePath ?? null],
+    queryKey: sessionsQueryKey,
     enabled: props.open,
     staleTime: 30_000,
     queryFn: async () => {
-      const homePath = props.codexHomePath?.trim();
       return ensureLocalApi().codexImport.listSessions({
-        ...(homePath ? { homePath } : {}),
+        ...(normalizedHomePath ? { homePath: normalizedHomePath } : {}),
         kind: "all",
       });
     },
@@ -211,16 +192,15 @@ export function ImportFromCodexDialog(props: ImportFromCodexDialogProps) {
   );
 
   const peekQuery = useQuery({
-    queryKey: ["codex-import", "peek", selectedSessionId, props.codexHomePath ?? null],
+    queryKey: ["codex-import", "peek", selectedSessionId, normalizedHomePath],
     enabled: props.open && selectedSessionId !== null,
     staleTime: 60_000,
     queryFn: async () => {
       if (!selectedSessionId) {
         return null;
       }
-      const homePath = props.codexHomePath?.trim();
       return ensureLocalApi().codexImport.peekSession({
-        ...(homePath ? { homePath } : {}),
+        ...(normalizedHomePath ? { homePath: normalizedHomePath } : {}),
         sessionId: selectedSessionId,
         messageCount: 200,
       });
@@ -232,44 +212,68 @@ export function ImportFromCodexDialog(props: ImportFromCodexDialogProps) {
       readonly project: ImportTargetProject;
       readonly peek: CodexImportPeekSessionResult;
     }) => {
-      const homePath = props.codexHomePath?.trim();
-      await ensureLocalApi().codexImport.importSessions({
-        ...(homePath ? { homePath } : {}),
+      const result = await ensureLocalApi().codexImport.importSessions({
+        ...(normalizedHomePath ? { homePath: normalizedHomePath } : {}),
+        targetProjectId: input.project.ref.projectId,
         sessionIds: [input.peek.sessionId],
       });
-
-      const draftId = newDraftId();
-      const threadId = newThreadId();
-      const createdAt = new Date().toISOString();
-      const transcript = formatTranscriptAsMarkdown(input.peek);
-      const draftStore = useComposerDraftStore.getState();
-
-      draftStore.setLogicalProjectDraftThreadId(
-        input.project.logicalProjectKey,
-        input.project.ref,
-        draftId,
-        {
-          threadId,
-          createdAt,
-          runtimeMode: input.peek.runtimeMode,
-          interactionMode: input.peek.interactionMode,
-          branch: null,
-          worktreePath: null,
-          envMode: "local",
-        },
-      );
-      draftStore.setPrompt(draftId as DraftId, transcript);
+      const imported = result.results[0];
+      if (!imported) {
+        throw new Error("Import did not return a result.");
+      }
+      if (imported.status === "failed" || imported.threadId === null) {
+        throw new Error(imported.error ?? "Failed to import Codex transcript.");
+      }
 
       await navigate({
-        to: "/draft/$draftId",
-        params: buildDraftThreadRouteParams(draftId),
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams({
+          environmentId: input.project.ref.environmentId,
+          threadId: imported.threadId,
+        }),
       });
+
+      return imported;
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
+      queryClient.setQueryData<readonly CodexImportSessionSummary[] | undefined>(
+        sessionsQueryKey,
+        (existing) =>
+          existing?.map((session) =>
+            session.sessionId === result.sessionId
+              ? {
+                  ...session,
+                  alreadyImported: true,
+                  importedThreadId: result.threadId,
+                }
+              : session,
+          ) ?? existing,
+      );
+      queryClient.setQueryData<CodexImportPeekSessionResult | null | undefined>(
+        ["codex-import", "peek", result.sessionId, normalizedHomePath],
+        (existing) =>
+          existing
+            ? {
+                ...existing,
+                alreadyImported: true,
+                importedThreadId: result.threadId,
+              }
+            : existing,
+      );
+      void queryClient.invalidateQueries({ queryKey: sessionsQueryKey });
+      void queryClient.invalidateQueries({
+        queryKey: ["codex-import", "peek", result.sessionId, normalizedHomePath],
+      });
       toastManager.add({
         type: "success",
-        title: "Imported into a draft thread",
-        description: "The Codex transcript is loaded into the composer for review and editing.",
+        title:
+          result.status === "skipped-existing"
+            ? "Opened existing imported thread"
+            : "Imported into a thread",
+        description:
+          result.status === "skipped-existing"
+            ? "That Codex session was already imported, so we jumped back to the existing thread."
+            : "The full Codex transcript is now available as a real ClayCode thread.",
       });
       props.onOpenChange(false);
     },
@@ -351,6 +355,8 @@ export function ImportFromCodexDialog(props: ImportFromCodexDialogProps) {
     peekQuery.data === null ||
     peekQuery.isPending ||
     targetProjectKey === null;
+  const importAlreadyExists =
+    peekQuery.data?.alreadyImported ?? selectedSession?.alreadyImported ?? false;
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
@@ -358,8 +364,8 @@ export function ImportFromCodexDialog(props: ImportFromCodexDialogProps) {
         <DialogHeader>
           <DialogTitle>Import from Codex</DialogTitle>
           <DialogDescription>
-            Browse local Codex transcripts and load one into a new draft thread so you can review,
-            edit, and continue it here.
+            Browse local Codex transcripts and import one into a real ClayCode thread with durable
+            history.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel className="space-y-4">
@@ -440,6 +446,11 @@ export function ImportFromCodexDialog(props: ImportFromCodexDialogProps) {
                                   {formatTimestamp(session.updatedAt)}
                                 </div>
                               </div>
+                              {session.alreadyImported ? (
+                                <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 font-medium text-[11px] text-emerald-700 dark:text-emerald-300">
+                                  Imported
+                                </span>
+                              ) : null}
                             </div>
                             <p className="line-clamp-2 text-muted-foreground text-sm">
                               {summarize(session.lastUserMessage || session.lastAssistantMessage)}
@@ -527,6 +538,14 @@ export function ImportFromCodexDialog(props: ImportFromCodexDialogProps) {
                           <div className="text-muted-foreground text-xs">Interaction mode</div>
                           <div>{peekQuery.data.interactionMode}</div>
                         </div>
+                        <div>
+                          <div className="text-muted-foreground text-xs">Import status</div>
+                          <div>
+                            {peekQuery.data.alreadyImported
+                              ? "Already imported"
+                              : "Not imported yet"}
+                          </div>
+                        </div>
                       </div>
 
                       <div className="space-y-3">
@@ -561,7 +580,7 @@ export function ImportFromCodexDialog(props: ImportFromCodexDialogProps) {
         </DialogPanel>
         <DialogFooter variant="bare">
           <div className="mr-auto text-muted-foreground text-xs">
-            Imported transcripts open as draft threads so you can review them before sending.
+            Imports create durable local threads in the primary environment.
           </div>
           <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
             Cancel
@@ -573,7 +592,7 @@ export function ImportFromCodexDialog(props: ImportFromCodexDialogProps) {
             data-testid="codex-import-confirm"
           >
             {importMutation.isPending ? <Loader2Icon className="size-4 animate-spin" /> : null}
-            Import into draft
+            {importAlreadyExists ? "Open imported thread" : "Import thread"}
           </Button>
         </DialogFooter>
       </DialogPopup>

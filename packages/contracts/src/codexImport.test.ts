@@ -1,9 +1,16 @@
 import { assert, it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
 
-import { CodexImportListSessionsInput, CodexImportPeekSessionInput, WS_METHODS } from "./index";
+import {
+  CodexImportImportSessionsInput,
+  CodexImportListSessionsInput,
+  CodexImportPeekSessionInput,
+  ProjectId,
+  WS_METHODS,
+} from "./index";
 
 const decodeListSessionsInput = Schema.decodeUnknownEffect(CodexImportListSessionsInput);
+const decodeImportSessionsInput = Schema.decodeUnknownEffect(CodexImportImportSessionsInput);
 const decodePeekSessionInput = Schema.decodeUnknownEffect(CodexImportPeekSessionInput);
 
 it.effect("decodes Codex import list defaults", () =>
@@ -22,6 +29,17 @@ it.effect("trims Codex import peek session input", () =>
     });
     assert.strictEqual(parsed.homePath, "~/.codex-alt");
     assert.strictEqual(parsed.sessionId, "session-1");
+  }),
+);
+
+it.effect("decodes Codex import target project input", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeImportSessionsInput({
+      targetProjectId: " project-1 ",
+      sessionIds: [" session-1 "],
+    });
+    assert.strictEqual(parsed.targetProjectId, ProjectId.make("project-1"));
+    assert.deepStrictEqual(parsed.sessionIds, ["session-1"]);
   }),
 );
 

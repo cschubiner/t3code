@@ -11,7 +11,7 @@ import {
   type ProjectId,
   type ServerConfig,
   type ServerLifecycleWelcomePayload,
-  type ThreadId,
+  ThreadId,
   type TurnId,
   WS_METHODS,
   OrchestrationSessionStatus,
@@ -6464,13 +6464,67 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("imports a Codex transcript into a new draft thread from the global shortcut", async () => {
+  it("imports a Codex transcript into a durable thread from the global shortcut", async () => {
+    const importedThreadId = ThreadId.make("thread-codex-imported");
+    let sessionAlreadyImported = false;
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-codex-import-target" as MessageId,
+      targetText: "codex import thread",
+    });
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
-      snapshot: createSnapshotForTargetUser({
-        targetMessageId: "msg-user-codex-import-target" as MessageId,
-        targetText: "codex import thread",
-      }),
+      snapshot: {
+        ...baseSnapshot,
+        threads: [
+          ...baseSnapshot.threads,
+          {
+            id: importedThreadId,
+            projectId: PROJECT_ID,
+            title: "Fix the flaky release checklist",
+            modelSelection: {
+              provider: "codex",
+              model: "gpt-5-codex",
+            },
+            interactionMode: "default",
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            latestTurn: null,
+            createdAt: isoAt(80),
+            updatedAt: isoAt(120),
+            archivedAt: null,
+            deletedAt: null,
+            messages: [
+              createUserMessage({
+                id: "msg-user-codex-imported" as MessageId,
+                text: "please debug the release checklist before launch",
+                offsetSeconds: 81,
+              }),
+              createAssistantMessage({
+                id: "msg-assistant-codex-imported" as MessageId,
+                text: "I found the flaky step in the release checklist.",
+                offsetSeconds: 82,
+              }),
+            ],
+            activities: [
+              {
+                id: EventId.make("activity-codex-imported"),
+                tone: "info",
+                kind: "codex-import.imported",
+                summary: "Imported from Codex session Fix the flaky release checklist",
+                payload: {
+                  sessionId: "codex-session-1",
+                },
+                turnId: null,
+                createdAt: isoAt(120),
+              },
+            ],
+            proposedPlans: [],
+            checkpoints: [],
+            session: null,
+          },
+        ],
+      },
       resolveRpc: (body) => {
         if (body._tag === WS_METHODS.codexImportListSessions) {
           return [
@@ -6484,8 +6538,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
               kind: "direct",
               transcriptAvailable: true,
               transcriptError: null,
-              alreadyImported: false,
-              importedThreadId: null,
+              alreadyImported: sessionAlreadyImported,
+              importedThreadId: sessionAlreadyImported ? importedThreadId : null,
               lastUserMessage: "please debug the release checklist before launch",
               lastAssistantMessage: "I found the flaky step in the release checklist.",
             },
@@ -6504,8 +6558,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
             kind: "direct",
             transcriptAvailable: true,
             transcriptError: null,
-            alreadyImported: false,
-            importedThreadId: null,
+            alreadyImported: sessionAlreadyImported,
+            importedThreadId: sessionAlreadyImported ? importedThreadId : null,
             messages: [
               {
                 role: "user",
@@ -6521,13 +6575,14 @@ describe("ChatView timeline estimator parity (full app)", () => {
           };
         }
         if (body._tag === WS_METHODS.codexImportImportSessions) {
+          sessionAlreadyImported = true;
           return {
             results: [
               {
                 sessionId: "codex-session-1",
                 status: "imported",
-                threadId: null,
-                projectId: null,
+                threadId: importedThreadId,
+                projectId: PROJECT_ID,
                 error: null,
               },
             ],
@@ -6556,12 +6611,11 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await vi.waitFor(
         () => {
           const pathname = mounted.router.state.location.pathname;
-          expect(pathname).toMatch(UUID_ROUTE_RE);
-          const draftId = draftIdFromPath(pathname);
-          const prompt = composerDraftFor(draftId)?.prompt ?? "";
-          expect(prompt).toContain("# Imported from Codex: Fix the flaky release checklist");
-          expect(prompt).toContain("please debug the release checklist before launch");
-          expect(prompt).toContain("I found the flaky step in the release checklist.");
+          expect(pathname).toBe(`/${LOCAL_ENVIRONMENT_ID}/${importedThreadId}`);
+          expect(document.body.textContent ?? "").toContain("Fix the flaky release checklist");
+          expect(document.body.textContent ?? "").toContain(
+            "I found the flaky step in the release checklist.",
+          );
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -6575,6 +6629,33 @@ describe("ChatView timeline estimator parity (full app)", () => {
       expect(
         wsRequests.some((request) => request._tag === WS_METHODS.codexImportImportSessions),
       ).toBe(true);
+      expect(
+        wsRequests.some(
+          (request) =>
+            request._tag === WS_METHODS.codexImportImportSessions &&
+            request.targetProjectId === PROJECT_ID,
+        ),
+      ).toBe(true);
+
+      dispatchOpenCodexImportShortcut();
+      await waitForElement(
+        () => document.querySelector<HTMLInputElement>('[data-testid="codex-import-query"]'),
+        "Unable to re-open Codex import input.",
+      );
+      await vi.waitFor(() => {
+        expect(document.body.textContent ?? "").toContain("Imported");
+        expect(document.body.textContent ?? "").toContain("Already imported");
+        expect(document.body.textContent ?? "").toContain("Open imported thread");
+      });
+
+      await page.getByTestId("codex-import-confirm").click();
+      await vi.waitFor(
+        () => {
+          const pathname = mounted.router.state.location.pathname;
+          expect(pathname).toBe(`/${LOCAL_ENVIRONMENT_ID}/${importedThreadId}`);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
     } finally {
       await mounted.cleanup();
     }

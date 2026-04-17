@@ -99,6 +99,7 @@ export type CodexImportPeekSessionResult = typeof CodexImportPeekSessionResult.T
 
 export const CodexImportImportSessionsInput = Schema.Struct({
   homePath: Schema.optionalKey(TrimmedNonEmptyString),
+  targetProjectId: ProjectId,
   sessionIds: Schema.Array(TrimmedNonEmptyString),
 });
 export type CodexImportImportSessionsInput = typeof CodexImportImportSessionsInput.Type;

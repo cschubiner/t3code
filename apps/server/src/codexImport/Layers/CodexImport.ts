@@ -3,7 +3,11 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  CommandId,
   CodexImportError,
+  DEFAULT_MODEL_BY_PROVIDER,
+  EventId,
+  MessageId,
   type CodexImportConcreteSessionKind,
   type CodexImportImportSessionsInput,
   type CodexImportImportSessionsResult,
@@ -11,8 +15,11 @@ import {
   type CodexImportPeekSessionInput,
   type CodexImportPeekSessionResult,
   type CodexImportSessionSummary,
+  type ModelSelection,
+  type OrchestrationProjectShell,
+  ThreadId,
 } from "@t3tools/contracts";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Option } from "effect";
 
 import {
   classifyCodexSessionKind,
@@ -20,16 +27,24 @@ import {
   type ParsedCodexTranscript,
 } from "../parseCodexTranscript";
 import { CodexImport, type CodexImportShape } from "../Services/CodexImport";
+import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine";
+import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery";
 
 const DEFAULT_RECENT_DAYS = 30;
 const DEFAULT_RECENT_LIMIT = 50;
 const DEFAULT_PEEK_MESSAGE_COUNT = 10;
 const TITLE_MAX_CHARS = 80;
+const IMPORT_ACTIVITY_KIND = "codex-import.imported";
 
 interface DiscoveredCodexRollout {
   readonly filePath: string;
   readonly sessionId: string;
   readonly mtimeMs: number;
+}
+
+interface ImportedSessionRef {
+  readonly threadId: ThreadId;
+  readonly importedAt: string;
 }
 
 function defaultCodexHome(explicit: string | undefined): string {
@@ -116,14 +131,76 @@ function iso(ms: number): string {
   return new Date(ms).toISOString();
 }
 
+function readImportedSessionId(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+  const value = (payload as { readonly sessionId?: unknown }).sessionId;
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function buildImportedSessionMap(
+  threads: ReadonlyArray<{
+    id: ThreadId;
+    updatedAt: string;
+    activities: ReadonlyArray<{ kind: string; payload: unknown; createdAt: string }>;
+  }>,
+): ReadonlyMap<string, ImportedSessionRef> {
+  const imported = new Map<string, ImportedSessionRef>();
+  const sortedThreads = threads.toSorted(
+    (left, right) =>
+      right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id),
+  );
+  for (const thread of sortedThreads) {
+    const sortedActivities = thread.activities.toSorted((left, right) =>
+      right.createdAt.localeCompare(left.createdAt),
+    );
+    for (const activity of sortedActivities) {
+      if (activity.kind !== IMPORT_ACTIVITY_KIND) {
+        continue;
+      }
+      const sessionId = readImportedSessionId(activity.payload);
+      if (!sessionId || imported.has(sessionId)) {
+        continue;
+      }
+      imported.set(sessionId, {
+        threadId: thread.id,
+        importedAt: activity.createdAt,
+      });
+    }
+  }
+  return imported;
+}
+
+function resolveImportModelSelection(
+  project: OrchestrationProjectShell,
+  parsed: ParsedCodexTranscript,
+): ModelSelection {
+  if (project.defaultModelSelection) {
+    return project.defaultModelSelection;
+  }
+  if (parsed.model && parsed.model.trim().length > 0) {
+    return {
+      provider: "codex",
+      model: parsed.model.trim(),
+    };
+  }
+  return {
+    provider: "codex",
+    model: DEFAULT_MODEL_BY_PROVIDER.codex,
+  };
+}
+
 function buildSummary(
   rollout: DiscoveredCodexRollout,
   parsed: ParsedCodexTranscript,
+  importedSessions: ReadonlyMap<string, ImportedSessionRef> = new Map(),
 ): CodexImportSessionSummary {
   const firstMessage = firstUserMessageText(parsed);
   const title = firstMessage ? truncateForTitle(firstMessage) : rollout.sessionId;
   const kind: CodexImportConcreteSessionKind =
     classifyCodexSessionKind({ source: null, messages: parsed.messages }) ?? "direct";
+  const importedRef = importedSessions.get(rollout.sessionId);
   const earliestMs =
     parsed.messages.length > 0
       ? Math.min(
@@ -151,18 +228,52 @@ function buildSummary(
     kind,
     transcriptAvailable: true,
     transcriptError: null,
-    alreadyImported: false,
-    importedThreadId: null,
+    alreadyImported: importedRef !== undefined,
+    importedThreadId: importedRef?.threadId ?? null,
     lastUserMessage: lastMessageText(parsed, "user"),
     lastAssistantMessage: lastMessageText(parsed, "assistant"),
   };
 }
 
-const makeCodexImport = Effect.sync((): CodexImportShape => {
+const makeCodexImport = Effect.gen(function* () {
+  const orchestrationEngine = yield* OrchestrationEngineService;
+  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+
+  const loadImportedSessions = () =>
+    projectionSnapshotQuery.getSnapshot().pipe(
+      Effect.map((snapshot) => buildImportedSessionMap(snapshot.threads)),
+      Effect.mapError(
+        (cause) =>
+          new CodexImportError({
+            message: `Failed to read imported-session state: ${cause instanceof Error ? cause.message : String(cause)}`,
+          }),
+      ),
+    );
+
+  const loadTargetProject = (targetProjectId: CodexImportImportSessionsInput["targetProjectId"]) =>
+    projectionSnapshotQuery.getProjectShellById(targetProjectId).pipe(
+      Effect.mapError(
+        (cause) =>
+          new CodexImportError({
+            message: `Failed to read target project ${targetProjectId}: ${cause instanceof Error ? cause.message : String(cause)}`,
+          }),
+      ),
+      Effect.flatMap((projectOption) =>
+        Option.isSome(projectOption)
+          ? Effect.succeed(projectOption.value)
+          : Effect.fail(
+              new CodexImportError({
+                message: `Target project not found: ${targetProjectId}`,
+              }),
+            ),
+      ),
+    );
+
   const listSessions: CodexImportShape["listSessions"] = (input: CodexImportListSessionsInput) =>
     Effect.gen(function* () {
       const codexHome = defaultCodexHome(input.homePath);
       const sessionsRoot = path.join(codexHome, "sessions");
+      const importedSessions = yield* loadImportedSessions();
       const rollouts = yield* Effect.tryPromise({
         try: () => discoverRollouts(sessionsRoot),
         catch: (cause) =>
@@ -182,7 +293,7 @@ const makeCodexImport = Effect.sync((): CodexImportShape => {
       for (const rollout of recent) {
         const loaded = yield* Effect.promise(() => loadTranscript(rollout.filePath));
         if ("error" in loaded) continue;
-        const summary = buildSummary(rollout, loaded.parsed);
+        const summary = buildSummary(rollout, loaded.parsed, importedSessions);
         if (input.kind !== "all" && summary.kind !== input.kind) continue;
         if (input.query) {
           const needle = input.query.toLowerCase();
@@ -200,6 +311,7 @@ const makeCodexImport = Effect.sync((): CodexImportShape => {
     Effect.gen(function* () {
       const codexHome = defaultCodexHome(input.homePath);
       const sessionsRoot = path.join(codexHome, "sessions");
+      const importedSessions = yield* loadImportedSessions();
       const rollouts = yield* Effect.tryPromise({
         try: () => discoverRollouts(sessionsRoot),
         catch: (cause) =>
@@ -220,7 +332,7 @@ const makeCodexImport = Effect.sync((): CodexImportShape => {
       const parsed = loaded.parsed;
       const messageCount = input.messageCount ?? DEFAULT_PEEK_MESSAGE_COUNT;
       const lastMessages = parsed.messages.slice(-messageCount);
-      const summary = buildSummary(match, parsed);
+      const summary = buildSummary(match, parsed, importedSessions);
       const result: CodexImportPeekSessionResult = {
         sessionId: match.sessionId,
         title: summary.title,
@@ -233,8 +345,8 @@ const makeCodexImport = Effect.sync((): CodexImportShape => {
         kind: summary.kind,
         transcriptAvailable: true,
         transcriptError: null,
-        alreadyImported: false,
-        importedThreadId: null,
+        alreadyImported: summary.alreadyImported,
+        importedThreadId: summary.importedThreadId,
         messages: lastMessages.map((message) => ({
           role: message.role,
           text: message.text,
@@ -246,15 +358,146 @@ const makeCodexImport = Effect.sync((): CodexImportShape => {
 
   const importSessions: CodexImportShape["importSessions"] = (
     input: CodexImportImportSessionsInput,
-  ): Effect.Effect<CodexImportImportSessionsResult, CodexImportError> =>
-    Effect.succeed({
-      results: input.sessionIds.map((sessionId) => ({
-        sessionId,
-        status: "imported" as const,
-        threadId: null,
-        projectId: null,
-        error: null,
-      })),
+  ) =>
+    Effect.gen(function* () {
+      const codexHome = defaultCodexHome(input.homePath);
+      const sessionsRoot = path.join(codexHome, "sessions");
+      const project = yield* loadTargetProject(input.targetProjectId);
+      const rollouts = yield* Effect.tryPromise({
+        try: () => discoverRollouts(sessionsRoot),
+        catch: (cause) =>
+          new CodexImportError({
+            message: `Failed to scan Codex sessions at ${sessionsRoot}: ${String(cause)}`,
+          }),
+      });
+      const importedSessions = new Map(yield* loadImportedSessions());
+      const results: Array<CodexImportImportSessionsResult["results"][number]> = [];
+
+      for (const sessionId of input.sessionIds) {
+        const existing = importedSessions.get(sessionId);
+        if (existing) {
+          results.push({
+            sessionId,
+            status: "skipped-existing",
+            threadId: existing.threadId,
+            projectId: input.targetProjectId,
+            error: null,
+          });
+          continue;
+        }
+
+        const match = rollouts.find((rollout) => rollout.sessionId === sessionId);
+        if (!match) {
+          results.push({
+            sessionId,
+            status: "failed",
+            threadId: null,
+            projectId: input.targetProjectId,
+            error: `Codex session not found: ${sessionId}`,
+          });
+          continue;
+        }
+
+        const loaded = yield* Effect.promise(() => loadTranscript(match.filePath));
+        if ("error" in loaded) {
+          results.push({
+            sessionId,
+            status: "failed",
+            threadId: null,
+            projectId: input.targetProjectId,
+            error: `Failed to read ${match.filePath}: ${loaded.error}`,
+          });
+          continue;
+        }
+
+        const parsed = loaded.parsed;
+        const summary = buildSummary(match, parsed, importedSessions);
+        const nextThreadId = ThreadId.make(crypto.randomUUID());
+        const createdAt = summary.createdAt ?? new Date().toISOString();
+        const importedAt = new Date().toISOString();
+        const modelSelection = resolveImportModelSelection(project, parsed);
+
+        const importResult = yield* Effect.match(
+          Effect.gen(function* () {
+            yield* orchestrationEngine.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make(crypto.randomUUID()),
+              threadId: nextThreadId,
+              projectId: input.targetProjectId,
+              title: summary.title,
+              modelSelection,
+              runtimeMode: parsed.runtimeMode,
+              interactionMode: parsed.interactionMode,
+              branch: null,
+              worktreePath: null,
+              createdAt,
+            });
+
+            for (const message of parsed.messages) {
+              yield* orchestrationEngine.dispatch({
+                type: "thread.message.append",
+                commandId: CommandId.make(crypto.randomUUID()),
+                threadId: nextThreadId,
+                message: {
+                  messageId: MessageId.make(crypto.randomUUID()),
+                  role: message.role,
+                  text: message.text,
+                },
+                createdAt: message.createdAt,
+              });
+            }
+
+            yield* orchestrationEngine.dispatch({
+              type: "thread.activity.append",
+              commandId: CommandId.make(crypto.randomUUID()),
+              threadId: nextThreadId,
+              activity: {
+                id: EventId.make(crypto.randomUUID()),
+                tone: "info",
+                kind: IMPORT_ACTIVITY_KIND,
+                summary: `Imported from Codex session ${summary.title}`,
+                payload: {
+                  sessionId,
+                  sourceKind: summary.kind,
+                  sourceCreatedAt: summary.createdAt,
+                  sourceUpdatedAt: summary.updatedAt,
+                  sourceModel: parsed.model,
+                  importedAt,
+                },
+                turnId: null,
+                createdAt: importedAt,
+              },
+              createdAt: importedAt,
+            });
+          }),
+          {
+            onFailure: (cause) => ({
+              sessionId,
+              status: "failed" as const,
+              threadId: null,
+              projectId: input.targetProjectId,
+              error: cause instanceof Error ? cause.message : String(cause),
+            }),
+            onSuccess: () => ({
+              sessionId,
+              status: "imported" as const,
+              threadId: nextThreadId,
+              projectId: input.targetProjectId,
+              error: null,
+            }),
+          },
+        );
+
+        results.push(importResult);
+        if (importResult.status === "imported" && importResult.threadId) {
+          importedSessions.set(sessionId, {
+            threadId: importResult.threadId,
+            importedAt,
+          });
+        }
+      }
+
+      return { results };
     });
 
   return {
