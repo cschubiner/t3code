@@ -28,6 +28,10 @@ export const SidebarProjectGroupingMode = Schema.Literals([
 export type SidebarProjectGroupingMode = typeof SidebarProjectGroupingMode.Type;
 export const DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE: SidebarProjectGroupingMode = "repository";
 
+export const SidebarViewMode = Schema.Literals(["grouped", "recent"]);
+export type SidebarViewMode = typeof SidebarViewMode.Type;
+export const DEFAULT_SIDEBAR_VIEW_MODE: SidebarViewMode = "grouped";
+
 export const ClientSettingsSchema = Schema.Struct({
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -70,6 +74,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   sidebarThreadSortOrder: SidebarThreadSortOrder.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_SORT_ORDER)),
+  ),
+  sidebarViewMode: SidebarViewMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_VIEW_MODE)),
   ),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
@@ -297,6 +304,7 @@ export const ClientSettingsPatch = Schema.Struct({
   ),
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
+  sidebarViewMode: Schema.optionalKey(SidebarViewMode),
   timestampFormat: Schema.optionalKey(TimestampFormat),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;

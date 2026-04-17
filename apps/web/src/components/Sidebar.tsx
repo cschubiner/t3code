@@ -3,6 +3,8 @@ import {
   ArrowUpDownIcon,
   ChevronRightIcon,
   CloudIcon,
+  ClockIcon,
+  FolderIcon,
   GitPullRequestIcon,
   FolderPlusIcon,
   SearchIcon,
@@ -56,6 +58,7 @@ import { Link, useLocation, useNavigate, useParams, useRouter } from "@tanstack/
 import {
   type SidebarProjectSortOrder,
   type SidebarThreadSortOrder,
+  type SidebarViewMode,
 } from "@t3tools/contracts/settings";
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import { isElectron } from "../env";
@@ -129,6 +132,7 @@ import {
   MenuTrigger,
 } from "./ui/menu";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
+import { SidebarRecentContent } from "./SidebarRecentContent";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import {
   SidebarContent,
@@ -2232,6 +2236,86 @@ type SortableProjectHandleProps = Pick<
   "attributes" | "listeners" | "setActivatorNodeRef"
 >;
 
+const SidebarRecentHeader = memo(function SidebarRecentHeader({
+  commandPaletteShortcutLabel,
+  viewMode,
+  onViewModeChange,
+}: {
+  commandPaletteShortcutLabel: string | null;
+  viewMode: SidebarViewMode;
+  onViewModeChange: (mode: SidebarViewMode) => void;
+}) {
+  return (
+    <>
+      <SidebarGroup className="px-2 pt-2 pb-1">
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <CommandDialogTrigger
+              render={
+                <SidebarMenuButton
+                  size="sm"
+                  className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground focus-visible:ring-0"
+                  data-testid="command-palette-trigger"
+                />
+              }
+            >
+              <SearchIcon className="size-3.5" />
+              <span className="flex-1 truncate text-left text-xs">Search</span>
+              {commandPaletteShortcutLabel ? (
+                <Kbd className="h-4 min-w-0 rounded-sm px-1.5 text-[10px]">
+                  {commandPaletteShortcutLabel}
+                </Kbd>
+              ) : null}
+            </CommandDialogTrigger>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarGroup>
+      <SidebarGroup className="px-2 pt-1 pb-0">
+        <div className="mb-1 flex items-center justify-between pl-2 pr-1.5">
+          <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+            Recent
+          </span>
+          <div className="flex items-center gap-1">
+            <SidebarViewModeToggle viewMode={viewMode} onChange={onViewModeChange} />
+          </div>
+        </div>
+      </SidebarGroup>
+    </>
+  );
+});
+
+function SidebarViewModeToggle({
+  viewMode,
+  onChange,
+}: {
+  viewMode: SidebarViewMode;
+  onChange: (mode: SidebarViewMode) => void;
+}) {
+  const nextMode: SidebarViewMode = viewMode === "grouped" ? "recent" : "grouped";
+  const Icon = viewMode === "grouped" ? ClockIcon : FolderIcon;
+  const label = viewMode === "grouped" ? "Switch to recent" : "Switch to grouped";
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label={label}
+            data-testid="sidebar-view-mode-toggle"
+            className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+            onClick={() => {
+              onChange(nextMode);
+            }}
+          />
+        }
+      >
+        <Icon className="size-3.5" />
+      </TooltipTrigger>
+      <TooltipPopup side="right">{label}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
 function ProjectSortMenu({
   projectSortOrder,
   threadSortOrder,
@@ -2443,6 +2527,8 @@ interface SidebarProjectsContentProps {
   projectSortOrder: SidebarProjectSortOrder;
   threadSortOrder: SidebarThreadSortOrder;
   projectGroupingMode: SidebarProjectGroupingMode;
+  viewMode: SidebarViewMode;
+  onViewModeChange: (mode: SidebarViewMode) => void;
   updateSettings: ReturnType<typeof useUpdateSettings>["updateSettings"];
   openAddProject: () => void;
   isManualProjectSorting: boolean;
@@ -2483,6 +2569,8 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     projectSortOrder,
     threadSortOrder,
     projectGroupingMode,
+    viewMode,
+    onViewModeChange,
     updateSettings,
     openAddProject,
     isManualProjectSorting,
@@ -2584,6 +2672,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
             Projects
           </span>
           <div className="flex items-center gap-1">
+            <SidebarViewModeToggle viewMode={viewMode} onChange={onViewModeChange} />
             <ProjectSortMenu
               projectSortOrder={projectSortOrder}
               threadSortOrder={threadSortOrder}
@@ -2710,7 +2799,14 @@ export default function Sidebar() {
     sidebarProjectGroupingMode: settings.sidebarProjectGroupingMode,
     sidebarProjectGroupingOverrides: settings.sidebarProjectGroupingOverrides,
   }));
+  const sidebarViewMode = useSettings((s) => s.sidebarViewMode);
   const { updateSettings } = useUpdateSettings();
+  const handleViewModeChange = useCallback(
+    (mode: SidebarViewMode) => {
+      updateSettings({ sidebarViewMode: mode });
+    },
+    [updateSettings],
+  );
   const { handleNewThread } = useNewThreadHandler();
   const { archiveThread, deleteThread } = useThreadActions();
   const { isMobile, setOpenMobile } = useSidebar();
@@ -3344,6 +3440,17 @@ export default function Sidebar() {
 
       {isOnSettings ? (
         <SettingsSidebarNav pathname={pathname} />
+      ) : sidebarViewMode === "recent" ? (
+        <>
+          <SidebarRecentHeader
+            commandPaletteShortcutLabel={commandPaletteShortcutLabel}
+            viewMode={sidebarViewMode}
+            onViewModeChange={handleViewModeChange}
+          />
+          <SidebarRecentContent />
+          <SidebarSeparator />
+          <SidebarChromeFooter />
+        </>
       ) : (
         <>
           <SidebarProjectsContent
@@ -3355,6 +3462,8 @@ export default function Sidebar() {
             projectSortOrder={sidebarProjectSortOrder}
             threadSortOrder={sidebarThreadSortOrder}
             projectGroupingMode={sidebarProjectGroupingMode}
+            viewMode={sidebarViewMode}
+            onViewModeChange={handleViewModeChange}
             updateSettings={updateSettings}
             openAddProject={openAddProjectCommandPalette}
             isManualProjectSorting={isManualProjectSorting}
