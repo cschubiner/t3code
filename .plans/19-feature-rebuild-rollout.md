@@ -314,13 +314,23 @@ Status:
   - `Cmd/Ctrl+Shift+I` opens the import dialog
   - local Codex sessions are listed and searchable
   - importing seeds a new draft thread with the transcript content
+- restored the deeper historical search surfaces that existed in the earlier rebuild work:
+  - `Cmd/Ctrl+Alt+F` opens `Search All Threads` for title/message/plan search across loaded threads
+  - `Cmd/Ctrl+Alt+P` opens `Search Project Folders` and starts a new draft thread in the selected project
 - targeted coverage passed:
   - `apps/web/src/components/Sidebar.logic.test.ts`
   - `apps/web/src/components/ChatView.browser.tsx -t "imports a Codex transcript into a new draft thread from the global shortcut"`
+  - `apps/web/src/components/GlobalThreadSearchDialog.browser.tsx`
+  - `apps/web/src/components/ProjectFolderSearchDialog.browser.tsx`
+  - `apps/web/src/components/ChatView.browser.tsx -t "global thread search shortcut"`
+  - `apps/web/src/components/ChatView.browser.tsx -t "project folder search shortcut"`
 - Computer Use QA:
   - passed for grouped/recent toggle parity
   - partially blocked for the final Codex-import click-through because Safari's accessibility tree kept a stale hidden dialog layer active; the dialog still opened on the shortcut and loaded live local sessions
+  - passed for both restored search dialogs in Chrome via the command palette entry points
+  - the live app still displayed older shortcut hints for project/global search because this machine has saved keybindings in `~/.t3` overriding the new defaults; the checked-in defaults and tests now reflect the updated `Cmd/Ctrl+Alt+F` and `Cmd/Ctrl+Alt+P` bindings
 - QA notes captured in `.codex/artifacts/qa/sidebar-recent-and-codex-import.md`
+- QA notes captured in `.codex/artifacts/qa/deep-search-and-project-search.md`
 
 Target:
 

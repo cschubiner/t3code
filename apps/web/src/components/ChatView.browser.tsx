@@ -32,7 +32,9 @@ import { render } from "vitest-browser-react";
 
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import { useComposerDraftStore, DraftId } from "../composerDraftStore";
+import { useGlobalThreadSearchStore } from "../globalThreadSearchStore";
 import { useQuickThreadSearchStore } from "../quickThreadSearchStore";
+import { useProjectFolderSearchStore } from "../projectFolderSearchStore";
 import { useSkillPickerStore } from "../skillPickerStore";
 import { useSnippetPickerStore } from "../snippetPickerStore";
 import {
@@ -1447,6 +1449,34 @@ function dispatchOpenQuickThreadSearchShortcut(): void {
   );
 }
 
+function dispatchOpenGlobalThreadSearchShortcut(): void {
+  const useMetaForMod = isMacPlatform(navigator.platform);
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "f",
+      altKey: true,
+      metaKey: useMetaForMod,
+      ctrlKey: !useMetaForMod,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
+function dispatchOpenProjectFolderSearchShortcut(): void {
+  const useMetaForMod = isMacPlatform(navigator.platform);
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "p",
+      altKey: true,
+      metaKey: useMetaForMod,
+      ctrlKey: !useMetaForMod,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
 function dispatchOpenCodexImportShortcut(): void {
   const useMetaForMod = isMacPlatform(navigator.platform);
   window.dispatchEvent(
@@ -1725,6 +1755,14 @@ describe("ChatView timeline estimator parity (full app)", () => {
       open: false,
       focusRequestId: 0,
     });
+    useGlobalThreadSearchStore.setState({
+      open: false,
+      focusRequestId: 0,
+    });
+    useProjectFolderSearchStore.setState({
+      open: false,
+      focusRequestId: 0,
+    });
     useStore.setState({
       activeEnvironmentId: null,
       environmentStateById: {},
@@ -1754,6 +1792,14 @@ describe("ChatView timeline estimator parity (full app)", () => {
       focusRequestId: 0,
     });
     useQuickThreadSearchStore.setState({
+      open: false,
+      focusRequestId: 0,
+    });
+    useGlobalThreadSearchStore.setState({
+      open: false,
+      focusRequestId: 0,
+    });
+    useProjectFolderSearchStore.setState({
       open: false,
       focusRequestId: 0,
     });
@@ -6296,6 +6342,122 @@ describe("ChatView timeline estimator parity (full app)", () => {
         expect(mounted.router.state.location.pathname).toBe(
           serverThreadPath("thread-secondary-project" as ThreadId),
         );
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens global thread search from the global shortcut and navigates to a deep content match", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithSecondaryProject({ includeArchivedSecondaryThread: false }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "threads.searchAll",
+              shortcut: {
+                key: "f",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: true,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+        nextFixture.snapshot = {
+          ...nextFixture.snapshot,
+          threads: nextFixture.snapshot.threads.map((thread) =>
+            thread.id === ("thread-secondary-project" as ThreadId)
+              ? {
+                  ...thread,
+                  messages: [
+                    createAssistantMessage({
+                      id: "msg-assistant-global-thread-secondary" as MessageId,
+                      text: "The queue recovery checklist is ready for launch.",
+                      offsetSeconds: 52,
+                    }),
+                  ],
+                  updatedAt: isoAt(52),
+                }
+              : thread,
+          ),
+        };
+      },
+    });
+
+    try {
+      dispatchOpenGlobalThreadSearchShortcut();
+      await waitForElement(
+        () =>
+          document.querySelector<HTMLInputElement>('[data-testid="global-thread-search-input"]'),
+        "Unable to find global thread search input.",
+      );
+      await page.getByTestId("global-thread-search-input").fill("queue recovery");
+      await page.getByRole("button", { name: /Release checklist/i }).click();
+      await vi.waitFor(() => {
+        expect(mounted.router.state.location.pathname).toBe(
+          serverThreadPath("thread-secondary-project" as ThreadId),
+        );
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens project folder search from the global shortcut and starts a new thread in the selected project", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithSecondaryProject(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "projects.search",
+              shortcut: {
+                key: "p",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: true,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      dispatchOpenProjectFolderSearchShortcut();
+      await waitForElement(
+        () =>
+          document.querySelector<HTMLInputElement>('[data-testid="project-folder-search-input"]'),
+        "Unable to find project folder search input.",
+      );
+      await page.getByTestId("project-folder-search-input").fill("docs");
+      await page.getByRole("button", { name: /Docs Portal/i }).click();
+      await vi.waitFor(() => {
+        expect(mounted.router.state.location.pathname).toMatch(UUID_ROUTE_RE);
+      });
+      await vi.waitFor(() => {
+        const draftThread = useComposerDraftStore
+          .getState()
+          .getDraftSession(draftIdFromPath(mounted.router.state.location.pathname));
+        expect(draftThread?.projectId).toBe(SECOND_PROJECT_ID);
       });
     } finally {
       await mounted.cleanup();

@@ -112,6 +112,8 @@ const DEFAULT_BINDINGS = compile([
   { shortcut: modShortcut("o", { shiftKey: true }), command: "chat.new" },
   { shortcut: modShortcut("n", { shiftKey: true }), command: "chat.newLocal" },
   { shortcut: modShortcut("f", { shiftKey: true }), command: "threads.search" },
+  { shortcut: modShortcut("f", { altKey: true }), command: "threads.searchAll" },
+  { shortcut: modShortcut("p", { altKey: true }), command: "projects.search" },
   { shortcut: modShortcut("s", { shiftKey: true }), command: "snippets.open" },
   { shortcut: modShortcut("k", { shiftKey: true }), command: "skills.open" },
   { shortcut: modShortcut("o"), command: "editor.openFavorite" },
@@ -274,6 +276,14 @@ describe("shortcutLabelForCommand", () => {
       "⇧⌘F",
     );
     assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "threads.searchAll", "MacIntel"),
+      "⌥⌘F",
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "projects.search", "MacIntel"),
+      "⌥⌘P",
+    );
+    assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "snippets.open", "MacIntel"),
       "⇧⌘S",
     );
@@ -420,6 +430,26 @@ describe("chat/editor shortcuts", () => {
         context: { terminalFocus: false },
       }),
       "threads.search",
+    );
+  });
+
+  it("resolves threads.searchAll from the default shortcut", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "f", metaKey: true, altKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "threads.searchAll",
+    );
+  });
+
+  it("resolves projects.search from the default shortcut", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "p", metaKey: true, altKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "projects.search",
     );
   });
 

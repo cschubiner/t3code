@@ -91,6 +91,8 @@ import { CommandPaletteResults } from "./CommandPaletteResults";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { useServerKeybindings } from "../rpc/serverState";
 import { useQuickThreadSearchStore } from "../quickThreadSearchStore";
+import { useGlobalThreadSearchStore } from "../globalThreadSearchStore";
+import { useProjectFolderSearchStore } from "../projectFolderSearchStore";
 import { useSkillPickerStore } from "../skillPickerStore";
 import { useSnippetPickerStore } from "../snippetPickerStore";
 import { resolveShortcutCommand } from "../keybindings";
@@ -705,6 +707,32 @@ function OpenCommandPaletteDialog() {
     shortcutCommand: "threads.search",
     run: async () => {
       useQuickThreadSearchStore.getState().openDialog();
+    },
+  });
+
+  actionItems.push({
+    kind: "action",
+    value: "action:global-thread-search",
+    searchTerms: ["search all threads", "deep thread search", "messages", "plans", "assistant"],
+    title: "Search all threads",
+    description: "Search titles, messages, and plans across every loaded thread",
+    icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
+    shortcutCommand: "threads.searchAll",
+    run: async () => {
+      useGlobalThreadSearchStore.getState().openDialog();
+    },
+  });
+
+  actionItems.push({
+    kind: "action",
+    value: "action:project-folder-search",
+    searchTerms: ["project folders", "projects", "folder search", "new thread in project"],
+    title: "Search project folders",
+    description: "Jump to a project and open a new thread there",
+    icon: <FolderIcon className={ITEM_ICON_CLASS} />,
+    shortcutCommand: "projects.search",
+    run: async () => {
+      useProjectFolderSearchStore.getState().openDialog();
     },
   });
 

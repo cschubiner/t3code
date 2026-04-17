@@ -28,6 +28,8 @@ See the full schema for more details: [`packages/contracts/src/keybindings.ts`](
   { "key": "mod+shift+o", "command": "chat.new", "when": "!terminalFocus" },
   { "key": "mod+shift+n", "command": "chat.newLocal", "when": "!terminalFocus" },
   { "key": "mod+shift+f", "command": "threads.search", "when": "!terminalFocus" },
+  { "key": "mod+alt+f", "command": "threads.searchAll", "when": "!terminalFocus" },
+  { "key": "mod+alt+p", "command": "projects.search", "when": "!terminalFocus" },
   { "key": "mod+shift+s", "command": "snippets.open", "when": "!terminalFocus" },
   { "key": "mod+shift+k", "command": "skills.open", "when": "!terminalFocus" },
   { "key": "mod+shift+[", "command": "thread.previous" },
@@ -62,6 +64,8 @@ Invalid rules are ignored. Invalid config files are ignored. Warnings are logged
 - `chat.new`: create a new chat thread preserving the active thread's branch/worktree state
 - `chat.newLocal`: create a new chat thread for the active project in a new environment (local/worktree determined by app settings (default `local`))
 - `threads.search`: open quick recent-thread search
+- `threads.searchAll`: deep-search all loaded threads including titles, messages, and plans
+- `projects.search`: open the project folder search dialog
 - `snippets.open`: open the snippet picker
 - `skills.open`: open the workspace skill picker
 - `thread.previous`: move to the previous visible thread in the sidebar
