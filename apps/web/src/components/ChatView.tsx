@@ -142,6 +142,7 @@ import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { QueuedFollowUpsPanel } from "./QueuedFollowUpsPanel";
 import { useQueuedTurnStore, type QueuedTurnDraft } from "../queuedTurnStore";
 import { SnippetPickerDialog } from "./SnippetPickerDialog";
+import { SkillPickerDialog, formatSkillReferenceBlock } from "./SkillPickerDialog";
 import { snippetListQueryOptions, snippetQueryKeys } from "../lib/snippetReactQuery";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ensureLocalApi } from "../localApi";
@@ -840,6 +841,9 @@ export default function ChatView(props: ChatViewProps) {
   const [deletingSnippetId, setDeletingSnippetId] = useState<SnippetId | null>(null);
   // ---- Codex import (cmd+shift+I / ctrl+shift+I) ----
   const [codexImportDialogOpen, setCodexImportDialogOpen] = useState(false);
+  // ---- Skill picker (cmd+shift+K / ctrl+shift+K) ----
+  const [skillPickerOpen, setSkillPickerOpen] = useState(false);
+  const [skillPickerFocusRequest, setSkillPickerFocusRequest] = useState(0);
   const snippetQueryClient = useQueryClient();
   const snippetListQuery = useQuery(snippetListQueryOptions());
   const snippets = snippetListQuery.data?.snippets ?? [];
@@ -2830,6 +2834,23 @@ export default function ChatView(props: ChatViewProps) {
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, []);
 
+  // ---- Global shortcut: open Skills picker with cmd/ctrl + shift + k ----
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.repeat) return;
+      const usesMod = event.metaKey || event.ctrlKey;
+      if (!usesMod || !event.shiftKey || event.altKey) return;
+      const key = event.key.toLowerCase();
+      if (key !== "k") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setSkillPickerFocusRequest((previous) => previous + 1);
+      setSkillPickerOpen(true);
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, []);
+
   // ---- Global shortcut: open snippet picker with cmd/ctrl + ; ----
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
@@ -3637,6 +3658,21 @@ export default function ChatView(props: ChatViewProps) {
             <ImportFromCodexDialog
               open={codexImportDialogOpen}
               onOpenChange={setCodexImportDialogOpen}
+            />
+            <SkillPickerDialog
+              open={skillPickerOpen}
+              onOpenChange={setSkillPickerOpen}
+              cwd={gitCwd}
+              focusRequestId={skillPickerFocusRequest}
+              onSelectSkill={(skill) => {
+                const block = formatSkillReferenceBlock(skill);
+                const existing = (promptRef.current ?? "").trim();
+                const nextPrompt = existing.length === 0 ? block : `${existing}\n\n${block}`;
+                promptRef.current = nextPrompt;
+                setComposerDraftPrompt(composerDraftTarget, nextPrompt);
+                composerRef.current?.resetCursorState({ prompt: nextPrompt });
+                setSkillPickerOpen(false);
+              }}
             />
             <SnippetPickerDialog
               open={snippetPickerOpen}
