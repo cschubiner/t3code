@@ -318,6 +318,9 @@ Status:
 - restored the deeper historical search surfaces that existed in the earlier rebuild work:
   - `Cmd/Ctrl+Alt+F` opens `Search All Threads` for title/message/plan search across loaded threads
   - `Cmd/Ctrl+Alt+P` opens `Search Project Folders` and starts a new draft thread in the selected project
+- restored the sidebar rename shortcut parity:
+  - `Cmd/Ctrl+Shift+R` now triggers inline rename for the active sidebar thread
+  - the rename flow works from the global shortcut path rather than only from thread-row context menus
 - targeted coverage passed:
   - `apps/web/src/components/Sidebar.logic.test.ts`
   - `apps/web/src/components/ChatView.browser.tsx -t "imports a Codex transcript into a durable thread from the global shortcut"`
@@ -326,14 +329,19 @@ Status:
   - `apps/web/src/components/ProjectFolderSearchDialog.browser.tsx`
   - `apps/web/src/components/ChatView.browser.tsx -t "global thread search shortcut"`
   - `apps/web/src/components/ChatView.browser.tsx -t "project folder search shortcut"`
+  - `apps/web/src/components/ChatView.browser.tsx -t "opens sidebar rename from the global shortcut and submits the rename"`
+  - `apps/server/src/keybindings.test.ts`
+  - `apps/web/src/keybindings.test.ts`
 - Computer Use QA:
   - passed for grouped/recent toggle parity
   - passed in Chrome for the durable Codex-import flow, including live import into a real thread and reopening the same imported thread from the dialog
   - passed for both restored search dialogs in Chrome via the command palette entry points
+  - passed in the branch-local Electron dev app for the restored sidebar rename shortcut, including opening inline rename from `Cmd+Shift+R` and committing the updated title with `Enter`
   - the live app still displayed older shortcut hints for project/global search because this machine has saved keybindings in `~/.t3` overriding the new defaults; the checked-in defaults and tests now reflect the updated `Cmd/Ctrl+Alt+F` and `Cmd/Ctrl+Alt+P` bindings
 - QA notes captured in `.codex/artifacts/qa/sidebar-recent-and-codex-import.md`
 - QA notes captured in `.codex/artifacts/qa/codex-import-durable-thread.md`
 - QA notes captured in `.codex/artifacts/qa/deep-search-and-project-search.md`
+- QA notes captured in `.codex/artifacts/qa/sidebar-rename-hotkey.md`
 
 Target:
 

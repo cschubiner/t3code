@@ -70,6 +70,7 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+alt+p", command: "projects.search", when: "!terminalFocus" },
   { key: "mod+shift+s", command: "snippets.open", when: "!terminalFocus" },
   { key: "mod+shift+k", command: "skills.open", when: "!terminalFocus" },
+  { key: "mod+shift+r", command: "sidebar.rename", when: "!terminalFocus" },
   { key: "mod+o", command: "editor.openFavorite" },
   { key: "mod+shift+[", command: "thread.previous" },
   { key: "mod+shift+]", command: "thread.next" },

@@ -734,6 +734,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             {renamingThreadKey === threadKey ? (
               <input
                 ref={handleRenameInputRef}
+                data-testid={`thread-rename-input-${thread.id}`}
                 className="min-w-0 flex-1 truncate text-xs bg-transparent outline-none border border-ring rounded px-0.5"
                 value={renamingTitle}
                 onChange={handleRenameInputChange}
@@ -1066,6 +1067,13 @@ interface SidebarRecentThreadListProps {
   navigateToThread: (threadRef: ScopedThreadRef) => void;
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
+  setRenamingThreadKey: React.Dispatch<React.SetStateAction<string | null>>;
+  renamingThreadKey: string | null;
+  renamingTitle: string;
+  setRenamingTitle: React.Dispatch<React.SetStateAction<string>>;
+  renamingInputRef: React.RefObject<HTMLInputElement | null>;
+  renamingCommittedRef: React.RefObject<boolean>;
+  startRenameThread: (threadKey: string) => boolean;
 }
 
 const SidebarRecentThreadList = memo(function SidebarRecentThreadList(
@@ -1082,6 +1090,13 @@ const SidebarRecentThreadList = memo(function SidebarRecentThreadList(
     navigateToThread,
     archiveThread,
     deleteThread,
+    setRenamingThreadKey,
+    renamingThreadKey,
+    renamingTitle,
+    setRenamingTitle,
+    renamingInputRef,
+    renamingCommittedRef,
+    startRenameThread,
   } = props;
   const showLessButtonRender = useMemo(() => <button type="button" />, []);
   const showMoreButtonRender = useMemo(() => <button type="button" />, []);
@@ -1097,10 +1112,6 @@ const SidebarRecentThreadList = memo(function SidebarRecentThreadList(
   const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
   const removeFromSelection = useThreadSelectionStore((state) => state.removeFromSelection);
   const setSelectionAnchor = useThreadSelectionStore((state) => state.setAnchor);
-  const [renamingThreadKey, setRenamingThreadKey] = useState<string | null>(null);
-  const [renamingTitle, setRenamingTitle] = useState("");
-  const renamingInputRef = useRef<HTMLInputElement | null>(null);
-  const renamingCommittedRef = useRef(false);
   const confirmArchiveButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const [confirmingArchiveThreadKey, setConfirmingArchiveThreadKey] = useState<string | null>(null);
   const threadByKey = useMemo(
@@ -1290,7 +1301,7 @@ const SidebarRecentThreadList = memo(function SidebarRecentThreadList(
   const cancelRename = useCallback(() => {
     setRenamingThreadKey(null);
     renamingInputRef.current = null;
-  }, []);
+  }, [renamingInputRef, setRenamingThreadKey]);
   const commitRename = useCallback(
     async (threadRef: ScopedThreadRef, newTitle: string, originalTitle: string) => {
       const threadKey = scopedThreadKey(threadRef);
@@ -1338,7 +1349,7 @@ const SidebarRecentThreadList = memo(function SidebarRecentThreadList(
       }
       finishRename();
     },
-    [],
+    [renamingInputRef, setRenamingThreadKey],
   );
   const handleThreadContextMenu = useCallback(
     async (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
@@ -1365,9 +1376,7 @@ const SidebarRecentThreadList = memo(function SidebarRecentThreadList(
       );
 
       if (clicked === "rename") {
-        setRenamingThreadKey(threadKey);
-        setRenamingTitle(thread.title);
-        renamingCommittedRef.current = false;
+        startRenameThread(threadKey);
         return;
       }
 
@@ -1410,6 +1419,7 @@ const SidebarRecentThreadList = memo(function SidebarRecentThreadList(
       copyThreadIdToClipboard,
       deleteThread,
       markThreadUnread,
+      startRenameThread,
     ],
   );
 
@@ -1502,6 +1512,13 @@ interface SidebarProjectItemProps {
   suppressProjectClickForContextMenuRef: React.RefObject<boolean>;
   isManualProjectSorting: boolean;
   dragHandleProps: SortableProjectHandleProps | null;
+  setRenamingThreadKey: React.Dispatch<React.SetStateAction<string | null>>;
+  renamingThreadKey: string | null;
+  renamingTitle: string;
+  setRenamingTitle: React.Dispatch<React.SetStateAction<string>>;
+  renamingInputRef: React.RefObject<HTMLInputElement | null>;
+  renamingCommittedRef: React.RefObject<boolean>;
+  startRenameThread: (threadKey: string) => boolean;
 }
 
 const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjectItemProps) {
@@ -1522,6 +1539,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     suppressProjectClickForContextMenuRef,
     isManualProjectSorting,
     dragHandleProps,
+    setRenamingThreadKey,
+    renamingThreadKey,
+    renamingTitle,
+    setRenamingTitle,
+    renamingInputRef,
+    renamingCommittedRef,
+    startRenameThread,
   } = props;
   const threadSortOrder = useSettings<SidebarThreadSortOrder>(
     (settings) => settings.sidebarThreadSortOrder,
@@ -1677,11 +1701,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       ),
     ),
   );
-  const [renamingThreadKey, setRenamingThreadKey] = useState<string | null>(null);
-  const [renamingTitle, setRenamingTitle] = useState("");
   const [confirmingArchiveThreadKey, setConfirmingArchiveThreadKey] = useState<string | null>(null);
-  const renamingCommittedRef = useRef(false);
-  const renamingInputRef = useRef<HTMLInputElement | null>(null);
   const confirmArchiveButtonRefs = useRef(new Map<string, HTMLButtonElement>());
 
   const { projectStatus, visibleProjectThreads, orderedProjectThreadKeys } = useMemo(() => {
@@ -2112,7 +2132,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const cancelRename = useCallback(() => {
     setRenamingThreadKey(null);
     renamingInputRef.current = null;
-  }, []);
+  }, [renamingInputRef, setRenamingThreadKey]);
 
   const commitRename = useCallback(
     async (threadRef: ScopedThreadRef, newTitle: string, originalTitle: string) => {
@@ -2159,7 +2179,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       }
       finishRename();
     },
-    [],
+    [renamingInputRef, setRenamingThreadKey],
   );
 
   const handleThreadContextMenu = useCallback(
@@ -2182,9 +2202,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       );
 
       if (clicked === "rename") {
-        setRenamingThreadKey(threadKey);
-        setRenamingTitle(thread.title);
-        renamingCommittedRef.current = false;
+        startRenameThread(threadKey);
         return;
       }
 
@@ -2229,6 +2247,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       deleteThread,
       markThreadUnread,
       project.cwd,
+      startRenameThread,
     ],
   );
 
@@ -2582,6 +2601,13 @@ interface SidebarProjectsContentProps {
   handleNewThread: ReturnType<typeof useNewThreadHandler>["handleNewThread"];
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
+  setRenamingThreadKey: React.Dispatch<React.SetStateAction<string | null>>;
+  renamingThreadKey: string | null;
+  renamingTitle: string;
+  setRenamingTitle: React.Dispatch<React.SetStateAction<string>>;
+  renamingInputRef: React.RefObject<HTMLInputElement | null>;
+  renamingCommittedRef: React.RefObject<boolean>;
+  startRenameThread: (threadKey: string) => boolean;
   sortedProjects: readonly SidebarProjectSnapshot[];
   expandedThreadListsByProject: ReadonlySet<string>;
   activeRouteProjectKey: string | null;
@@ -2624,6 +2650,13 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     handleNewThread,
     archiveThread,
     deleteThread,
+    setRenamingThreadKey,
+    renamingThreadKey,
+    renamingTitle,
+    setRenamingTitle,
+    renamingInputRef,
+    renamingCommittedRef,
+    startRenameThread,
     sortedProjects,
     expandedThreadListsByProject,
     activeRouteProjectKey,
@@ -2794,6 +2827,13 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                           }
                           isManualProjectSorting={isManualProjectSorting}
                           dragHandleProps={dragHandleProps}
+                          setRenamingThreadKey={setRenamingThreadKey}
+                          renamingThreadKey={renamingThreadKey}
+                          renamingTitle={renamingTitle}
+                          setRenamingTitle={setRenamingTitle}
+                          renamingInputRef={renamingInputRef}
+                          renamingCommittedRef={renamingCommittedRef}
+                          startRenameThread={startRenameThread}
                         />
                       )}
                     </SortableProjectItem>
@@ -2824,6 +2864,13 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                   suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
                   isManualProjectSorting={isManualProjectSorting}
                   dragHandleProps={null}
+                  setRenamingThreadKey={setRenamingThreadKey}
+                  renamingThreadKey={renamingThreadKey}
+                  renamingTitle={renamingTitle}
+                  setRenamingTitle={setRenamingTitle}
+                  renamingInputRef={renamingInputRef}
+                  renamingCommittedRef={renamingCommittedRef}
+                  startRenameThread={startRenameThread}
                 />
               ))}
             </SidebarMenu>
@@ -2869,11 +2916,15 @@ export default function Sidebar() {
     ReadonlySet<string>
   >(() => new Set());
   const [isRecentListExpanded, setIsRecentListExpanded] = useState(false);
+  const [renamingThreadKey, setRenamingThreadKey] = useState<string | null>(null);
+  const [renamingTitle, setRenamingTitle] = useState("");
   const { showThreadJumpHints, updateThreadJumpHintsVisibility } = useThreadJumpHintVisibility();
   const dragInProgressRef = useRef(false);
   const suppressProjectClickAfterDragRef = useRef(false);
   const suppressProjectClickForContextMenuRef = useRef(false);
   const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
+  const renamingInputRef = useRef<HTMLInputElement | null>(null);
+  const renamingCommittedRef = useRef(false);
   const selectedThreadCount = useThreadSelectionStore((s) => s.selectedThreadKeys.size);
   const clearSelection = useThreadSelectionStore((s) => s.clearSelection);
   const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
@@ -2984,6 +3035,19 @@ export default function Sidebar() {
         ),
       ),
     [sidebarThreads],
+  );
+  const startRenameThread = useCallback(
+    (threadKey: string) => {
+      const thread = sidebarThreadByKey.get(threadKey);
+      if (!thread) {
+        return false;
+      }
+      setRenamingThreadKey(threadKey);
+      setRenamingTitle(thread.title);
+      renamingCommittedRef.current = false;
+      return true;
+    },
+    [sidebarThreadByKey],
   );
   // Resolve the active route's project key to a logical key so it matches the
   // sidebar's grouped project entries.
@@ -3338,6 +3402,18 @@ export default function Sidebar() {
         }
         return;
       }
+      if (command === "sidebar.rename") {
+        const selectedThreadKeys = [...useThreadSelectionStore.getState().selectedThreadKeys];
+        const renameTargetThreadKey =
+          selectedThreadKeys.length === 1 ? selectedThreadKeys[0] : routeThreadKey;
+        if (!renameTargetThreadKey) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        startRenameThread(renameTargetThreadKey);
+        return;
+      }
       const traversalDirection = threadTraversalDirectionFromCommand(command);
       if (traversalDirection !== null) {
         const targetThreadKey = resolveAdjacentThreadId({
@@ -3424,6 +3500,7 @@ export default function Sidebar() {
     platform,
     routeThreadKey,
     sidebarThreadByKey,
+    startRenameThread,
     threadJumpCommandByKey,
     threadJumpThreadKeys,
     updateThreadJumpHintsVisibility,
@@ -3608,10 +3685,24 @@ export default function Sidebar() {
               navigateToThread,
               archiveThread,
               deleteThread,
+              setRenamingThreadKey,
+              renamingThreadKey,
+              renamingTitle,
+              setRenamingTitle,
+              renamingInputRef,
+              renamingCommittedRef,
+              startRenameThread,
             }}
             handleNewThread={handleNewThread}
             archiveThread={archiveThread}
             deleteThread={deleteThread}
+            setRenamingThreadKey={setRenamingThreadKey}
+            renamingThreadKey={renamingThreadKey}
+            renamingTitle={renamingTitle}
+            setRenamingTitle={setRenamingTitle}
+            renamingInputRef={renamingInputRef}
+            renamingCommittedRef={renamingCommittedRef}
+            startRenameThread={startRenameThread}
             sortedProjects={sortedProjects}
             expandedThreadListsByProject={expandedThreadListsByProject}
             activeRouteProjectKey={activeRouteProjectKey}

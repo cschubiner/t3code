@@ -116,6 +116,7 @@ const DEFAULT_BINDINGS = compile([
   { shortcut: modShortcut("p", { altKey: true }), command: "projects.search" },
   { shortcut: modShortcut("s", { shiftKey: true }), command: "snippets.open" },
   { shortcut: modShortcut("k", { shiftKey: true }), command: "skills.open" },
+  { shortcut: modShortcut("r", { shiftKey: true }), command: "sidebar.rename" },
   { shortcut: modShortcut("o"), command: "editor.openFavorite" },
   { shortcut: modShortcut("[", { shiftKey: true }), command: "thread.previous" },
   { shortcut: modShortcut("]", { shiftKey: true }), command: "thread.next" },
@@ -305,6 +306,10 @@ describe("shortcutLabelForCommand", () => {
       shortcutLabelForCommand(DEFAULT_BINDINGS, "thread.previous", "Linux"),
       "Ctrl+Shift+[",
     );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "sidebar.rename", "Linux"),
+      "Ctrl+Shift+R",
+    );
   });
 
   it("returns null for commands shadowed by a later conflicting shortcut", () => {
@@ -450,6 +455,16 @@ describe("chat/editor shortcuts", () => {
         context: { terminalFocus: false },
       }),
       "projects.search",
+    );
+  });
+
+  it("resolves sidebar.rename from the default shortcut", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "r", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+      "sidebar.rename",
     );
   });
 

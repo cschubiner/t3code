@@ -1491,6 +1491,20 @@ function dispatchOpenCodexImportShortcut(): void {
   );
 }
 
+function dispatchRenameSidebarThreadShortcut(): void {
+  const useMetaForMod = isMacPlatform(navigator.platform);
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "r",
+      shiftKey: true,
+      metaKey: useMetaForMod,
+      ctrlKey: !useMetaForMod,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
 async function triggerChatNewShortcutUntilPath(
   router: ReturnType<typeof getRouter>,
   predicate: (pathname: string) => boolean,
@@ -6266,6 +6280,93 @@ describe("ChatView timeline estimator parity (full app)", () => {
         ].join("\n"),
       );
       expect(wsRequests.some((request) => request._tag === WS_METHODS.skillsSearch)).toBe(true);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens sidebar rename from the global shortcut and submits the rename", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-sidebar-rename-target" as MessageId,
+        targetText: "sidebar rename thread",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "sidebar.rename",
+              shortcut: {
+                key: "r",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: true,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: fixture.snapshot.snapshotSequence + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      await page.getByTestId(`thread-row-${THREAD_ID}`).click();
+      dispatchRenameSidebarThreadShortcut();
+      const renameInput = await waitForElement(
+        () =>
+          document.querySelector<HTMLInputElement>(
+            `[data-testid="thread-rename-input-${THREAD_ID}"]`,
+          ),
+        "Unable to find sidebar rename input.",
+      );
+      expect(renameInput.value).toBe(THREAD_TITLE);
+      await page.getByTestId(`thread-rename-input-${THREAD_ID}`).fill("Renamed browser thread");
+      await dispatchInputKey(renameInput, {
+        key: "Enter",
+        metaKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false,
+      });
+      await vi.waitFor(
+        () => {
+          const dispatchRequest = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.meta.update",
+          ) as
+            | {
+                _tag: string;
+                type?: string;
+                threadId?: string;
+                title?: string;
+              }
+            | undefined;
+
+          expect(dispatchRequest).toMatchObject({
+            _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
+            type: "thread.meta.update",
+            threadId: THREAD_ID,
+            title: "Renamed browser thread",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
     } finally {
       await mounted.cleanup();
     }

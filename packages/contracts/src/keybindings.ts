@@ -44,6 +44,7 @@ const STATIC_KEYBINDING_COMMANDS = [
   "editor.openFavorite",
   "sidebar.history.previous",
   "sidebar.history.next",
+  "sidebar.rename",
   ...THREAD_KEYBINDING_COMMANDS,
 ] as const;
 
