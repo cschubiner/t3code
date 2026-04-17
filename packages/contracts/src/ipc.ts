@@ -56,6 +56,7 @@ import type {
   CodexImportPeekSessionResult,
   CodexImportSessionSummary,
 } from "./codexImport";
+import type { SkillSearchInput, SkillSearchResult } from "./skills.ts";
 import type {
   ClientOrchestrationCommand,
   OrchestrationGetFullThreadDiffInput,
@@ -272,6 +273,9 @@ export interface LocalApi {
     importSessions: (
       input: CodexImportImportSessionsInput,
     ) => Promise<CodexImportImportSessionsResult>;
+  };
+  skills: {
+    search: (input: SkillSearchInput) => Promise<SkillSearchResult>;
   };
 }
 
