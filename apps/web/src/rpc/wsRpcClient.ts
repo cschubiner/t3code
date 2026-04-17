@@ -129,6 +129,9 @@ export interface WsRpcClient {
     readonly peekSession: RpcUnaryMethod<typeof WS_METHODS.codexImportPeekSession>;
     readonly importSessions: RpcUnaryMethod<typeof WS_METHODS.codexImportImportSessions>;
   };
+  readonly skills: {
+    readonly search: RpcUnaryMethod<typeof WS_METHODS.skillsSearch>;
+  };
   readonly orchestration: {
     readonly dispatchCommand: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.dispatchCommand>;
     readonly getTurnDiff: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.getTurnDiff>;
@@ -267,6 +270,9 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
         transport.request((client) => client[WS_METHODS.codexImportPeekSession](input)),
       importSessions: (input) =>
         transport.request((client) => client[WS_METHODS.codexImportImportSessions](input)),
+    },
+    skills: {
+      search: (input) => transport.request((client) => client[WS_METHODS.skillsSearch](input)),
     },
     orchestration: {
       dispatchCommand: (input) =>

@@ -105,6 +105,9 @@ const rpcClientMock = {
     peekSession: vi.fn(),
     importSessions: vi.fn(),
   },
+  skills: {
+    search: vi.fn(),
+  },
 };
 
 vi.mock("./environments/runtime", () => ({
