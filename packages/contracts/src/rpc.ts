@@ -48,6 +48,7 @@ import {
   CodexImportPeekSessionResult,
   CodexImportSessionSummary,
 } from "./codexImport";
+import { SkillSearchError, SkillSearchInput, SkillSearchResult } from "./skills";
 import {
   ClientOrchestrationCommand,
   ORCHESTRATION_WS_METHODS,
@@ -141,6 +142,9 @@ export const WS_METHODS = {
   codexImportListSessions: "codexImport.listSessions",
   codexImportPeekSession: "codexImport.peekSession",
   codexImportImportSessions: "codexImport.importSessions",
+
+  // Filesystem-based skill discovery (.codex/skills, .claude/skills, etc.)
+  skillsSearch: "skills.search",
 
   // Streaming subscriptions
   subscribeGitStatus: "subscribeGitStatus",
@@ -421,6 +425,12 @@ export const WsCodexImportImportSessionsRpc = Rpc.make(WS_METHODS.codexImportImp
   error: CodexImportError,
 });
 
+export const WsSkillsSearchRpc = Rpc.make(WS_METHODS.skillsSearch, {
+  payload: SkillSearchInput,
+  success: SkillSearchResult,
+  error: SkillSearchError,
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
@@ -466,4 +476,5 @@ export const WsRpcGroup = RpcGroup.make(
   WsCodexImportListSessionsRpc,
   WsCodexImportPeekSessionRpc,
   WsCodexImportImportSessionsRpc,
+  WsSkillsSearchRpc,
 );

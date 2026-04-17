@@ -17,3 +17,4 @@ export * from "./filesystem";
 export * from "./rpc";
 export * from "./snippets";
 export * from "./codexImport";
+export * from "./skills";

@@ -20,6 +20,7 @@ import {
   FilesystemBrowseError,
   SnippetLibraryError,
   type SnippetLibraryUpdatedPayload,
+  SkillSearchError,
   ThreadId,
   type TerminalEvent,
   WS_METHODS,
@@ -47,6 +48,7 @@ import {
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry";
 import { SnippetRepository } from "./persistence/Services/Snippets";
 import { CodexImport } from "./codexImport/Services/CodexImport";
+import { searchSkills } from "./skills";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup";
 import { ServerSettingsService } from "./serverSettings";
@@ -823,6 +825,19 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcEffect(
             WS_METHODS.codexImportImportSessions,
             codexImport.importSessions(input),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.skillsSearch]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.skillsSearch,
+            Effect.tryPromise({
+              try: () => searchSkills(input),
+              catch: (cause) =>
+                new SkillSearchError({
+                  message: `Failed to search skills: ${String(cause)}`,
+                  cause,
+                }),
+            }),
             { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.serverUpdateSettings]: ({ patch }) =>
