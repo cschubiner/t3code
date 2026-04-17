@@ -77,6 +77,7 @@ import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runti
 import { resolveDesktopAppBranding } from "./appBranding.ts";
 import { bindFirstRevealTrigger, type RevealSubscription } from "./windowReveal.ts";
 import { readTailnetInfo } from "./tailnetInfo.ts";
+import { fixPath } from "./fixPath.ts";
 
 syncShellEnvironment();
 
@@ -2044,6 +2045,8 @@ configureAppIdentity();
 
 async function bootstrap(): Promise<void> {
   writeDesktopLogHeader("bootstrap start");
+  fixPath();
+  writeDesktopLogHeader(`bootstrap PATH fixed path=${process.env.PATH ?? ""}`);
   const configuredBackendPort = resolveConfiguredDesktopBackendPort(process.env.T3CODE_PORT);
   if (isDevelopment && configuredBackendPort === undefined) {
     throw new Error("T3CODE_PORT is required in desktop development.");
