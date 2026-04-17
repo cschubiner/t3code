@@ -4,6 +4,28 @@ This document tracks the fork-only features that were **intentionally skipped** 
 
 The sync replayed 5 compatible commits (toolchain guardrails + Codex auth refresh + tests) and force-flipped `origin/main` to `upstream/main`. Pre-flip state is preserved on `backup/origin-main-2026-04-16`.
 
+## Status (last updated 2026-04-16 — after second audit + follow-up ports)
+
+A second audit on 2026-04-16 uncovered features I missed during the
+initial sync. Those are reflected in the table below. The "already shipped"
+features are unchanged from the earlier entries.
+
+### Audit-gap features shipped in this round
+
+| Feature                                                | Status     | Commit                  |
+| ------------------------------------------------------ | ---------- | ----------------------- |
+| Steering (cmd/ctrl+Enter during running turn)          | ✅ Shipped | `2255801a`              |
+| fixPath (Electron PATH fixup on macOS)                 | ✅ Shipped | `87fb82b7`              |
+| Codex-import (read-only MVP: list + peek)              | ✅ Shipped | `ee6c451d` + `a1f617a2` |
+| Skills search RPC (`.codex/skills` / `.claude/skills`) | ✅ Shipped | `2cb94754`              |
+
+### Known deferrals (intentional)
+
+- **Sidebar "grouped vs recent" mode toggle** — the fork had a distinct sidebar mode that flattens all threads across projects, sorted by recent activity. Rebuilding it cleanly requires surgery on upstream's 4500-line Sidebar.tsx and new store state. Upstream's per-project grouping covers the common case; defer until users explicitly ask for recent-flat mode.
+- **Codex-import "actually import as ClayCode thread"** — listing + previewing Codex transcripts works today via the new IPC. Actual import needs a new `thread.import` orchestration command (new events + decider + projector wiring), which is a multi-hour change on the orchestration core. The dialog's Import button surfaces the server's "not yet implemented" error cleanly.
+- **Skills composer UI** — the RPC layer is in place (`localApi.skills.search`). A composer trigger (e.g. `@skill` mention, or a dedicated picker hotkey) is a follow-up UI-only commit.
+- **GlobalThreadSearchDialog + ProjectFolderSearchDialog** — upstream's CommandPalette (cmd+K) covers the overlapping use case. Dedicated dialogs can be added if the CommandPalette UX falls short in practice.
+
 ## Status (last updated 2026-04-16 — after follow-up QA + integration pass)
 
 | #   | Feature                                              | Status                 | Commit / Notes                                                                                          |
