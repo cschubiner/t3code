@@ -67,6 +67,7 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+shift+n", command: "chat.newLocal", when: "!terminalFocus" },
   { key: "mod+shift+f", command: "threads.search", when: "!terminalFocus" },
   { key: "mod+shift+s", command: "snippets.open", when: "!terminalFocus" },
+  { key: "mod+shift+k", command: "skills.open", when: "!terminalFocus" },
   { key: "mod+o", command: "editor.openFavorite" },
   { key: "mod+shift+[", command: "thread.previous" },
   { key: "mod+shift+]", command: "thread.next" },

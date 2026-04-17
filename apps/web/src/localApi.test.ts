@@ -88,6 +88,9 @@ const rpcClientMock = {
     peekSession: vi.fn(),
     importSessions: vi.fn(),
   },
+  skills: {
+    search: vi.fn(),
+  },
   orchestration: {
     dispatchCommand: vi.fn(),
     getTurnDiff: vi.fn(),
@@ -570,6 +573,48 @@ describe("wsApi", () => {
     });
     expect(rpcClientMock.codexImport.importSessions).toHaveBeenCalledWith({
       sessionIds: ["session-1"],
+    });
+  });
+
+  it("forwards skill search requests directly to the RPC client", async () => {
+    rpcClientMock.skills.search.mockResolvedValue({
+      skills: [
+        {
+          name: "agent-browser",
+          description: "Inspect pages",
+          skillPath: "/Users/test/.codex/skills/agent-browser/SKILL.md",
+          rootPath: "/Users/test/.codex/skills",
+          source: "codex-home",
+        },
+      ],
+      truncated: false,
+    });
+    const { createLocalApi } = await import("./localApi");
+
+    const api = createLocalApi(rpcClientMock as never);
+
+    await expect(
+      api.skills.search({
+        cwd: "/tmp/project",
+        query: "$agent-browser",
+        limit: 25,
+      }),
+    ).resolves.toEqual({
+      skills: [
+        {
+          name: "agent-browser",
+          description: "Inspect pages",
+          skillPath: "/Users/test/.codex/skills/agent-browser/SKILL.md",
+          rootPath: "/Users/test/.codex/skills",
+          source: "codex-home",
+        },
+      ],
+      truncated: false,
+    });
+    expect(rpcClientMock.skills.search).toHaveBeenCalledWith({
+      cwd: "/tmp/project",
+      query: "$agent-browser",
+      limit: 25,
     });
   });
 

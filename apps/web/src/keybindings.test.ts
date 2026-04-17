@@ -113,6 +113,7 @@ const DEFAULT_BINDINGS = compile([
   { shortcut: modShortcut("n", { shiftKey: true }), command: "chat.newLocal" },
   { shortcut: modShortcut("f", { shiftKey: true }), command: "threads.search" },
   { shortcut: modShortcut("s", { shiftKey: true }), command: "snippets.open" },
+  { shortcut: modShortcut("k", { shiftKey: true }), command: "skills.open" },
   { shortcut: modShortcut("o"), command: "editor.openFavorite" },
   { shortcut: modShortcut("[", { shiftKey: true }), command: "thread.previous" },
   { shortcut: modShortcut("]", { shiftKey: true }), command: "thread.next" },
@@ -276,6 +277,7 @@ describe("shortcutLabelForCommand", () => {
       shortcutLabelForCommand(DEFAULT_BINDINGS, "snippets.open", "MacIntel"),
       "⇧⌘S",
     );
+    assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "skills.open", "MacIntel"), "⇧⌘K");
     assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "diff.toggle", "Linux"), "Ctrl+D");
     assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "commandPalette.toggle", "MacIntel"),
@@ -418,6 +420,16 @@ describe("chat/editor shortcuts", () => {
         context: { terminalFocus: false },
       }),
       "threads.search",
+    );
+  });
+
+  it("resolves skills.open from the default shortcut", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "k", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "skills.open",
     );
   });
 

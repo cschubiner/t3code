@@ -38,6 +38,7 @@ import type {
   CodexImportPeekSessionResult,
   CodexImportSessionSummary,
 } from "./codexImport";
+import type { SkillSearchInput, SkillSearchResult } from "./skills";
 import type {
   TerminalClearInput,
   TerminalCloseInput,
@@ -244,6 +245,9 @@ export interface LocalApi {
     importSessions: (
       input: CodexImportImportSessionsInput,
     ) => Promise<CodexImportImportSessionsResult>;
+  };
+  skills: {
+    search: (input: SkillSearchInput) => Promise<SkillSearchResult>;
   };
 }
 

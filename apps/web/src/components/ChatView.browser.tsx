@@ -33,6 +33,7 @@ import { render } from "vitest-browser-react";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import { useComposerDraftStore, DraftId } from "../composerDraftStore";
 import { useQuickThreadSearchStore } from "../quickThreadSearchStore";
+import { useSkillPickerStore } from "../skillPickerStore";
 import { useSnippetPickerStore } from "../snippetPickerStore";
 import {
   __resetEnvironmentApiOverridesForTests,
@@ -983,6 +984,12 @@ function resolveWsRpc(body: NormalizedWsRpcRequestBody): unknown {
       truncated: false,
     };
   }
+  if (tag === WS_METHODS.skillsSearch) {
+    return {
+      skills: [],
+      truncated: false,
+    };
+  }
   if (tag === WS_METHODS.shellOpenInEditor) {
     return null;
   }
@@ -1412,6 +1419,20 @@ function dispatchOpenSnippetsShortcut(): void {
   );
 }
 
+function dispatchOpenSkillPickerShortcut(): void {
+  const useMetaForMod = isMacPlatform(navigator.platform);
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "k",
+      shiftKey: true,
+      metaKey: useMetaForMod,
+      ctrlKey: !useMetaForMod,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
 function dispatchOpenQuickThreadSearchShortcut(): void {
   const useMetaForMod = isMacPlatform(navigator.platform);
   window.dispatchEvent(
@@ -1696,6 +1717,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
       open: false,
       focusRequestId: 0,
     });
+    useSkillPickerStore.setState({
+      open: false,
+      focusRequestId: 0,
+    });
     useQuickThreadSearchStore.setState({
       open: false,
       focusRequestId: 0,
@@ -1721,6 +1746,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
   afterEach(() => {
     customWsRpcResolver = null;
     useSnippetPickerStore.setState({
+      open: false,
+      focusRequestId: 0,
+    });
+    useSkillPickerStore.setState({
       open: false,
       focusRequestId: 0,
     });
@@ -6121,6 +6150,76 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
       await page.getByRole("button", { name: /Saved reusable snippet/i }).click();
       await waitForComposerText("Saved reusable snippet");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens the skill picker from the global shortcut and inserts a skill reference block", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-skill-shortcut-target" as MessageId,
+        targetText: "skill picker thread",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "skills.open",
+              shortcut: {
+                key: "k",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: true,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+      resolveRpc: (body) => {
+        if (body._tag === WS_METHODS.skillsSearch) {
+          return {
+            skills: [
+              {
+                name: "agent-browser",
+                description: "Open pages, click around, and inspect web apps.",
+                skillPath: "/Users/test/.codex/skills/agent-browser/SKILL.md",
+                rootPath: "/Users/test/.codex/skills",
+                source: "workspace",
+              },
+            ],
+            truncated: false,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      await waitForComposerEditor();
+      dispatchOpenSkillPickerShortcut();
+      await waitForElement(
+        () => document.querySelector<HTMLInputElement>('[data-testid="skill-picker-input"]'),
+        "Unable to find skill picker input.",
+      );
+      await page.getByRole("button", { name: /agent-browser/i }).click();
+      await waitForComposerText(
+        [
+          "## Use skill: agent-browser",
+          "Open pages, click around, and inspect web apps.",
+          "",
+          "Read the full instructions from: /Users/test/.codex/skills/agent-browser/SKILL.md",
+        ].join("\n"),
+      );
+      expect(wsRequests.some((request) => request._tag === WS_METHODS.skillsSearch)).toBe(true);
     } finally {
       await mounted.cleanup();
     }

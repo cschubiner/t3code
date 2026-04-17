@@ -13,6 +13,7 @@ import {
   CodexImportPeekSessionResult,
   CodexImportSessionSummary,
 } from "./codexImport";
+import { SkillSearchError, SkillSearchInput, SkillSearchResult } from "./skills";
 import { FilesystemBrowseInput, FilesystemBrowseResult, FilesystemBrowseError } from "./filesystem";
 import {
   GitActionProgressEvent,
@@ -129,6 +130,9 @@ export const WS_METHODS = {
   codexImportPeekSession: "codexImport.peekSession",
   codexImportImportSessions: "codexImport.importSessions",
 
+  // Skills
+  skillsSearch: "skills.search",
+
   // Streaming subscriptions
   subscribeGitStatus: "subscribeGitStatus",
   subscribeTerminalEvents: "subscribeTerminalEvents",
@@ -182,6 +186,12 @@ export const WsCodexImportImportSessionsRpc = Rpc.make(WS_METHODS.codexImportImp
   payload: CodexImportImportSessionsInput,
   success: CodexImportImportSessionsResult,
   error: CodexImportError,
+});
+
+export const WsSkillsSearchRpc = Rpc.make(WS_METHODS.skillsSearch, {
+  payload: SkillSearchInput,
+  success: SkillSearchResult,
+  error: SkillSearchError,
 });
 
 export const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntries, {
@@ -392,6 +402,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsCodexImportListSessionsRpc,
   WsCodexImportPeekSessionRpc,
   WsCodexImportImportSessionsRpc,
+  WsSkillsSearchRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsWriteFileRpc,
   WsShellOpenInEditorRpc,

@@ -91,6 +91,7 @@ import { CommandPaletteResults } from "./CommandPaletteResults";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { useServerKeybindings } from "../rpc/serverState";
 import { useQuickThreadSearchStore } from "../quickThreadSearchStore";
+import { useSkillPickerStore } from "../skillPickerStore";
 import { useSnippetPickerStore } from "../snippetPickerStore";
 import { resolveShortcutCommand } from "../keybindings";
 import {
@@ -717,6 +718,19 @@ function OpenCommandPaletteDialog() {
     shortcutCommand: "snippets.open",
     run: async () => {
       useSnippetPickerStore.getState().openPicker();
+    },
+  });
+
+  actionItems.push({
+    kind: "action",
+    value: "action:skills",
+    searchTerms: ["skills", "skill picker", "workspace skills", "agent skill", "skill reference"],
+    title: "Open skills",
+    description: "Insert a workspace skill reference into the composer",
+    icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
+    shortcutCommand: "skills.open",
+    run: async () => {
+      useSkillPickerStore.getState().openPicker();
     },
   });
 

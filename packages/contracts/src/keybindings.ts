@@ -38,6 +38,7 @@ const STATIC_KEYBINDING_COMMANDS = [
   "chat.newLocal",
   "threads.search",
   "snippets.open",
+  "skills.open",
   "editor.openFavorite",
   "sidebar.history.previous",
   "sidebar.history.next",

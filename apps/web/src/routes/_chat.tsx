@@ -23,6 +23,7 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { resolveSidebarNewThreadEnvMode } from "~/components/Sidebar.logic";
 import { useSettings } from "~/hooks/useSettings";
 import { useServerKeybindings } from "~/rpc/serverState";
+import { useSkillPickerStore } from "~/skillPickerStore";
 import { useSnippetPickerStore } from "~/snippetPickerStore";
 
 function isBlockingDialogOpen(): boolean {
@@ -103,6 +104,13 @@ function ChatRouteGlobalShortcuts() {
         event.preventDefault();
         event.stopPropagation();
         useSnippetPickerStore.getState().openPicker();
+        return;
+      }
+
+      if (command === "skills.open") {
+        event.preventDefault();
+        event.stopPropagation();
+        useSkillPickerStore.getState().openPicker();
         return;
       }
 

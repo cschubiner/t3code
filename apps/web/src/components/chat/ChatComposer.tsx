@@ -9,6 +9,7 @@ import type {
   RuntimeMode,
   ScopedThreadRef,
   ServerProvider,
+  SkillSummary,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -106,6 +107,7 @@ import { deriveLatestContextWindowSnapshot } from "../../lib/contextWindow";
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useServerKeybindings } from "../../rpc/serverState";
+import { useSkillPickerStore } from "../../skillPickerStore";
 import { useSnippetPickerStore } from "../../snippetPickerStore";
 import {
   SAVED_COMPOSER_SNIPPETS_STORAGE_KEY,
@@ -118,6 +120,7 @@ import {
   upsertSavedComposerSnippet,
 } from "./composerSnippets";
 import { SnippetPickerDialog } from "./SnippetPickerDialog";
+import { SkillPickerDialog, formatSkillReferenceBlock } from "./SkillPickerDialog";
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 
@@ -666,6 +669,9 @@ export const ChatComposer = memo(
     const snippetPickerFocusRequestId = useSnippetPickerStore((state) => state.focusRequestId);
     const openGlobalSnippetPicker = useSnippetPickerStore((state) => state.openPicker);
     const closeGlobalSnippetPicker = useSnippetPickerStore((state) => state.closePicker);
+    const isSkillPickerOpen = useSkillPickerStore((state) => state.open);
+    const skillPickerFocusRequestId = useSkillPickerStore((state) => state.focusRequestId);
+    const closeGlobalSkillPicker = useSkillPickerStore((state) => state.closePicker);
     const snippetLibrary = useMemo(
       () => buildComposerSnippetLibrary(savedSnippets),
       [savedSnippets],
@@ -1559,6 +1565,35 @@ export const ChatComposer = memo(
       setComposerHighlightedItemId(null);
     }, [openGlobalSnippetPicker]);
 
+    const insertSkillReferenceIntoComposer = useCallback(
+      (skill: SkillSummary): boolean => {
+        if (isConnecting || isComposerApprovalState) {
+          toastManager.add({
+            type: "warning",
+            title: "Skills are unavailable right now.",
+          });
+          return false;
+        }
+
+        const snapshot = readComposerSnapshot();
+        const block = formatSkillReferenceBlock(skill);
+        const prefix =
+          snapshot.value.trim().length === 0 ||
+          (snapshot.expandedCursor === 0 &&
+            snapshot.value.slice(0, snapshot.expandedCursor).trim().length === 0)
+            ? ""
+            : "\n\n";
+
+        return applyPromptReplacement(
+          snapshot.expandedCursor,
+          snapshot.expandedCursor,
+          `${prefix}${block}`,
+          { expectedText: "" },
+        );
+      },
+      [applyPromptReplacement, isComposerApprovalState, isConnecting, readComposerSnapshot],
+    );
+
     const saveCurrentDraftAsSnippet = useCallback(() => {
       const draftValue = normalizeComposerSnippetBody(readComposerSnapshot().value);
       if (draftValue.length === 0) {
@@ -2240,6 +2275,23 @@ export const ChatComposer = memo(
                 }
               }}
               onDeleteSnippet={deleteSnippetFromLibrary}
+            />
+            <SkillPickerDialog
+              open={isSkillPickerOpen}
+              cwd={gitCwd}
+              focusRequestId={skillPickerFocusRequestId}
+              onOpenChange={(open) => {
+                if (!open) {
+                  closeGlobalSkillPicker();
+                  focusComposer();
+                }
+              }}
+              onSelectSkill={(skill) => {
+                if (insertSkillReferenceIntoComposer(skill)) {
+                  closeGlobalSkillPicker();
+                  focusComposer();
+                }
+              }}
             />
           </div>
         </div>

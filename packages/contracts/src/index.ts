@@ -15,4 +15,5 @@ export * from "./editor";
 export * from "./project";
 export * from "./filesystem";
 export * from "./codexImport";
+export * from "./skills";
 export * from "./rpc";

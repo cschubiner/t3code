@@ -29,6 +29,7 @@ See the full schema for more details: [`packages/contracts/src/keybindings.ts`](
   { "key": "mod+shift+n", "command": "chat.newLocal", "when": "!terminalFocus" },
   { "key": "mod+shift+f", "command": "threads.search", "when": "!terminalFocus" },
   { "key": "mod+shift+s", "command": "snippets.open", "when": "!terminalFocus" },
+  { "key": "mod+shift+k", "command": "skills.open", "when": "!terminalFocus" },
   { "key": "mod+shift+[", "command": "thread.previous" },
   { "key": "mod+shift+]", "command": "thread.next" },
   { "key": "mod+[", "command": "sidebar.history.previous", "when": "!terminalFocus" },
@@ -62,6 +63,7 @@ Invalid rules are ignored. Invalid config files are ignored. Warnings are logged
 - `chat.newLocal`: create a new chat thread for the active project in a new environment (local/worktree determined by app settings (default `local`))
 - `threads.search`: open quick recent-thread search
 - `snippets.open`: open the snippet picker
+- `skills.open`: open the workspace skill picker
 - `thread.previous`: move to the previous visible thread in the sidebar
 - `thread.next`: move to the next visible thread in the sidebar
 - `sidebar.history.previous`: move backward through sidebar thread history

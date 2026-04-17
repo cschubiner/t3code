@@ -18,6 +18,7 @@ import {
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
   FilesystemBrowseError,
+  SkillSearchError,
   ThreadId,
   type TerminalEvent,
   WS_METHODS,
@@ -64,6 +65,7 @@ import {
 } from "./auth/Services/SessionCredentialService";
 import { respondToAuthError } from "./auth/http";
 import { CodexImport } from "./codexImport/Services/CodexImport";
+import { searchSkills } from "./skills";
 
 function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
   OrchestrationEvent,
@@ -752,6 +754,20 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             {
               "rpc.aggregate": "codexImport",
             },
+          ),
+        [WS_METHODS.skillsSearch]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.skillsSearch,
+            Effect.tryPromise({
+              try: () => searchSkills(input),
+              catch: (cause) =>
+                new SkillSearchError({
+                  message:
+                    cause instanceof Error ? cause.message : "Failed to search local skills.",
+                  cause,
+                }),
+            }),
+            { "rpc.aggregate": "skills" },
           ),
         [WS_METHODS.projectsSearchEntries]: (input) =>
           observeRpcEffect(
