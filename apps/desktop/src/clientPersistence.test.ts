@@ -61,6 +61,7 @@ const clientSettings: ClientSettings = {
   },
   sidebarProjectSortOrder: "manual",
   sidebarThreadSortOrder: "created_at",
+  sidebarViewMode: "recent",
   timestampFormat: "24-hour",
 };
 
