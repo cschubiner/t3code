@@ -107,7 +107,11 @@ import {
   projectScriptIdFromCommand,
 } from "~/projectScripts";
 import { newCommandId, newDraftId, newMessageId, newThreadId } from "~/lib/utils";
-import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
+import {
+  getProviderModelCapabilities,
+  getProviderModels,
+  resolveSelectableProvider,
+} from "../providerModels";
 import { useSettings } from "../hooks/useSettings";
 import { resolveAppModelSelection } from "../modelSelection";
 import { isTerminalFocused } from "../lib/terminalFocus";
@@ -131,7 +135,9 @@ import {
 } from "../lib/terminalContext";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
+import { QueuedFollowUpsPanel } from "./QueuedFollowUpsPanel";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
+import { ImportFromCodexDialog } from "./ImportFromCodexDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
@@ -171,6 +177,13 @@ import {
 } from "~/rpc/serverState";
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
 import { retainThreadDetailSubscription } from "../environments/runtime/service";
+import { type QueuedTurnDraft, useQueuedTurnStore } from "../queuedTurnStore";
+import {
+  SAVED_COMPOSER_SNIPPETS_STORAGE_KEY,
+  SavedComposerSnippetList,
+  normalizeComposerSnippetBody,
+  upsertSavedComposerSnippet,
+} from "./chat/composerSnippets";
 
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
@@ -309,6 +322,7 @@ function formatOutgoingPrompt(params: {
 }
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
+type ComposerSubmissionDisposition = "steer" | "queue" | "queue-front";
 
 type ChatViewProps =
   | {
@@ -683,6 +697,7 @@ export default function ChatView(props: ChatViewProps) {
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [pullRequestDialogState, setPullRequestDialogState] =
     useState<PullRequestDialogState | null>(null);
+  const [codexImportDialogOpen, setCodexImportDialogOpen] = useState(false);
   const [terminalLaunchContext, setTerminalLaunchContext] = useState<TerminalLaunchContext | null>(
     null,
   );
@@ -697,11 +712,17 @@ export default function ChatView(props: ChatViewProps) {
     {},
     LastInvokedScriptByProjectSchema,
   );
+  const [, setSavedSnippets] = useLocalStorage(
+    SAVED_COMPOSER_SNIPPETS_STORAGE_KEY,
+    [] as SavedComposerSnippetList,
+    SavedComposerSnippetList,
+  );
   const legendListRef = useRef<LegendListRef | null>(null);
   const isAtEndRef = useRef(true);
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewPromotionInFlightByMessageIdRef = useRef<Record<string, true>>({});
   const sendInFlightRef = useRef(false);
+  const queueDispatchInFlightRef = useRef<string | null>(null);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
 
   const terminalState = useTerminalStateStore((state) =>
@@ -789,6 +810,19 @@ export default function ChatView(props: ChatViewProps) {
     [activeThread],
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
+  const EMPTY_QUEUED_TURNS = useMemo(() => [] as readonly QueuedTurnDraft[], []);
+  const queuedTurns = useQueuedTurnStore((store) =>
+    activeThreadKey
+      ? (store.threadsByThreadKey[activeThreadKey]?.items ?? EMPTY_QUEUED_TURNS)
+      : EMPTY_QUEUED_TURNS,
+  );
+  const enqueueQueuedTurn = useQueuedTurnStore((store) => store.enqueue);
+  const prependQueuedTurn = useQueuedTurnStore((store) => store.prepend);
+  const consumeQueuedTurn = useQueuedTurnStore((store) => store.consume);
+  const removeQueuedTurn = useQueuedTurnStore((store) => store.remove);
+  const moveQueuedTurn = useQueuedTurnStore((store) => store.move);
+  const replaceQueuedTurnText = useQueuedTurnStore((store) => store.replaceText);
+  const clearQueuedTurnsForThread = useQueuedTurnStore((store) => store.clearThread);
   const existingOpenTerminalThreadKeys = useMemo(() => {
     const existingThreadKeys = new Set<string>([...serverThreadKeys, ...draftThreadKeys]);
     return openTerminalThreadKeys.filter((nextThreadKey) => existingThreadKeys.has(nextThreadKey));
@@ -2081,6 +2115,17 @@ export default function ChatView(props: ChatViewProps) {
     requestedEnvMode: envMode,
     isGitRepo,
   });
+  const isFirstThreadMessage = activeThread
+    ? !isServerThread || activeThread.messages.length === 0
+    : false;
+  const requiresBaseBranchForComposerSend =
+    isFirstThreadMessage && sendEnvMode === "worktree" && !activeThread?.worktreePath;
+  const isComposerSendBlockedByMissingBaseBranch =
+    requiresBaseBranchForComposerSend && !activeThreadBranch;
+  const canSubmitComposerTurn =
+    activeThread !== undefined &&
+    activeProject !== undefined &&
+    !isComposerSendBlockedByMissingBaseBranch;
 
   useEffect(() => {
     setPendingServerThreadEnvMode(null);
@@ -2283,6 +2328,26 @@ export default function ChatView(props: ChatViewProps) {
     toggleTerminalVisibility,
   ]);
 
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.repeat) {
+        return;
+      }
+      const usesMod = event.metaKey || event.ctrlKey;
+      if (!usesMod || !event.shiftKey || event.altKey) {
+        return;
+      }
+      if (event.key.toLowerCase() !== "i") {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      setCodexImportDialogOpen(true);
+    };
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, []);
+
   const onRevertToTurnCount = useCallback(
     async (turnCount: number) => {
       const api = readEnvironmentApi(environmentId);
@@ -2333,7 +2398,265 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
 
-  const onSend = async (e?: { preventDefault: () => void }) => {
+  const dispatchQueuedTurn = useCallback(
+    async (queuedTurn: QueuedTurnDraft) => {
+      const api = readEnvironmentApi(environmentId);
+      if (
+        !api ||
+        !activeThread ||
+        !isServerThread ||
+        isSendBusy ||
+        isConnecting ||
+        sendInFlightRef.current
+      ) {
+        throw new Error("Queued follow-up cannot dispatch right now.");
+      }
+
+      const threadIdForSend = activeThread.id;
+      const messageIdForSend = newMessageId();
+      const messageCreatedAt = new Date().toISOString();
+      const provider = queuedTurn.modelSelection.provider;
+      const providerModel = queuedTurn.modelSelection.model;
+      const providerModels = getProviderModels(providerStatuses, provider);
+      const messageTextForSend = appendTerminalContextsToPrompt(
+        queuedTurn.text,
+        queuedTurn.terminalContexts,
+      );
+      const outgoingMessageText = formatOutgoingPrompt({
+        provider,
+        model: providerModel,
+        models: providerModels,
+        effort: queuedTurn.promptEffort,
+        text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
+      });
+      const optimisticAttachments = queuedTurn.images.map((image) => ({
+        type: "image" as const,
+        id: image.id,
+        name: image.name,
+        mimeType: image.mimeType,
+        sizeBytes: image.sizeBytes,
+        previewUrl: image.previewUrl,
+      }));
+
+      sendInFlightRef.current = true;
+      beginLocalDispatch({ preparingWorktree: false });
+      setThreadError(threadIdForSend, null);
+
+      isAtEndRef.current = true;
+      showScrollDebouncer.current.cancel();
+      setShowScrollToBottom(false);
+      await legendListRef.current?.scrollToEnd?.({ animated: false });
+
+      setOptimisticUserMessages((existing) => [
+        ...existing,
+        {
+          id: messageIdForSend,
+          role: "user",
+          text: outgoingMessageText,
+          ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
+          createdAt: messageCreatedAt,
+          streaming: false,
+        },
+      ]);
+
+      try {
+        await persistThreadSettingsForNextTurn({
+          threadId: threadIdForSend,
+          createdAt: messageCreatedAt,
+          modelSelection: queuedTurn.modelSelection,
+          runtimeMode: queuedTurn.runtimeMode,
+          interactionMode: queuedTurn.interactionMode,
+        });
+
+        await api.orchestration.dispatchCommand({
+          type: "thread.turn.start",
+          commandId: newCommandId(),
+          threadId: threadIdForSend,
+          message: {
+            messageId: messageIdForSend,
+            role: "user",
+            text: outgoingMessageText,
+            attachments: queuedTurn.persistedAttachments.map((attachment) => ({
+              type: "image" as const,
+              name: attachment.name,
+              mimeType: attachment.mimeType,
+              sizeBytes: attachment.sizeBytes,
+              dataUrl: attachment.dataUrl,
+            })),
+          },
+          modelSelection: queuedTurn.modelSelection,
+          titleSeed: truncate(
+            queuedTurn.text.trim() ||
+              queuedTurn.images[0]?.name ||
+              (queuedTurn.terminalContexts[0]
+                ? formatTerminalContextLabel(queuedTurn.terminalContexts[0])
+                : activeThread.title),
+          ),
+          runtimeMode: queuedTurn.runtimeMode,
+          interactionMode: queuedTurn.interactionMode,
+          createdAt: messageCreatedAt,
+        });
+        sendInFlightRef.current = false;
+      } catch (err) {
+        setOptimisticUserMessages((existing) => {
+          const removed = existing.filter((message) => message.id === messageIdForSend);
+          for (const message of removed) {
+            revokeUserMessagePreviewUrls(message);
+          }
+          const next = existing.filter((message) => message.id !== messageIdForSend);
+          return next.length === existing.length ? existing : next;
+        });
+        setThreadError(
+          threadIdForSend,
+          err instanceof Error ? err.message : "Failed to send queued follow-up.",
+        );
+        sendInFlightRef.current = false;
+        resetLocalDispatch();
+        throw err instanceof Error ? err : new Error("Failed to send queued follow-up.");
+      }
+    },
+    [
+      activeThread,
+      beginLocalDispatch,
+      environmentId,
+      isConnecting,
+      isSendBusy,
+      isServerThread,
+      persistThreadSettingsForNextTurn,
+      providerStatuses,
+      resetLocalDispatch,
+      setThreadError,
+    ],
+  );
+
+  const queueComposerTurn = async (
+    input?: {
+      text: string;
+      interactionMode: ProviderInteractionMode;
+    } | null,
+    options?: {
+      prepend?: boolean;
+    },
+  ) => {
+    if (!activeThread || !activeThreadRef || !isServerThread) {
+      return false;
+    }
+
+    const sendCtx = composerRef.current?.getSendContext();
+    if (!sendCtx) {
+      return false;
+    }
+    const {
+      images: sendCtxImages,
+      terminalContexts: sendCtxTerminalContexts,
+      selectedPromptEffort: ctxSelectedPromptEffort,
+      selectedModelSelection: ctxSelectedModelSelection,
+    } = sendCtx;
+
+    const queuedImages = input ? [] : sendCtxImages;
+    const queuedTerminalContexts = input ? [] : sendCtxTerminalContexts;
+    const promptForQueue = input?.text ?? promptRef.current;
+    const {
+      trimmedPrompt,
+      sendableTerminalContexts,
+      expiredTerminalContextCount,
+      hasSendableContent,
+    } = deriveComposerSendState({
+      prompt: promptForQueue,
+      imageCount: queuedImages.length,
+      terminalContexts: queuedTerminalContexts,
+    });
+
+    if (!hasSendableContent) {
+      if (expiredTerminalContextCount > 0) {
+        const toastCopy = buildExpiredTerminalContextToastCopy(
+          expiredTerminalContextCount,
+          "empty",
+        );
+        toastManager.add({
+          type: "warning",
+          title: toastCopy.title,
+          description: toastCopy.description,
+        });
+      }
+      return false;
+    }
+
+    const persistedAttachments = await Promise.all(
+      queuedImages.map(async (image) => ({
+        id: image.id,
+        name: image.name,
+        mimeType: image.mimeType,
+        sizeBytes: image.sizeBytes,
+        dataUrl: await readFileAsDataUrl(image.file),
+      })),
+    );
+
+    const queuedDraft = {
+      id: randomUUID(),
+      text: trimmedPrompt,
+      createdAt: new Date().toISOString(),
+      images: queuedImages.map(cloneComposerImageForRetry),
+      persistedAttachments,
+      terminalContexts: [...sendableTerminalContexts],
+      modelSelection: ctxSelectedModelSelection,
+      promptEffort: ctxSelectedPromptEffort,
+      runtimeMode,
+      interactionMode: input?.interactionMode ?? interactionMode,
+    } satisfies QueuedTurnDraft;
+
+    if (options?.prepend) {
+      prependQueuedTurn(activeThreadRef, queuedDraft);
+    } else {
+      enqueueQueuedTurn(activeThreadRef, queuedDraft);
+    }
+
+    if (expiredTerminalContextCount > 0) {
+      const toastCopy = buildExpiredTerminalContextToastCopy(
+        expiredTerminalContextCount,
+        "omitted",
+      );
+      toastManager.add({
+        type: "warning",
+        title: toastCopy.title,
+        description: toastCopy.description,
+      });
+    }
+
+    setThreadError(activeThread.id, null);
+    promptRef.current = "";
+    clearComposerDraftContent(composerDraftTarget);
+    composerRef.current?.resetCursorState();
+    return true;
+  };
+
+  const saveQueuedTurnAsSnippet = useCallback(
+    (queuedTurn: QueuedTurnDraft) => {
+      const normalizedBody = normalizeComposerSnippetBody(queuedTurn.text);
+      if (normalizedBody.length === 0) {
+        toastManager.add({
+          type: "warning",
+          title: "Add some text before saving a snippet.",
+        });
+        return;
+      }
+
+      setSavedSnippets((existing) => {
+        const result = upsertSavedComposerSnippet(existing, normalizedBody);
+        toastManager.add({
+          type: "success",
+          title: result.deduped ? "Already saved to snippets" : "Saved to snippets",
+        });
+        return result.snippets;
+      });
+    },
+    [setSavedSnippets],
+  );
+
+  const onSend = async (
+    e?: { preventDefault: () => void },
+    disposition: ComposerSubmissionDisposition = "steer",
+  ) => {
     e?.preventDefault();
     const api = readEnvironmentApi(environmentId);
     if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
@@ -2368,6 +2691,10 @@ export default function ChatView(props: ChatViewProps) {
         draftText: trimmed,
         planMarkdown: activeProposedPlan.planMarkdown,
       });
+      if (phase === "running" && (disposition === "queue" || disposition === "queue-front")) {
+        await queueComposerTurn(followUp, { prepend: disposition === "queue-front" });
+        return;
+      }
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
@@ -2402,22 +2729,21 @@ export default function ChatView(props: ChatViewProps) {
       }
       return;
     }
-    if (!activeProject) return;
-    const threadIdForSend = activeThread.id;
-    const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
-    const baseBranchForWorktree =
-      isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath
-        ? activeThreadBranch
-        : null;
-
-    // In worktree mode, require an explicit base branch so we don't silently
-    // fall back to local execution when branch selection is missing.
-    const shouldCreateWorktree =
-      isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath;
-    if (shouldCreateWorktree && !activeThreadBranch) {
-      setThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
+    if (phase === "running" && (disposition === "queue" || disposition === "queue-front")) {
+      await queueComposerTurn(undefined, { prepend: disposition === "queue-front" });
       return;
     }
+    const threadIdForSend = activeThread.id;
+    if (!canSubmitComposerTurn) {
+      if (isComposerSendBlockedByMissingBaseBranch) {
+        setThreadError(
+          threadIdForSend,
+          "Select a base branch before sending in New worktree mode.",
+        );
+      }
+      return;
+    }
+    const baseBranchForWorktree = requiresBaseBranchForComposerSend ? activeThreadBranch : null;
 
     sendInFlightRef.current = true;
     beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
@@ -2522,7 +2848,7 @@ export default function ChatView(props: ChatViewProps) {
       };
 
       // Auto-title from first message
-      if (isFirstMessage && isServerThread) {
+      if (isFirstThreadMessage && isServerThread) {
         await api.orchestration.dispatchCommand({
           type: "thread.meta.update",
           commandId: newCommandId(),
@@ -2627,6 +2953,72 @@ export default function ChatView(props: ChatViewProps) {
     if (!turnStartSucceeded) {
       resetLocalDispatch();
     }
+  };
+
+  useEffect(() => {
+    if (!activeThread || !activeThreadRef || !isServerThread) {
+      return;
+    }
+    if (queuedTurns.length === 0) {
+      return;
+    }
+    if (
+      phase === "running" ||
+      isSendBusy ||
+      isConnecting ||
+      sendInFlightRef.current ||
+      queueDispatchInFlightRef.current !== null ||
+      activePendingApproval ||
+      pendingUserInputs.length > 0 ||
+      activePendingProgress
+    ) {
+      return;
+    }
+    if (!readEnvironmentApi(environmentId)) {
+      return;
+    }
+    if (
+      promptRef.current.trim().length > 0 ||
+      composerImagesRef.current.length > 0 ||
+      composerTerminalContextsRef.current.length > 0
+    ) {
+      return;
+    }
+
+    const nextQueuedTurn = queuedTurns[0];
+    if (!nextQueuedTurn) {
+      return;
+    }
+
+    queueDispatchInFlightRef.current = nextQueuedTurn.id;
+    consumeQueuedTurn(activeThreadRef, nextQueuedTurn.id);
+
+    void dispatchQueuedTurn(nextQueuedTurn)
+      .catch(() => {
+        prependQueuedTurn(activeThreadRef, nextQueuedTurn);
+      })
+      .finally(() => {
+        queueDispatchInFlightRef.current = null;
+      });
+  }, [
+    activePendingApproval,
+    activePendingProgress,
+    activeThread,
+    activeThreadRef,
+    consumeQueuedTurn,
+    dispatchQueuedTurn,
+    environmentId,
+    isConnecting,
+    isSendBusy,
+    isServerThread,
+    pendingUserInputs.length,
+    phase,
+    prependQueuedTurn,
+    queuedTurns,
+  ]);
+
+  const onQueue = () => {
+    void onSend(undefined, "queue");
   };
 
   const onInterrupt = async () => {
@@ -3225,6 +3617,12 @@ export default function ChatView(props: ChatViewProps) {
         />
       </header>
 
+      <ImportFromCodexDialog
+        open={codexImportDialogOpen}
+        preferredProjectRef={activeProjectRef}
+        onOpenChange={setCodexImportDialogOpen}
+      />
+
       {/* Error banner */}
       <ProviderStatusBanner status={activeProviderStatus} />
       <ThreadErrorBanner
@@ -3280,6 +3678,35 @@ export default function ChatView(props: ChatViewProps) {
 
           {/* Input bar */}
           <div className={cn("px-3 pt-1.5 sm:px-5 sm:pt-2", isGitRepo ? "pb-1" : "pb-3 sm:pb-4")}>
+            {activeThreadRef && queuedTurns.length > 0 ? (
+              <div className="mx-auto w-full min-w-0 max-w-208">
+                <QueuedFollowUpsPanel
+                  queuedItems={queuedTurns}
+                  canSendNow={
+                    isServerThread &&
+                    !isSendBusy &&
+                    !isConnecting &&
+                    !sendInFlightRef.current &&
+                    queueDispatchInFlightRef.current === null
+                  }
+                  onSendNow={(queuedTurn) => {
+                    consumeQueuedTurn(activeThreadRef, queuedTurn.id);
+                    void dispatchQueuedTurn(queuedTurn).catch(() => {
+                      prependQueuedTurn(activeThreadRef, queuedTurn);
+                    });
+                  }}
+                  onSaveAsSnippet={saveQueuedTurnAsSnippet}
+                  onDelete={(queuedTurn) => removeQueuedTurn(activeThreadRef, queuedTurn.id)}
+                  onClearAll={() => clearQueuedTurnsForThread(activeThreadRef)}
+                  onMove={(queuedTurn, nextIndex) =>
+                    moveQueuedTurn(activeThreadRef, queuedTurn.id, nextIndex)
+                  }
+                  onReplaceText={(queuedTurn, nextText) =>
+                    replaceQueuedTurnText(activeThreadRef, queuedTurn.id, nextText)
+                  }
+                />
+              </div>
+            ) : null}
             <ChatComposer
               ref={composerRef}
               composerDraftTarget={composerDraftTarget}
@@ -3296,6 +3723,7 @@ export default function ChatView(props: ChatViewProps) {
               isConnecting={isConnecting}
               isSendBusy={isSendBusy}
               isPreparingWorktree={isPreparingWorktree}
+              canSubmitComposerTurn={canSubmitComposerTurn}
               activePendingApproval={activePendingApproval}
               pendingApprovals={pendingApprovals}
               pendingUserInputs={pendingUserInputs}
@@ -3328,6 +3756,8 @@ export default function ChatView(props: ChatViewProps) {
               scheduleStickToBottom={scrollToEnd}
               onSend={onSend}
               onInterrupt={onInterrupt}
+              onQueue={onQueue}
+              onQueueFront={() => void onSend(undefined, "queue-front")}
               onImplementPlanInNewThread={onImplementPlanInNewThread}
               onRespondToApproval={onRespondToApproval}
               onSelectActivePendingUserInputOption={onSelectActivePendingUserInputOption}

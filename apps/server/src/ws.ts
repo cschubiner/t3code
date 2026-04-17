@@ -63,6 +63,7 @@ import {
   type SessionCredentialChange,
 } from "./auth/Services/SessionCredentialService";
 import { respondToAuthError } from "./auth/http";
+import { CodexImport } from "./codexImport/Services/CodexImport";
 
 function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
   OrchestrationEvent,
@@ -147,6 +148,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const startup = yield* ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem;
+      const codexImport = yield* CodexImport;
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner;
       const repositoryIdentityResolver = yield* RepositoryIdentityResolver;
       const serverEnvironment = yield* ServerEnvironment;
@@ -735,6 +737,22 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcEffect(WS_METHODS.serverUpdateSettings, serverSettings.updateSettings(patch), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.codexImportListSessions]: (input) =>
+          observeRpcEffect(WS_METHODS.codexImportListSessions, codexImport.listSessions(input), {
+            "rpc.aggregate": "codexImport",
+          }),
+        [WS_METHODS.codexImportPeekSession]: (input) =>
+          observeRpcEffect(WS_METHODS.codexImportPeekSession, codexImport.peekSession(input), {
+            "rpc.aggregate": "codexImport",
+          }),
+        [WS_METHODS.codexImportImportSessions]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.codexImportImportSessions,
+            codexImport.importSessions(input),
+            {
+              "rpc.aggregate": "codexImport",
+            },
+          ),
         [WS_METHODS.projectsSearchEntries]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsSearchEntries,

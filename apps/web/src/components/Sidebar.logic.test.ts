@@ -2,8 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   createThreadJumpHintVisibilityController,
+  bucketRecentThreadsForSidebar,
+  deriveSidebarThreadProjectName,
+  deriveThreadSidebarPullRequestReferences,
+  formatSidebarPullRequestBadgeLabel,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
+  referencedPrPillClassName,
   resolveAdjacentThreadId,
   getFallbackThreadIdAfterDelete,
   getVisibleThreadsForProject,
@@ -14,11 +19,15 @@ import {
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
+  resolveThreadSidebarRepositoryCwds,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
+  sortThreadsForRecentSidebar,
   sortProjectsForSidebar,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
+  visibleRecentThreadsForSidebar,
+  visibleThreadIdsForRecentSidebar,
 } from "./Sidebar.logic";
 import { EnvironmentId, OrchestrationLatestTurn, ProjectId, ThreadId } from "@t3tools/contracts";
 import {
@@ -180,6 +189,72 @@ describe("resolveSidebarNewThreadEnvMode", () => {
         defaultEnvMode: "worktree",
       }),
     ).toBe("local");
+  });
+});
+
+describe("deriveThreadSidebarPullRequestReferences", () => {
+  it("extracts and normalizes unique GitHub pull request URLs from thread messages", () => {
+    expect(
+      deriveThreadSidebarPullRequestReferences({
+        messages: [
+          {
+            id: "message-1" as never,
+            role: "assistant",
+            text: `
+              https://github.com/openai/codex/pull/54/files
+              https://github.com/openai/codex/pull/54#pullrequestreview-1
+              <https://github.com/openai/codex/pull/89|codex#89>
+            `,
+            createdAt: "2026-04-02T11:00:00.000Z",
+            streaming: false,
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        url: "https://github.com/openai/codex/pull/54",
+        owner: "openai",
+        repo: "codex",
+        number: "54",
+      },
+      {
+        url: "https://github.com/openai/codex/pull/89",
+        owner: "openai",
+        repo: "codex",
+        number: "89",
+      },
+    ]);
+  });
+});
+
+describe("resolveThreadSidebarRepositoryCwds", () => {
+  it("prefers the worktree path and falls back to the project root without duplicates", () => {
+    expect(
+      resolveThreadSidebarRepositoryCwds({
+        worktreePath: "/repo/worktree",
+        projectCwd: "/repo/project",
+      }),
+    ).toEqual(["/repo/worktree", "/repo/project"]);
+
+    expect(
+      resolveThreadSidebarRepositoryCwds({
+        worktreePath: "/repo/project",
+        projectCwd: "/repo/project",
+      }),
+    ).toEqual(["/repo/project"]);
+  });
+});
+
+describe("sidebar pull request badge helpers", () => {
+  it("formats the visible pill label from the PR number", () => {
+    expect(formatSidebarPullRequestBadgeLabel({ number: "54" })).toBe("#54");
+  });
+
+  it("maps PR states onto distinct pill treatments", () => {
+    expect(referencedPrPillClassName("open")).toContain("text-emerald-700");
+    expect(referencedPrPillClassName("merged")).toContain("text-violet-700");
+    expect(referencedPrPillClassName("closed")).toContain("text-rose-700");
+    expect(referencedPrPillClassName(null)).toContain("text-muted-foreground");
   });
 });
 
@@ -651,6 +726,157 @@ describe("getVisibleThreadsForProject", () => {
       threads.map((thread) => thread.id),
     );
     expect(result.hiddenThreads).toEqual([]);
+  });
+});
+
+describe("sortThreadsForRecentSidebar", () => {
+  it("sorts recent threads globally by updatedAt with createdAt and id tie-breakers", () => {
+    const threadA = makeThread({
+      id: ThreadId.make("thread-a"),
+      projectId: ProjectId.make("project-a"),
+      createdAt: "2026-03-09T10:00:00.000Z",
+      updatedAt: "2026-03-09T11:00:00.000Z",
+    });
+    const threadB = makeThread({
+      id: ThreadId.make("thread-b"),
+      projectId: ProjectId.make("project-a"),
+      createdAt: "2026-03-09T10:01:00.000Z",
+      updatedAt: undefined,
+    });
+    const threadC = makeThread({
+      id: ThreadId.make("thread-c"),
+      projectId: ProjectId.make("project-b"),
+      createdAt: "2026-03-09T10:02:00.000Z",
+      updatedAt: "2026-03-09T11:00:00.000Z",
+    });
+    const threadD = makeThread({
+      id: ThreadId.make("thread-d"),
+      projectId: ProjectId.make("project-b"),
+      createdAt: "2026-03-09T10:02:00.000Z",
+      updatedAt: "2026-03-09T11:00:00.000Z",
+    });
+
+    expect(
+      sortThreadsForRecentSidebar([threadA, threadB, threadC, threadD]).map((thread) => thread.id),
+    ).toEqual([
+      ThreadId.make("thread-d"),
+      ThreadId.make("thread-c"),
+      ThreadId.make("thread-a"),
+      ThreadId.make("thread-b"),
+    ]);
+  });
+});
+
+describe("recent sidebar helpers", () => {
+  const projectAlpha = ProjectId.make("project-alpha");
+  const projectBeta = ProjectId.make("project-beta");
+  const threadA1 = makeThread({
+    id: ThreadId.make("thread-a1"),
+    projectId: projectAlpha,
+    createdAt: "2026-03-09T10:01:00.000Z",
+  });
+  const threadA2 = makeThread({
+    id: ThreadId.make("thread-a2"),
+    projectId: projectAlpha,
+    createdAt: "2026-03-09T10:02:00.000Z",
+    updatedAt: "2026-03-09T10:05:00.000Z",
+  });
+  const threadB1 = makeThread({
+    id: ThreadId.make("thread-b1"),
+    projectId: projectBeta,
+    createdAt: "2026-03-09T10:03:00.000Z",
+    updatedAt: "2026-03-09T10:06:00.000Z",
+  });
+  const threads = [threadA1, threadA2, threadB1];
+
+  it("limits recent threads without considering project expansion state", () => {
+    expect(
+      visibleRecentThreadsForSidebar({
+        threads,
+        isExpanded: false,
+        threadPreviewLimit: 2,
+      }).map((thread) => thread.id),
+    ).toEqual([threadB1.id, threadA2.id]);
+
+    expect(
+      visibleThreadIdsForRecentSidebar({
+        threads,
+        isExpanded: true,
+        threadPreviewLimit: 2,
+      }),
+    ).toEqual([threadB1.id, threadA2.id, threadA1.id]);
+  });
+
+  it("derives project labels for recent rows", () => {
+    expect(
+      deriveSidebarThreadProjectName({
+        thread: threadA1,
+        projects: [
+          { id: projectAlpha, name: "Alpha" },
+          { id: projectBeta, name: "Beta" },
+        ],
+      }),
+    ).toBe("Alpha");
+  });
+
+  it("buckets recent threads by recency labels", () => {
+    const nowMs = Date.parse("2026-03-09T12:00:00.000Z");
+    const todayThread = makeThread({
+      id: ThreadId.make("thread-today"),
+      projectId: projectAlpha,
+      createdAt: "2026-03-09T10:30:00.000Z",
+      updatedAt: "2026-03-09T10:30:00.000Z",
+    });
+    const yesterdayThread = makeThread({
+      id: ThreadId.make("thread-yesterday"),
+      projectId: projectAlpha,
+      createdAt: "2026-03-08T10:30:00.000Z",
+      updatedAt: "2026-03-08T10:30:00.000Z",
+    });
+    const weekThread = makeThread({
+      id: ThreadId.make("thread-week"),
+      projectId: projectBeta,
+      createdAt: "2026-03-05T10:30:00.000Z",
+      updatedAt: "2026-03-05T10:30:00.000Z",
+    });
+    const olderThread = makeThread({
+      id: ThreadId.make("thread-older"),
+      projectId: projectBeta,
+      createdAt: "2026-02-26T10:30:00.000Z",
+      updatedAt: "2026-02-26T10:30:00.000Z",
+    });
+
+    expect(
+      bucketRecentThreadsForSidebar(
+        [olderThread, weekThread, yesterdayThread, todayThread],
+        nowMs,
+      ).map((bucket) => ({
+        id: bucket.id,
+        label: bucket.label,
+        threadIds: bucket.threads.map((thread) => thread.id),
+      })),
+    ).toEqual([
+      {
+        id: "today",
+        label: "Today",
+        threadIds: [todayThread.id],
+      },
+      {
+        id: "yesterday",
+        label: "Yesterday",
+        threadIds: [yesterdayThread.id],
+      },
+      {
+        id: "week",
+        label: "Earlier this week",
+        threadIds: [weekThread.id],
+      },
+      {
+        id: "earlier",
+        label: "Older",
+        threadIds: [olderThread.id],
+      },
+    ]);
   });
 });
 

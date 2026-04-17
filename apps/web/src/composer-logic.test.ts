@@ -48,6 +48,18 @@ describe("detectComposerTrigger", () => {
     });
   });
 
+  it("detects slash snippet query after /snippet", () => {
+    const text = "/snippet debug";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "snippet",
+      query: "debug",
+      rangeStart: 0,
+      rangeEnd: text.length,
+    });
+  });
+
   it("detects non-model slash commands while typing", () => {
     const text = "/pl";
     const trigger = detectComposerTrigger(text, text.length);

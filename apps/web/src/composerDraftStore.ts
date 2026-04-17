@@ -983,10 +983,6 @@ function getComposerDraftState(
   return state.draftsByThreadKey[threadKey] ?? null;
 }
 
-function isComposerThreadKeyInUse(mappings: Record<string, string>, threadKey: string): boolean {
-  return Object.values(mappings).includes(threadKey);
-}
-
 function toProjectDraftSession(
   draftId: DraftId,
   draftSession: DraftSessionState,
@@ -1810,6 +1806,12 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
           return get().getDraftSessionByProjectRef(projectRef);
         },
         getDraftSessionByProjectRef: (projectRef) => {
+          const activeDraftSession = get().getDraftSessionByLogicalProjectKey(
+            projectDraftKey(projectRef),
+          );
+          if (activeDraftSession) {
+            return activeDraftSession;
+          }
           for (const [draftId, draftThread] of Object.entries(get().draftThreadsByThreadKey)) {
             if (isDraftThreadPromoting(draftThread)) {
               continue;
@@ -1880,28 +1882,8 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               ...state.draftThreadsByThreadKey,
               [draftId]: nextDraftThread,
             };
-            let nextDraftsByThreadKey = state.draftsByThreadKey;
-            const previousDraftThread =
-              previousThreadKeyForLogicalProject === undefined
-                ? undefined
-                : nextDraftThreadsByThreadKey[previousThreadKeyForLogicalProject];
-            if (
-              previousThreadKeyForLogicalProject &&
-              previousThreadKeyForLogicalProject !== draftId &&
-              !isComposerThreadKeyInUse(
-                nextLogicalProjectDraftThreadKeyByLogicalProjectKey,
-                previousThreadKeyForLogicalProject,
-              ) &&
-              !isDraftThreadPromoting(previousDraftThread)
-            ) {
-              delete nextDraftThreadsByThreadKey[previousThreadKeyForLogicalProject];
-              if (state.draftsByThreadKey[previousThreadKeyForLogicalProject] !== undefined) {
-                nextDraftsByThreadKey = { ...state.draftsByThreadKey };
-                delete nextDraftsByThreadKey[previousThreadKeyForLogicalProject];
-              }
-            }
             return {
-              draftsByThreadKey: nextDraftsByThreadKey,
+              draftsByThreadKey: state.draftsByThreadKey,
               draftThreadsByThreadKey: nextDraftThreadsByThreadKey,
               logicalProjectDraftThreadKeyByLogicalProjectKey:
                 nextLogicalProjectDraftThreadKeyByLogicalProjectKey,

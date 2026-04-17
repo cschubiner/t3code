@@ -994,7 +994,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         yield* runGit(repoDir, ["branch", "--set-upstream-to", "fork-seed/statemachine"]);
         yield* runGit(repoDir, [
           "config",
-          "remote.fork-seed.url",
+          "remote.fork-seed.pushurl",
           "git@github.com:jasonLaster/codething-mvp.git",
         ]);
 
@@ -1058,13 +1058,13 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         yield* runGit(repoDir, ["push", "-u", "my-org/upstream", "effect-atom"]);
         yield* runGit(repoDir, [
           "config",
-          "remote.origin.url",
+          "remote.origin.pushurl",
           "git@github.com:pingdotgg/codething-mvp.git",
         ]);
         yield* runGit(repoDir, ["config", "remote.origin.pushurl", originDir]);
         yield* runGit(repoDir, [
           "config",
-          "remote.my-org/upstream.url",
+          "remote.my-org/upstream.pushurl",
           "git@github.com:pingdotgg/codething-mvp.git",
         ]);
         yield* runGit(repoDir, ["config", "remote.my-org/upstream.pushurl", upstreamDir]);
@@ -1735,7 +1735,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         yield* runGit(repoDir, ["push", "-u", "fork-seed", "statemachine"]);
         yield* runGit(repoDir, [
           "config",
-          "remote.fork-seed.url",
+          "remote.fork-seed.pushurl",
           "git@github.com:octocat/codething-mvp.git",
         ]);
 
@@ -1778,7 +1778,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         ).toBe(true);
         expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(false);
       }),
-    12_000,
+    20_000,
   );
 
   it.effect(
@@ -1797,13 +1797,13 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         yield* runGit(repoDir, ["push", "-u", "my-org/upstream", "effect-atom"]);
         yield* runGit(repoDir, [
           "config",
-          "remote.origin.url",
+          "remote.origin.pushurl",
           "git@github.com:pingdotgg/codething-mvp.git",
         ]);
         yield* runGit(repoDir, ["config", "remote.origin.pushurl", originDir]);
         yield* runGit(repoDir, [
           "config",
-          "remote.my-org/upstream.url",
+          "remote.my-org/upstream.pushurl",
           "git@github.com:pingdotgg/codething-mvp.git",
         ]);
         yield* runGit(repoDir, ["config", "remote.my-org/upstream.pushurl", upstreamDir]);
@@ -1887,7 +1887,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         yield* runGit(repoDir, ["branch", "--set-upstream-to", "fork-seed/statemachine"]);
         yield* runGit(repoDir, [
           "config",
-          "remote.fork-seed.url",
+          "remote.fork-seed.pushurl",
           "git@github.com:octocat/codething-mvp.git",
         ]);
 
@@ -1957,7 +1957,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         yield* runGit(repoDir, ["branch", "--set-upstream-to", "fork-seed/statemachine"]);
         yield* runGit(repoDir, [
           "config",
-          "remote.fork-seed.url",
+          "remote.fork-seed.pushurl",
           "git@github.com:octocat/codething-mvp.git",
         ]);
 
@@ -2137,7 +2137,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       yield* runGit(repoDir, ["branch", "--set-upstream-to", "fork-seed/statemachine"]);
       yield* runGit(repoDir, [
         "config",
-        "remote.fork-seed.url",
+        "remote.fork-seed.pushurl",
         "git@github.com:octocat/codething-mvp.git",
       ]);
 

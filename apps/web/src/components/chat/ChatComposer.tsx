@@ -30,6 +30,7 @@ import {
 } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
+import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import {
   clampCollapsedComposerCursor,
@@ -76,8 +77,9 @@ import {
 } from "./composerProviderRegistry";
 import { ContextWindowMeter } from "./ContextWindowMeter";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
+import { shortcutLabelForCommand } from "../../keybindings";
 import { basenameOfPath } from "../../vscode-icons";
-import { cn, randomUUID } from "~/lib/utils";
+import { cn, isMacPlatform, randomUUID } from "~/lib/utils";
 import { Separator } from "../ui/separator";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -86,6 +88,7 @@ import { toastManager } from "../ui/toast";
 import {
   BotIcon,
   CircleAlertIcon,
+  FileTextIcon,
   ListTodoIcon,
   type LucideIcon,
   LockIcon,
@@ -102,6 +105,19 @@ import type { PendingApproval, PendingUserInput } from "../../session-logic";
 import { deriveLatestContextWindowSnapshot } from "../../lib/contextWindow";
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
 import { searchProviderSkills } from "../../providerSkillSearch";
+import { useServerKeybindings } from "../../rpc/serverState";
+import { useSnippetPickerStore } from "../../snippetPickerStore";
+import {
+  SAVED_COMPOSER_SNIPPETS_STORAGE_KEY,
+  SavedComposerSnippetList,
+  buildComposerSnippetLibrary,
+  deleteSavedComposerSnippet,
+  normalizeComposerSnippetBody,
+  searchComposerSnippets,
+  type ComposerSnippet,
+  upsertSavedComposerSnippet,
+} from "./composerSnippets";
+import { SnippetPickerDialog } from "./SnippetPickerDialog";
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 
@@ -275,9 +291,11 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   promptHasText: boolean;
   isSendBusy: boolean;
   isConnecting: boolean;
+  canSubmit: boolean;
   hasSendableContent: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
+  onQueue: () => void;
   onImplementPlanInNewThread: () => void;
 }) {
   return (
@@ -294,10 +312,12 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         promptHasText={props.promptHasText}
         isSendBusy={props.isSendBusy}
         isConnecting={props.isConnecting}
+        canSubmit={props.canSubmit}
         isPreparingWorktree={props.isPreparingWorktree}
         hasSendableContent={props.hasSendableContent}
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
         onInterrupt={props.onInterrupt}
+        onQueue={props.onQueue}
         onImplementPlanInNewThread={props.onImplementPlanInNewThread}
       />
     </>
@@ -362,6 +382,7 @@ export interface ChatComposerProps {
   isConnecting: boolean;
   isSendBusy: boolean;
   isPreparingWorktree: boolean;
+  canSubmitComposerTurn: boolean;
 
   // Pending approvals / inputs
   activePendingApproval: PendingApproval | null;
@@ -418,6 +439,8 @@ export interface ChatComposerProps {
   // Callbacks
   onSend: (e?: { preventDefault: () => void }) => void;
   onInterrupt: () => void;
+  onQueue: () => void;
+  onQueueFront: () => void;
   onImplementPlanInNewThread: () => void;
   onRespondToApproval: (
     requestId: ApprovalRequestId,
@@ -467,6 +490,7 @@ export const ChatComposer = memo(
       isConnecting,
       isSendBusy,
       isPreparingWorktree,
+      canSubmitComposerTurn,
       activePendingApproval,
       pendingApprovals,
       pendingUserInputs,
@@ -499,6 +523,8 @@ export const ChatComposer = memo(
       scheduleStickToBottom,
       onSend,
       onInterrupt,
+      onQueue,
+      onQueueFront,
       onImplementPlanInNewThread,
       onRespondToApproval,
       onSelectActivePendingUserInputOption,
@@ -630,6 +656,24 @@ export const ChatComposer = memo(
         ),
       [lockedProvider, modelOptionsByProvider],
     );
+    const keybindings = useServerKeybindings();
+    const [savedSnippets, setSavedSnippets] = useLocalStorage(
+      SAVED_COMPOSER_SNIPPETS_STORAGE_KEY,
+      [] as SavedComposerSnippetList,
+      SavedComposerSnippetList,
+    );
+    const isSnippetPickerOpen = useSnippetPickerStore((state) => state.open);
+    const snippetPickerFocusRequestId = useSnippetPickerStore((state) => state.focusRequestId);
+    const openGlobalSnippetPicker = useSnippetPickerStore((state) => state.openPicker);
+    const closeGlobalSnippetPicker = useSnippetPickerStore((state) => state.closePicker);
+    const snippetLibrary = useMemo(
+      () => buildComposerSnippetLibrary(savedSnippets),
+      [savedSnippets],
+    );
+    const snippetPickerShortcutLabel = useMemo(
+      () => shortcutLabelForCommand(keybindings, "snippets.open"),
+      [keybindings],
+    );
 
     // ------------------------------------------------------------------
     // Context window
@@ -739,6 +783,13 @@ export const ChatComposer = memo(
             label: "/default",
             description: "Switch this thread back to normal build mode",
           },
+          {
+            id: "slash:snippet",
+            type: "slash-command",
+            command: "snippet",
+            label: "/snippet",
+            description: "Browse reusable prompt snippets",
+          },
         ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
         const providerSlashCommandItems = (selectedProviderStatus?.slashCommands ?? []).map(
           (command) => ({
@@ -773,6 +824,15 @@ export const ChatComposer = memo(
             (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
         }));
       }
+      if (composerTrigger.kind === "snippet") {
+        return searchComposerSnippets(snippetLibrary, composerTrigger.query).map((snippet) => ({
+          id: `snippet:${snippet.id}`,
+          type: "snippet" as const,
+          snippet,
+          label: snippet.title,
+          description: snippet.description,
+        }));
+      }
       return searchableModelOptions
         .filter(({ searchSlug, searchName, searchProvider }) => {
           const query = composerTrigger.query.trim().toLowerCase();
@@ -796,6 +856,7 @@ export const ChatComposer = memo(
       searchableModelOptions,
       selectedProvider,
       selectedProviderStatus,
+      snippetLibrary,
       workspaceEntries,
     ]);
 
@@ -867,6 +928,9 @@ export const ChatComposer = memo(
     const composerMenuEmptyState = useMemo(() => {
       if (composerTriggerKind === "skill") {
         return "No skills found. Try / to browse provider commands.";
+      }
+      if (composerTriggerKind === "snippet") {
+        return "No snippets found.";
       }
       return composerTriggerKind === "path"
         ? "No matching files or folders."
@@ -1293,6 +1357,7 @@ export const ChatComposer = memo(
           );
         } else {
           setPrompt(next.text);
+          composerEditorRef.current?.replaceValue(next.text, nextCursor);
         }
         setComposerCursor(nextCursor);
         setComposerTrigger(detectComposerTrigger(next.text, nextExpandedCursor));
@@ -1367,8 +1432,8 @@ export const ChatComposer = memo(
           return;
         }
         if (item.type === "slash-command") {
-          if (item.command === "model") {
-            const replacement = "/model ";
+          if (item.command === "model" || item.command === "snippet") {
+            const replacement = item.command === "model" ? "/model " : "/snippet ";
             const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
               snapshot.value,
               trigger.rangeEnd,
@@ -1430,6 +1495,18 @@ export const ChatComposer = memo(
           }
           return;
         }
+        if (item.type === "snippet") {
+          const applied = applyPromptReplacement(
+            trigger.rangeStart,
+            trigger.rangeEnd,
+            item.snippet.body,
+            { expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd) },
+          );
+          if (applied) {
+            setComposerHighlightedItemId(null);
+          }
+          return;
+        }
         onProviderModelSelect(item.provider, item.model);
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
@@ -1444,6 +1521,77 @@ export const ChatComposer = memo(
         onProviderModelSelect,
         resolveActiveComposerTrigger,
       ],
+    );
+
+    const insertSnippetIntoComposer = useCallback(
+      (snippetText: string): boolean => {
+        if (isConnecting || isComposerApprovalState) {
+          toastManager.add({
+            type: "warning",
+            title: "Snippets are unavailable right now.",
+          });
+          return false;
+        }
+
+        const currentText = promptRef.current;
+        const currentExpandedCursor = expandCollapsedComposerCursor(
+          currentText,
+          currentText.length,
+        );
+        const trigger = detectComposerTrigger(currentText, currentExpandedCursor);
+        const activeSnippetTrigger = trigger?.kind === "snippet" ? trigger : null;
+        return applyPromptReplacement(
+          activeSnippetTrigger ? activeSnippetTrigger.rangeStart : currentText.length,
+          activeSnippetTrigger ? activeSnippetTrigger.rangeEnd : currentText.length,
+          snippetText,
+          {
+            expectedText: activeSnippetTrigger
+              ? currentText.slice(activeSnippetTrigger.rangeStart, activeSnippetTrigger.rangeEnd)
+              : "",
+          },
+        );
+      },
+      [applyPromptReplacement, isComposerApprovalState, isConnecting, promptRef],
+    );
+
+    const openSnippetPicker = useCallback(() => {
+      openGlobalSnippetPicker();
+      setComposerHighlightedItemId(null);
+    }, [openGlobalSnippetPicker]);
+
+    const saveCurrentDraftAsSnippet = useCallback(() => {
+      const draftValue = normalizeComposerSnippetBody(readComposerSnapshot().value);
+      if (draftValue.length === 0) {
+        toastManager.add({
+          type: "warning",
+          title: "Add some text before saving a snippet.",
+        });
+        return;
+      }
+
+      setSavedSnippets((existing) => {
+        const result = upsertSavedComposerSnippet(existing, draftValue);
+        toastManager.add({
+          type: "success",
+          title: result.deduped ? "Already saved to snippets" : "Saved to snippets",
+        });
+        return result.snippets;
+      });
+    }, [readComposerSnapshot, setSavedSnippets]);
+
+    const deleteSnippetFromLibrary = useCallback(
+      (snippet: ComposerSnippet) => {
+        const savedSnippetId = snippet.savedSnippetId;
+        if (!savedSnippetId) {
+          return;
+        }
+        setSavedSnippets((existing) => deleteSavedComposerSnippet(existing, savedSnippetId));
+        toastManager.add({
+          type: "success",
+          title: "Snippet deleted",
+        });
+      },
+      [setSavedSnippets],
     );
 
     const onComposerMenuItemHighlighted = useCallback(
@@ -1478,6 +1626,10 @@ export const ChatComposer = memo(
       key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
       event: KeyboardEvent,
     ) => {
+      const steerModifierPressed = isMacPlatform(navigator.platform)
+        ? event.metaKey
+        : event.ctrlKey;
+
       if (key === "Tab" && event.shiftKey) {
         toggleInteractionMode();
         return true;
@@ -1499,6 +1651,45 @@ export const ChatComposer = memo(
           onSelectComposerItem(selectedItem);
           return true;
         }
+      }
+      if (
+        key === "Enter" &&
+        phase === "running" &&
+        composerSendState.hasSendableContent &&
+        !isSendBusy &&
+        !isConnecting &&
+        canSubmitComposerTurn &&
+        steerModifierPressed &&
+        !event.altKey &&
+        event.shiftKey
+      ) {
+        void onQueueFront();
+        return true;
+      }
+      if (
+        key === "Enter" &&
+        phase === "running" &&
+        composerSendState.hasSendableContent &&
+        !isSendBusy &&
+        !isConnecting &&
+        canSubmitComposerTurn &&
+        steerModifierPressed &&
+        !event.altKey &&
+        !event.shiftKey
+      ) {
+        void onSend();
+        return true;
+      }
+      if (
+        key === "Tab" &&
+        phase === "running" &&
+        composerSendState.hasSendableContent &&
+        !isSendBusy &&
+        !isConnecting &&
+        canSubmitComposerTurn
+      ) {
+        void onQueue();
+        return true;
       }
       if (key === "Enter" && !event.shiftKey) {
         void onSend();
@@ -1608,6 +1799,9 @@ export const ChatComposer = memo(
     const handleInterruptPrimaryAction = useCallback(() => {
       void onInterrupt();
     }, [onInterrupt]);
+    const handleQueuePrimaryAction = useCallback(() => {
+      void onQueue();
+    }, [onQueue]);
     const handleImplementPlanInNewThreadPrimaryAction = useCallback(() => {
       void onImplementPlanInNewThread();
     }, [onImplementPlanInNewThread]);
@@ -1885,7 +2079,7 @@ export const ChatComposer = memo(
                         ? "Add feedback to refine the plan, or leave this blank to implement it"
                         : phase === "disconnected"
                           ? "Ask for follow-up changes or attach images"
-                          : "Ask anything, @tag files/folders, or use / to show available commands"
+                          : "Ask anything, @tag files/folders, or use / to show commands and snippets"
                 }
                 disabled={isConnecting || isComposerApprovalState}
               />
@@ -1933,13 +2127,39 @@ export const ChatComposer = memo(
                       planSidebarLabel={planSidebarLabel}
                       planSidebarOpen={planSidebarOpen}
                       runtimeMode={runtimeMode}
+                      showSnippetPicker={!composerFooterHasWideActions}
                       traitsMenuContent={providerTraitsMenuContent}
+                      onOpenSnippetPicker={openSnippetPicker}
                       onToggleInteractionMode={toggleInteractionMode}
                       onTogglePlanSidebar={togglePlanSidebar}
                       onRuntimeModeChange={handleRuntimeModeChange}
                     />
                   ) : (
                     <>
+                      {!composerFooterHasWideActions ? (
+                        <>
+                          <Separator
+                            orientation="vertical"
+                            className="mx-0.5 hidden h-4 sm:block"
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+                            title={
+                              snippetPickerShortcutLabel
+                                ? `Open snippet picker (${snippetPickerShortcutLabel})`
+                                : "Open snippet picker"
+                            }
+                            aria-label="Open snippet picker"
+                            onClick={openSnippetPicker}
+                          >
+                            <FileTextIcon />
+                            <span className="sr-only sm:not-sr-only">Snippets</span>
+                          </Button>
+                        </>
+                      ) : null}
                       {providerTraitsPicker ? (
                         <>
                           <Separator
@@ -1982,15 +2202,45 @@ export const ChatComposer = memo(
                     promptHasText={prompt.trim().length > 0}
                     isSendBusy={isSendBusy}
                     isConnecting={isConnecting}
+                    canSubmit={canSubmitComposerTurn}
                     isPreparingWorktree={isPreparingWorktree}
                     hasSendableContent={composerSendState.hasSendableContent}
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                     onInterrupt={handleInterruptPrimaryAction}
+                    onQueue={handleQueuePrimaryAction}
                     onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
                   />
                 </div>
               </div>
             )}
+            <SnippetPickerDialog
+              open={isSnippetPickerOpen}
+              snippets={snippetLibrary}
+              focusRequestId={snippetPickerFocusRequestId}
+              currentDraftText={
+                isComposerApprovalState
+                  ? ""
+                  : activePendingProgress
+                    ? activePendingProgress.customAnswer
+                    : prompt
+              }
+              onOpenChange={(open) => {
+                if (open) {
+                  openGlobalSnippetPicker();
+                  return;
+                }
+                closeGlobalSnippetPicker();
+                focusComposer();
+              }}
+              onSaveDraftAsSnippet={saveCurrentDraftAsSnippet}
+              onSelectSnippet={(snippet) => {
+                if (insertSnippetIntoComposer(snippet.body)) {
+                  closeGlobalSnippetPicker();
+                  focusComposer();
+                }
+              }}
+              onDeleteSnippet={deleteSnippetFromLibrary}
+            />
           </div>
         </div>
       </form>

@@ -756,14 +756,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
             const registry = yield* ProviderRegistry;
 
             const initial = yield* registry.getProviders;
-            const initialCodex = initial.find((status) => status.provider === "codex");
-            assert.strictEqual(initialCodex?.auth.type, "apiKey");
-            assert.strictEqual(initialCodex?.auth.label, "OpenAI API Key");
+            assert.deepStrictEqual(initial, []);
 
-            const refreshed = yield* registry.refresh("codex");
-            const refreshedCodex = refreshed.find((status) => status.provider === "codex");
-            assert.strictEqual(refreshedCodex?.auth.type, "pro");
-            assert.strictEqual(refreshedCodex?.auth.label, "ChatGPT Pro Subscription");
+            const firstRefresh = yield* registry.refresh("codex");
+            const firstRefreshCodex = firstRefresh.find((status) => status.provider === "codex");
+            assert.strictEqual(firstRefreshCodex?.auth.type, "apiKey");
+            assert.strictEqual(firstRefreshCodex?.auth.label, "OpenAI API Key");
+
+            const secondRefresh = yield* registry.refresh("codex");
+            const secondRefreshCodex = secondRefresh.find((status) => status.provider === "codex");
+            assert.strictEqual(secondRefreshCodex?.auth.type, "pro");
+            assert.strictEqual(secondRefreshCodex?.auth.label, "ChatGPT Pro Subscription");
             assert.strictEqual(probeCallCount, 2);
           }).pipe(Effect.provide(runtimeServices));
         }),

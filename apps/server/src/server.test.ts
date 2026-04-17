@@ -49,6 +49,7 @@ import { vi } from "vitest";
 
 import type { ServerConfigShape } from "./config.ts";
 import { deriveServerPaths, ServerConfig } from "./config.ts";
+import { CodexImportLive } from "./codexImport/Layers/CodexImport.ts";
 import { makeRoutesLayer } from "./server.ts";
 import { resolveAttachmentRelativePath } from "./attachmentPaths.ts";
 import {
@@ -493,6 +494,7 @@ const buildAppUnderTest = (options?: {
           ...options?.layers?.repositoryIdentityResolver,
         }),
       ),
+      Layer.provideMerge(CodexImportLive),
       Layer.provideMerge(authTestLayer),
       Layer.provide(workspaceAndProjectServicesLayer),
       Layer.provideMerge(FetchHttpClient.layer),

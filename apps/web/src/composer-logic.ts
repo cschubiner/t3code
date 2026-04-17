@@ -1,8 +1,8 @@
 import { splitPromptIntoComposerSegments } from "./composer-editor-mentions";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
-export type ComposerTriggerKind = "path" | "slash-command" | "slash-model" | "skill";
-export type ComposerSlashCommand = "model" | "plan" | "default";
+export type ComposerTriggerKind = "path" | "slash-command" | "slash-model" | "skill" | "snippet";
+export type ComposerSlashCommand = "model" | "plan" | "default" | "snippet";
 
 export interface ComposerTrigger {
   kind: ComposerTriggerKind;
@@ -232,6 +232,14 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
           rangeEnd: cursor,
         };
       }
+      if (commandQuery.toLowerCase() === "snippet") {
+        return {
+          kind: "snippet",
+          query: "",
+          rangeStart: lineStart,
+          rangeEnd: cursor,
+        };
+      }
       return {
         kind: "slash-command",
         query: commandQuery,
@@ -245,6 +253,16 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
       return {
         kind: "slash-model",
         query: (modelMatch[1] ?? "").trim(),
+        rangeStart: lineStart,
+        rangeEnd: cursor,
+      };
+    }
+
+    const snippetMatch = /^\/snippet(?:\s+(.*))?$/.exec(linePrefix);
+    if (snippetMatch) {
+      return {
+        kind: "snippet",
+        query: (snippetMatch[1] ?? "").trim(),
         rangeStart: lineStart,
         rangeEnd: cursor,
       };
@@ -275,7 +293,7 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
 
 export function parseStandaloneComposerSlashCommand(
   text: string,
-): Exclude<ComposerSlashCommand, "model"> | null {
+): Exclude<ComposerSlashCommand, "model" | "snippet"> | null {
   const match = /^\/(plan|default)\s*$/i.exec(text.trim());
   if (!match) {
     return null;

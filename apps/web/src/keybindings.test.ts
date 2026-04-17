@@ -111,6 +111,8 @@ const DEFAULT_BINDINGS = compile([
   },
   { shortcut: modShortcut("o", { shiftKey: true }), command: "chat.new" },
   { shortcut: modShortcut("n", { shiftKey: true }), command: "chat.newLocal" },
+  { shortcut: modShortcut("f", { shiftKey: true }), command: "threads.search" },
+  { shortcut: modShortcut("s", { shiftKey: true }), command: "snippets.open" },
   { shortcut: modShortcut("o"), command: "editor.openFavorite" },
   { shortcut: modShortcut("[", { shiftKey: true }), command: "thread.previous" },
   { shortcut: modShortcut("]", { shiftKey: true }), command: "thread.next" },
@@ -266,6 +268,14 @@ describe("shortcutLabelForCommand", () => {
 
   it("returns effective labels for non-terminal commands", () => {
     assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "chat.new", "MacIntel"), "⇧⌘O");
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "threads.search", "MacIntel"),
+      "⇧⌘F",
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "snippets.open", "MacIntel"),
+      "⇧⌘S",
+    );
     assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "diff.toggle", "Linux"), "Ctrl+D");
     assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "commandPalette.toggle", "MacIntel"),
@@ -388,6 +398,26 @@ describe("chat/editor shortcuts", () => {
       isChatNewLocalShortcut(event({ key: "n", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
         platform: "Linux",
       }),
+    );
+  });
+
+  it("resolves snippets.open from the default shortcut", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "s", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "snippets.open",
+    );
+  });
+
+  it("resolves threads.search from the default shortcut", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "f", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "threads.search",
     );
   });
 

@@ -90,6 +90,8 @@ import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteResults } from "./CommandPaletteResults";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { useServerKeybindings } from "../rpc/serverState";
+import { useQuickThreadSearchStore } from "../quickThreadSearchStore";
+import { useSnippetPickerStore } from "../snippetPickerStore";
 import { resolveShortcutCommand } from "../keybindings";
 import {
   Command,
@@ -691,6 +693,32 @@ function OpenCommandPaletteDialog() {
       },
     });
   }
+
+  actionItems.push({
+    kind: "action",
+    value: "action:quick-thread-search",
+    searchTerms: ["thread search", "recent threads", "quick search", "jump to thread"],
+    title: "Search recent threads",
+    description: "Jump across your most recent threads by title or opening prompt",
+    icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
+    shortcutCommand: "threads.search",
+    run: async () => {
+      useQuickThreadSearchStore.getState().openDialog();
+    },
+  });
+
+  actionItems.push({
+    kind: "action",
+    value: "action:snippets",
+    searchTerms: ["snippets", "snippet", "prompt library", "templates", "reusable prompts"],
+    title: "Open snippets",
+    description: "Browse saved and built-in prompt snippets",
+    icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
+    shortcutCommand: "snippets.open",
+    run: async () => {
+      useSnippetPickerStore.getState().openPicker();
+    },
+  });
 
   actionItems.push({
     kind: "action",

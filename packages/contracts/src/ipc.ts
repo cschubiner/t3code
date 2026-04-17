@@ -31,6 +31,14 @@ import type {
   ServerUpsertKeybindingResult,
 } from "./server";
 import type {
+  CodexImportImportSessionsInput,
+  CodexImportImportSessionsResult,
+  CodexImportListSessionsInput,
+  CodexImportPeekSessionInput,
+  CodexImportPeekSessionResult,
+  CodexImportSessionSummary,
+} from "./codexImport";
+import type {
   TerminalClearInput,
   TerminalCloseInput,
   TerminalEvent,
@@ -141,6 +149,14 @@ export interface DesktopServerExposureState {
   advertisedHost: string | null;
 }
 
+export interface DesktopTailnetInfo {
+  available: boolean;
+  connected: boolean;
+  hostname: string | null;
+  ipv4: string | null;
+  error: string | null;
+}
+
 export interface PickFolderOptions {
   initialPath?: string | null;
 }
@@ -159,6 +175,7 @@ export interface DesktopBridge {
   removeSavedEnvironmentSecret: (environmentId: EnvironmentId) => Promise<void>;
   getServerExposureState: () => Promise<DesktopServerExposureState>;
   setServerExposureMode: (mode: DesktopServerExposureMode) => Promise<DesktopServerExposureState>;
+  getTailnetInfo: () => Promise<DesktopTailnetInfo>;
   pickFolder: (options?: PickFolderOptions) => Promise<string | null>;
   confirm: (message: string) => Promise<boolean>;
   setTheme: (theme: DesktopTheme) => Promise<void>;
@@ -218,6 +235,15 @@ export interface LocalApi {
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
     getSettings: () => Promise<ServerSettings>;
     updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;
+  };
+  codexImport: {
+    listSessions: (
+      input: CodexImportListSessionsInput,
+    ) => Promise<readonly CodexImportSessionSummary[]>;
+    peekSession: (input: CodexImportPeekSessionInput) => Promise<CodexImportPeekSessionResult>;
+    importSessions: (
+      input: CodexImportImportSessionsInput,
+    ) => Promise<CodexImportImportSessionsResult>;
   };
 }
 

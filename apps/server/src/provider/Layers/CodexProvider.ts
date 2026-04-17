@@ -319,10 +319,12 @@ const probeCodexCapabilities = (input: {
 function codexAccountProbeCacheKey(input: {
   readonly binaryPath: string;
   readonly homePath?: string;
+  readonly cwd: string;
 }) {
   return JSON.stringify([
     input.binaryPath,
     input.homePath && input.homePath.trim().length > 0 ? input.homePath : undefined,
+    input.cwd,
   ]);
 }
 
@@ -626,8 +628,7 @@ export const CodexProviderLive = Layer.effect(
       readonly binaryPath: string;
       readonly homePath?: string;
       readonly cwd: string;
-    }) =>
-      Cache.get(accountProbeCache, JSON.stringify([input.binaryPath, input.homePath, input.cwd]));
+    }) => Cache.get(accountProbeCache, codexAccountProbeCacheKey(input));
 
     const checkProvider = checkCodexProviderStatus(
       (input) =>
@@ -662,6 +663,7 @@ export const CodexProviderLive = Layer.effect(
             codexAccountProbeCacheKey({
               binaryPath: settings.binaryPath,
               ...(settings.homePath ? { homePath: settings.homePath } : {}),
+              cwd: process.cwd(),
             }),
           ),
         ),
