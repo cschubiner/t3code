@@ -2454,17 +2454,22 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
 
-  const onSend = async (e?: { preventDefault: () => void }) => {
+  type ComposerSubmissionDisposition = "default" | "steer";
+  const onSend = async (
+    e?: { preventDefault: () => void },
+    disposition: ComposerSubmissionDisposition = "default",
+  ) => {
     e?.preventDefault();
     const api = readEnvironmentApi(environmentId);
     if (!api || !activeThread) return;
     // --- Steering queue interception --------------------------------------
-    // If a turn is already in-flight (locally dispatching or server-running)
-    // and the composer has non-empty plain text, push it onto the per-thread
-    // queue instead of silently dropping the submit. Images / terminal
-    // contexts / slash commands fall through to the normal blocked behavior
-    // because they don't round-trip through the queue today.
-    if (isSendBusy || isConnecting || sendInFlightRef.current) {
+    // If a turn is already in-flight AND the user didn't explicitly steer,
+    // push plain text onto the per-thread queue. With disposition === "steer"
+    // (cmd+enter), we skip the queue and fall straight through to dispatch,
+    // letting the user course-correct a running turn. sendInFlightRef is
+    // still honored in both cases to prevent double-submits within a single
+    // tick.
+    if (disposition !== "steer" && (isSendBusy || isConnecting) && !sendInFlightRef.current) {
       if (activeThreadRef) {
         const pending = (promptRef.current ?? "").trim();
         const ctx = composerRef.current?.getSendContext();
@@ -2481,6 +2486,7 @@ export default function ChatView(props: ChatViewProps) {
       }
       return;
     }
+    if (sendInFlightRef.current) return;
     if (activePendingProgress) {
       onAdvanceActivePendingUserInput();
       return;
@@ -2771,6 +2777,39 @@ export default function ChatView(props: ChatViewProps) {
       resetLocalDispatch();
     }
   };
+
+  // ---- Global shortcut: cmd/ctrl + enter → steer during a running turn ----
+  //
+  // Plain Enter in the composer submits via the form, which routes through
+  // onSend() with disposition="default" → that path enqueues when busy.
+  // cmd+Enter (or ctrl+Enter off-mac) wants the OPPOSITE: send NOW to
+  // course-correct the running turn. We listen on the window in capture
+  // phase so the composer editor's own Enter handling doesn't swallow the
+  // modifier+enter combo.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.repeat) return;
+      if (event.key !== "Enter") return;
+      const modifierPressed = event.metaKey || event.ctrlKey;
+      if (!modifierPressed || event.shiftKey || event.altKey) return;
+      // Only fire when focus is inside the composer form so other Enter
+      // interactions (dialogs, buttons, etc.) aren't hijacked.
+      const target = event.target;
+      const inComposerForm =
+        target instanceof HTMLElement &&
+        target.closest('[data-chat-composer-form="true"]') !== null;
+      if (!inComposerForm) return;
+      // Only meaningful when a turn is actually running; if idle, normal
+      // Enter already dispatches.
+      if (!isSendBusy && !isConnecting) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void onSend(undefined, "steer");
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onSend closes over the current render's state; intentional
+  }, [isSendBusy, isConnecting]);
 
   // ---- Global shortcut: open snippet picker with cmd/ctrl + ; ----
   useEffect(() => {
