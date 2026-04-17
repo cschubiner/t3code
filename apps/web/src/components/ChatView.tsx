@@ -138,6 +138,7 @@ import { snippetListQueryOptions, snippetQueryKeys } from "../lib/snippetReactQu
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ensureLocalApi } from "../localApi";
 import type { Snippet, SnippetId } from "@t3tools/contracts";
+import { ImportFromCodexDialog } from "./ImportFromCodexDialog";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
@@ -825,6 +826,8 @@ export default function ChatView(props: ChatViewProps) {
   const [snippetPickerOpen, setSnippetPickerOpen] = useState(false);
   const [snippetPickerFocusRequest, setSnippetPickerFocusRequest] = useState(0);
   const [deletingSnippetId, setDeletingSnippetId] = useState<SnippetId | null>(null);
+  // ---- Codex import (cmd+shift+I / ctrl+shift+I) ----
+  const [codexImportDialogOpen, setCodexImportDialogOpen] = useState(false);
   const snippetQueryClient = useQueryClient();
   const snippetListQuery = useQuery(snippetListQueryOptions());
   const snippets = snippetListQuery.data?.snippets ?? [];
@@ -2747,6 +2750,22 @@ export default function ChatView(props: ChatViewProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- onSend closes over the current render's state; intentional
   }, [isSendBusy, isConnecting]);
 
+  // ---- Global shortcut: open Codex import with cmd/ctrl + shift + i ----
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.repeat) return;
+      const usesMod = event.metaKey || event.ctrlKey;
+      if (!usesMod || !event.shiftKey || event.altKey) return;
+      const key = event.key.toLowerCase();
+      if (key !== "i") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setCodexImportDialogOpen(true);
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, []);
+
   // ---- Global shortcut: open snippet picker with cmd/ctrl + ; ----
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
@@ -3513,6 +3532,10 @@ export default function ChatView(props: ChatViewProps) {
 
           {/* Input bar */}
           <div className={cn("px-3 pt-1.5 sm:px-5 sm:pt-2", isGitRepo ? "pb-1" : "pb-3 sm:pb-4")}>
+            <ImportFromCodexDialog
+              open={codexImportDialogOpen}
+              onOpenChange={setCodexImportDialogOpen}
+            />
             <SnippetPickerDialog
               open={snippetPickerOpen}
               onOpenChange={setSnippetPickerOpen}

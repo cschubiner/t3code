@@ -40,6 +40,15 @@ import {
   SnippetListResult,
 } from "./snippets";
 import {
+  CodexImportError,
+  CodexImportImportSessionsInput,
+  CodexImportImportSessionsResult,
+  CodexImportListSessionsInput,
+  CodexImportPeekSessionInput,
+  CodexImportPeekSessionResult,
+  CodexImportSessionSummary,
+} from "./codexImport";
+import {
   ClientOrchestrationCommand,
   ORCHESTRATION_WS_METHODS,
   OrchestrationDispatchCommandError,
@@ -127,6 +136,11 @@ export const WS_METHODS = {
   snippetsList: "snippets.list",
   snippetsCreate: "snippets.create",
   snippetsDelete: "snippets.delete",
+
+  // Codex transcript import (read-only MVP; import action is stubbed for now)
+  codexImportListSessions: "codexImport.listSessions",
+  codexImportPeekSession: "codexImport.peekSession",
+  codexImportImportSessions: "codexImport.importSessions",
 
   // Streaming subscriptions
   subscribeGitStatus: "subscribeGitStatus",
@@ -389,6 +403,24 @@ export const WsSubscribeSnippetsUpdatedRpc = Rpc.make(WS_METHODS.subscribeSnippe
   stream: true,
 });
 
+export const WsCodexImportListSessionsRpc = Rpc.make(WS_METHODS.codexImportListSessions, {
+  payload: CodexImportListSessionsInput,
+  success: Schema.Array(CodexImportSessionSummary),
+  error: CodexImportError,
+});
+
+export const WsCodexImportPeekSessionRpc = Rpc.make(WS_METHODS.codexImportPeekSession, {
+  payload: CodexImportPeekSessionInput,
+  success: CodexImportPeekSessionResult,
+  error: CodexImportError,
+});
+
+export const WsCodexImportImportSessionsRpc = Rpc.make(WS_METHODS.codexImportImportSessions, {
+  payload: CodexImportImportSessionsInput,
+  success: CodexImportImportSessionsResult,
+  error: CodexImportError,
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
@@ -431,4 +463,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSnippetsCreateRpc,
   WsSnippetsDeleteRpc,
   WsSubscribeSnippetsUpdatedRpc,
+  WsCodexImportListSessionsRpc,
+  WsCodexImportPeekSessionRpc,
+  WsCodexImportImportSessionsRpc,
 );

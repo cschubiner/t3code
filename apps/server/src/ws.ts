@@ -46,6 +46,7 @@ import {
 } from "./observability/RpcInstrumentation";
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry";
 import { SnippetRepository } from "./persistence/Services/Snippets";
+import { CodexImport } from "./codexImport/Services/CodexImport";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup";
 import { ServerSettingsService } from "./serverSettings";
@@ -157,6 +158,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const bootstrapCredentials = yield* BootstrapCredentialService;
       const sessions = yield* SessionCredentialService;
       const snippetRepository = yield* SnippetRepository;
+      const codexImport = yield* CodexImport;
       const snippetsUpdatedPubSub = yield* Effect.acquireRelease(
         PubSub.unbounded<SnippetLibraryUpdatedPayload>(),
         (pubsub) => PubSub.shutdown(pubsub),
@@ -807,6 +809,20 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcStream(
             WS_METHODS.subscribeSnippetsUpdated,
             Stream.fromPubSub(snippetsUpdatedPubSub),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.codexImportListSessions]: (input) =>
+          observeRpcEffect(WS_METHODS.codexImportListSessions, codexImport.listSessions(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.codexImportPeekSession]: (input) =>
+          observeRpcEffect(WS_METHODS.codexImportPeekSession, codexImport.peekSession(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.codexImportImportSessions]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.codexImportImportSessions,
+            codexImport.importSessions(input),
             { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.serverUpdateSettings]: ({ patch }) =>

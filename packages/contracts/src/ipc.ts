@@ -48,6 +48,14 @@ import type {
   SnippetListResult,
 } from "./snippets";
 import type {
+  CodexImportImportSessionsInput,
+  CodexImportImportSessionsResult,
+  CodexImportListSessionsInput,
+  CodexImportPeekSessionInput,
+  CodexImportPeekSessionResult,
+  CodexImportSessionSummary,
+} from "./codexImport";
+import type {
   ClientOrchestrationCommand,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetFullThreadDiffResult,
@@ -244,6 +252,15 @@ export interface LocalApi {
     list: () => Promise<SnippetListResult>;
     create: (input: SnippetCreateInput) => Promise<SnippetCreateResult>;
     delete: (input: SnippetDeleteInput) => Promise<unknown>;
+  };
+  codexImport: {
+    listSessions: (
+      input: CodexImportListSessionsInput,
+    ) => Promise<readonly CodexImportSessionSummary[]>;
+    peekSession: (input: CodexImportPeekSessionInput) => Promise<CodexImportPeekSessionResult>;
+    importSessions: (
+      input: CodexImportImportSessionsInput,
+    ) => Promise<CodexImportImportSessionsResult>;
   };
 }
 

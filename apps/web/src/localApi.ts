@@ -121,6 +121,11 @@ export function createLocalApi(rpcClient: WsRpcClient): LocalApi {
       create: rpcClient.snippets.create,
       delete: rpcClient.snippets.delete,
     },
+    codexImport: {
+      listSessions: rpcClient.codexImport.listSessions,
+      peekSession: rpcClient.codexImport.peekSession,
+      importSessions: rpcClient.codexImport.importSessions,
+    },
   };
 }
 
