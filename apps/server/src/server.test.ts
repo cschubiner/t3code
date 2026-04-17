@@ -78,6 +78,8 @@ import {
 } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { SnippetRepository, type SnippetRepositoryShape } from "./persistence/Services/Snippets.ts";
+import { CodexImport, type CodexImportShape } from "./codexImport/Services/CodexImport.ts";
+import { CodexImportError } from "@t3tools/contracts";
 import {
   ProviderRegistry,
   type ProviderRegistryShape,
@@ -339,6 +341,7 @@ const buildAppUnderTest = (options?: {
     serverEnvironment?: Partial<ServerEnvironmentShape>;
     repositoryIdentityResolver?: Partial<RepositoryIdentityResolverShape>;
     snippetRepository?: Partial<SnippetRepositoryShape>;
+    codexImport?: Partial<CodexImportShape>;
   };
 }) =>
   Effect.gen(function* () {
@@ -560,6 +563,16 @@ const buildAppUnderTest = (options?: {
             }),
           deleteById: () => Effect.void,
           ...options?.layers?.snippetRepository,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(CodexImport)({
+          listSessions: () => Effect.succeed([]),
+          peekSession: () =>
+            Effect.fail(new CodexImportError({ message: "not available in tests" })),
+          importSessions: () =>
+            Effect.fail(new CodexImportError({ message: "not available in tests" })),
+          ...options?.layers?.codexImport,
         }),
       ),
       Layer.provideMerge(FetchHttpClient.layer),

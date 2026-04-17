@@ -124,6 +124,11 @@ export interface WsRpcClient {
     readonly delete: RpcUnaryMethod<typeof WS_METHODS.snippetsDelete>;
     readonly subscribeUpdated: RpcStreamMethod<typeof WS_METHODS.subscribeSnippetsUpdated>;
   };
+  readonly codexImport: {
+    readonly listSessions: RpcUnaryMethod<typeof WS_METHODS.codexImportListSessions>;
+    readonly peekSession: RpcUnaryMethod<typeof WS_METHODS.codexImportPeekSession>;
+    readonly importSessions: RpcUnaryMethod<typeof WS_METHODS.codexImportImportSessions>;
+  };
   readonly orchestration: {
     readonly dispatchCommand: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.dispatchCommand>;
     readonly getTurnDiff: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.getTurnDiff>;
@@ -254,6 +259,14 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
           listener,
           options,
         ),
+    },
+    codexImport: {
+      listSessions: (input) =>
+        transport.request((client) => client[WS_METHODS.codexImportListSessions](input)),
+      peekSession: (input) =>
+        transport.request((client) => client[WS_METHODS.codexImportPeekSession](input)),
+      importSessions: (input) =>
+        transport.request((client) => client[WS_METHODS.codexImportImportSessions](input)),
     },
     orchestration: {
       dispatchCommand: (input) =>
