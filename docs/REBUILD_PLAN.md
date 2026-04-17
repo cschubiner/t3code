@@ -18,12 +18,13 @@ features are unchanged from the earlier entries.
 | fixPath (Electron PATH fixup on macOS)                 | ✅ Shipped | `87fb82b7`              |
 | Codex-import (read-only MVP: list + peek)              | ✅ Shipped | `ee6c451d` + `a1f617a2` |
 | Skills search RPC (`.codex/skills` / `.claude/skills`) | ✅ Shipped | `2cb94754`              |
+| Sidebar grouped-vs-recent view mode toggle             | ✅ Shipped | `941be4d2`              |
+| Codex-import "import as ClayCode draft thread"         | ✅ Shipped | `32b25102`              |
+| Skills composer UI (cmd/ctrl+shift+k picker)           | ✅ Shipped | `16c8bfe7`              |
 
 ### Known deferrals (intentional)
 
-- **Sidebar "grouped vs recent" mode toggle** — the fork had a distinct sidebar mode that flattens all threads across projects, sorted by recent activity. Rebuilding it cleanly requires surgery on upstream's 4500-line Sidebar.tsx and new store state. Upstream's per-project grouping covers the common case; defer until users explicitly ask for recent-flat mode.
-- **Codex-import "actually import as ClayCode thread"** — listing + previewing Codex transcripts works today via the new IPC. Actual import needs a new `thread.import` orchestration command (new events + decider + projector wiring), which is a multi-hour change on the orchestration core. The dialog's Import button surfaces the server's "not yet implemented" error cleanly.
-- **Skills composer UI** — the RPC layer is in place (`localApi.skills.search`). A composer trigger (e.g. `@skill` mention, or a dedicated picker hotkey) is a follow-up UI-only commit.
+- **Codex-import server-side projection seeding** — the dialog now imports a Codex session as a ClayCode draft thread with the transcript pre-loaded into the composer (`32b25102`). True server-side seeding (the past messages persisted into the projection DB so the imported thread shows full chronological history) still requires a new `thread.import.codex` orchestration command — new events + decider + projector wiring. The current draft-pre-fill flow covers the common "continue this conversation" use case without that surgery.
 - **GlobalThreadSearchDialog + ProjectFolderSearchDialog** — upstream's CommandPalette (cmd+K) covers the overlapping use case. Dedicated dialogs can be added if the CommandPalette UX falls short in practice.
 
 ## Status (last updated 2026-04-16 — after follow-up QA + integration pass)
