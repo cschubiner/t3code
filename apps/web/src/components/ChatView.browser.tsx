@@ -4478,9 +4478,16 @@ describe("ChatView timeline estimator parity (full app)", () => {
             useQueuedTurnStore.getState().threadsByThreadKey[threadKeyFor(THREAD_ID)]?.items,
           ).toHaveLength(1);
           expect(document.body.textContent ?? "").toContain("1 queued follow-up");
+          expect(document.body.textContent ?? "").toContain(
+            "Waiting for the current turn to settle.",
+          );
         },
         { timeout: 8_000, interval: 16 },
       );
+
+      await expect
+        .element(page.getByRole("button", { name: "Send queued follow-up now" }))
+        .toBeDisabled();
 
       await page.getByRole("button", { name: "Remove queued follow-up" }).click();
 
@@ -4493,6 +4500,96 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("clears queued follow-ups during a running turn without dispatching after settle", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshot(),
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: fixture.snapshot.snapshotSequence + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      useQueuedTurnStore.getState().enqueue(THREAD_REF, {
+        id: "queued-clear-first",
+        text: "This cleared queue item should not dispatch",
+        createdAt: isoAt(170),
+        images: [],
+        persistedAttachments: [],
+        terminalContexts: [],
+        modelSelection: { provider: "codex", model: "gpt-5" },
+        promptEffort: null,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+      useQueuedTurnStore.getState().enqueue(THREAD_REF, {
+        id: "queued-clear-second",
+        text: "This second cleared queue item should not dispatch",
+        createdAt: isoAt(171),
+        images: [],
+        persistedAttachments: [],
+        terminalContexts: [],
+        modelSelection: { provider: "codex", model: "gpt-5" },
+        promptEffort: null,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+      await waitForLayout();
+
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent ?? "").toContain("2 queued follow-ups");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await page.getByRole("button", { name: "Clear all" }).click();
+
+      await vi.waitFor(
+        () => {
+          expect(useQueuedTurnStore.getState().threadsByThreadKey[threadKeyFor(THREAD_ID)]).toBe(
+            undefined,
+          );
+          expect(document.body.textContent ?? "").not.toContain("queued follow-up");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const beforeSettledTurnStarts = wsRequests.filter(
+        (request) =>
+          request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+          request.type === "thread.turn.start",
+      ).length;
+
+      fixture.snapshot = updateThreadSessionInSnapshot(createRunningSnapshot(), THREAD_ID, {
+        threadId: THREAD_ID,
+        status: "ready",
+        providerName: "codex",
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: isoAt(172),
+      });
+      sendShellThreadUpsert(THREAD_ID);
+      await waitForLayout();
+
+      expect(
+        wsRequests.filter(
+          (request) =>
+            request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+            request.type === "thread.turn.start",
+        ),
+      ).toHaveLength(beforeSettledTurnStarts);
     } finally {
       await mounted.cleanup();
     }

@@ -2405,9 +2405,13 @@ export default function ChatView(props: ChatViewProps) {
         !api ||
         !activeThread ||
         !isServerThread ||
+        phase === "running" ||
         isSendBusy ||
         isConnecting ||
-        sendInFlightRef.current
+        sendInFlightRef.current ||
+        activePendingApproval ||
+        pendingUserInputs.length > 0 ||
+        activePendingProgress
       ) {
         throw new Error("Queued follow-up cannot dispatch right now.");
       }
@@ -2517,12 +2521,16 @@ export default function ChatView(props: ChatViewProps) {
     },
     [
       activeThread,
+      activePendingApproval,
+      activePendingProgress,
       beginLocalDispatch,
       environmentId,
       isConnecting,
       isSendBusy,
       isServerThread,
+      pendingUserInputs.length,
       persistThreadSettingsForNextTurn,
+      phase,
       providerStatuses,
       resetLocalDispatch,
       setThreadError,
@@ -3568,6 +3576,17 @@ export default function ChatView(props: ChatViewProps) {
     void onRevertToTurnCountRef.current(targetTurnCount);
   }, []);
 
+  const canDispatchQueuedTurnNow =
+    isServerThread &&
+    phase !== "running" &&
+    !isSendBusy &&
+    !isConnecting &&
+    !sendInFlightRef.current &&
+    queueDispatchInFlightRef.current === null &&
+    !activePendingApproval &&
+    pendingUserInputs.length === 0 &&
+    !activePendingProgress;
+
   // Empty state: no active thread
   if (!activeThread) {
     return <NoActiveThreadState />;
@@ -3682,14 +3701,11 @@ export default function ChatView(props: ChatViewProps) {
               <div className="mx-auto w-full min-w-0 max-w-208">
                 <QueuedFollowUpsPanel
                   queuedItems={queuedTurns}
-                  canSendNow={
-                    isServerThread &&
-                    !isSendBusy &&
-                    !isConnecting &&
-                    !sendInFlightRef.current &&
-                    queueDispatchInFlightRef.current === null
-                  }
+                  canSendNow={canDispatchQueuedTurnNow}
                   onSendNow={(queuedTurn) => {
+                    if (!canDispatchQueuedTurnNow) {
+                      return;
+                    }
                     consumeQueuedTurn(activeThreadRef, queuedTurn.id);
                     void dispatchQueuedTurn(queuedTurn).catch(() => {
                       prependQueuedTurn(activeThreadRef, queuedTurn);
