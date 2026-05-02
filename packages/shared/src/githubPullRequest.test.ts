@@ -4,7 +4,7 @@ import {
   buildGitHubPullRequestUrl,
   normalizeGitHubPullRequestUrl,
   parseGitHubPullRequestUrl,
-} from "./githubPullRequest";
+} from "./githubPullRequest.ts";
 
 describe("parseGitHubPullRequestUrl", () => {
   it("parses canonical GitHub pull request URLs", () => {

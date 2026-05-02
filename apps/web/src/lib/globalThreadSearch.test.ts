@@ -20,7 +20,7 @@ function createThread(input: {
     codexThreadId: null,
     projectId: PROJECT_ID,
     title: input.title,
-    modelSelection: { provider: "codex", model: "gpt-5.4" },
+    modelSelection: { instanceId: "codex" as any, model: "gpt-5.4" },
     runtimeMode: "full-access",
     interactionMode: "default",
     session: null,

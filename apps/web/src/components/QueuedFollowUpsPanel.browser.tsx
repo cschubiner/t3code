@@ -34,7 +34,7 @@ function makeQueuedTurn(overrides: Partial<QueuedTurnDraft> = {}): QueuedTurnDra
       },
     ],
     terminalContexts: overrides.terminalContexts ?? [],
-    modelSelection: overrides.modelSelection ?? { provider: "codex", model: "gpt-5" },
+    modelSelection: overrides.modelSelection ?? { instanceId: "codex" as any, model: "gpt-5" },
     promptEffort: overrides.promptEffort ?? null,
     runtimeMode: overrides.runtimeMode ?? "full-access",
     interactionMode: overrides.interactionMode ?? "default",

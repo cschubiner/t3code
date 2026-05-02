@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { searchSkills } from "./skills";
+import { searchSkills } from "./skills.js";
 
 const tempDirs: string[] = [];
 
@@ -87,7 +87,10 @@ describe("searchSkills", () => {
       extraRoots: [extraRoot],
     });
 
-    expect(result.skills.map((skill) => skill.name)).toEqual(["local-review", "gh-fix-ci"]);
+    expect(result.skills.map((skill: { readonly name: string }) => skill.name)).toEqual([
+      "local-review",
+      "gh-fix-ci",
+    ]);
     expect(result.skills[1]).toMatchObject({
       source: "extra-root",
       rootPath: extraRoot,

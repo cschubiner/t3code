@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 
-import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas";
+import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 const SKILL_SEARCH_LIMIT_MAX = 100;
 const SKILL_SEARCH_QUERY_MAX_LENGTH = 128;

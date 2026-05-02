@@ -7,7 +7,7 @@ import {
   KeybindingRule,
   ResolvedKeybindingRule,
   ResolvedKeybindingsConfig,
-} from "./keybindings";
+} from "./keybindings.ts";
 
 const decode = <S extends Schema.Top>(
   schema: S,
@@ -88,6 +88,18 @@ it.effect("parses keybinding rules", () =>
       command: "sidebar.project.previous",
     });
     assert.strictEqual(parsedSidebarProjectPrevious.command, "sidebar.project.previous");
+
+    const parsedModelPickerToggle = yield* decode(KeybindingRule, {
+      key: "mod+shift+m",
+      command: "modelPicker.toggle",
+    });
+    assert.strictEqual(parsedModelPickerToggle.command, "modelPicker.toggle");
+
+    const parsedModelPickerJump = yield* decode(KeybindingRule, {
+      key: "mod+1",
+      command: "modelPicker.jump.1",
+    });
+    assert.strictEqual(parsedModelPickerJump.command, "modelPicker.jump.1");
 
     const parsedThreadPrevious = yield* decode(KeybindingRule, {
       key: "mod+shift+[",

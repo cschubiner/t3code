@@ -17,6 +17,8 @@ import {
   type CodexImportSessionSummary,
   type ModelSelection,
   type OrchestrationProjectShell,
+  ProviderDriverKind,
+  ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
 import { Effect, Layer, Option } from "effect";
@@ -25,16 +27,18 @@ import {
   classifyCodexSessionKind,
   parseCodexTranscript,
   type ParsedCodexTranscript,
-} from "../parseCodexTranscript";
-import { CodexImport, type CodexImportShape } from "../Services/CodexImport";
-import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine";
-import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery";
+} from "../parseCodexTranscript.js";
+import { CodexImport, type CodexImportShape } from "../Services/CodexImport.js";
+import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.js";
+import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.js";
 
 const DEFAULT_RECENT_DAYS = 30;
 const DEFAULT_RECENT_LIMIT = 50;
 const DEFAULT_PEEK_MESSAGE_COUNT = 10;
 const TITLE_MAX_CHARS = 80;
 const IMPORT_ACTIVITY_KIND = "codex-import.imported";
+const CODEX_DRIVER = ProviderDriverKind.make("codex");
+const CODEX_INSTANCE_ID = ProviderInstanceId.make("codex");
 
 interface DiscoveredCodexRollout {
   readonly filePath: string;
@@ -181,13 +185,13 @@ function resolveImportModelSelection(
   }
   if (parsed.model && parsed.model.trim().length > 0) {
     return {
-      provider: "codex",
+      instanceId: CODEX_INSTANCE_ID,
       model: parsed.model.trim(),
     };
   }
   return {
-    provider: "codex",
-    model: DEFAULT_MODEL_BY_PROVIDER.codex,
+    instanceId: CODEX_INSTANCE_ID,
+    model: DEFAULT_MODEL_BY_PROVIDER[CODEX_DRIVER] ?? "gpt-5.4",
   };
 }
 

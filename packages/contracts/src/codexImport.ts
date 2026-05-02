@@ -6,14 +6,14 @@ import {
   ProjectId,
   ThreadId,
   TrimmedNonEmptyString,
-} from "./baseSchemas";
+} from "./baseSchemas.ts";
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   OrchestrationMessageRole,
   ProviderInteractionMode,
   RuntimeMode,
-} from "./orchestration";
+} from "./orchestration.ts";
 
 export class CodexImportError extends Schema.TaggedErrorClass<CodexImportError>()(
   "CodexImportError",

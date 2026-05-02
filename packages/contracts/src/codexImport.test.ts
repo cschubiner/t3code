@@ -7,7 +7,7 @@ import {
   CodexImportPeekSessionInput,
   ProjectId,
   WS_METHODS,
-} from "./index";
+} from "./index.ts";
 
 const decodeListSessionsInput = Schema.decodeUnknownEffect(CodexImportListSessionsInput);
 const decodeImportSessionsInput = Schema.decodeUnknownEffect(CodexImportImportSessionsInput);

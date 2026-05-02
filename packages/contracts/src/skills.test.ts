@@ -1,7 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
 
-import { SkillSearchInput, WS_METHODS } from "./index";
+import { SkillSearchInput, WS_METHODS } from "./index.ts";
 
 const decodeSkillSearchInput = Schema.decodeUnknownEffect(SkillSearchInput);
 

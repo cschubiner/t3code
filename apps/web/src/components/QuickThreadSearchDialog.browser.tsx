@@ -46,7 +46,7 @@ function createThread(input: {
     projectId: PROJECT_ID,
     title: input.title,
     modelSelection: {
-      provider: "codex",
+      instanceId: "codex" as any,
       model: "gpt-5.4",
     },
     runtimeMode: "full-access",

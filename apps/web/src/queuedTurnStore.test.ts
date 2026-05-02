@@ -1,5 +1,10 @@
 import { scopeThreadRef } from "@t3tools/client-runtime";
-import { EnvironmentId, type ModelSelection, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type ModelSelection,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -57,9 +62,9 @@ function makeQueuedTurn(overrides: Partial<QueuedTurnDraft> = {}): QueuedTurnDra
     modelSelection:
       overrides.modelSelection ??
       ({
-        provider: "codex",
+        instanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5",
-        options: { reasoningEffort: "medium" },
+        options: [{ id: "reasoningEffort", value: "medium" }],
       } satisfies ModelSelection),
     promptEffort: overrides.promptEffort ?? "medium",
     runtimeMode: overrides.runtimeMode ?? "full-access",

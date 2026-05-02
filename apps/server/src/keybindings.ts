@@ -13,13 +13,14 @@ import {
   KeybindingShortcut,
   KeybindingWhenNode,
   MAX_KEYBINDINGS_COUNT,
+  MODEL_PICKER_JUMP_KEYBINDING_COMMANDS,
   MAX_WHEN_EXPRESSION_DEPTH,
   ResolvedKeybindingRule,
   ResolvedKeybindingsConfig,
   THREAD_JUMP_KEYBINDING_COMMANDS,
   type ServerConfigIssue,
 } from "@t3tools/contracts";
-import { Mutable } from "effect/Types";
+import type { Mutable } from "effect/Types";
 import {
   Array,
   Cache,
@@ -44,7 +45,8 @@ import {
   Stream,
 } from "effect";
 import * as Semaphore from "effect/Semaphore";
-import { ServerConfig } from "./config";
+import { ServerConfig } from "./config.ts";
+import { writeFileStringAtomically } from "./atomicWrite.ts";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 
 type WhenToken =
@@ -75,6 +77,7 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "alt+arrowdown", command: "sidebar.thread.next", when: "!terminalFocus" },
   { key: "alt+shift+arrowup", command: "sidebar.project.previous", when: "!terminalFocus" },
   { key: "alt+shift+arrowdown", command: "sidebar.project.next", when: "!terminalFocus" },
+  { key: "mod+shift+m", command: "modelPicker.toggle", when: "!terminalFocus" },
   { key: "mod+o", command: "editor.openFavorite" },
   { key: "mod+shift+[", command: "thread.previous" },
   { key: "mod+shift+]", command: "thread.next" },
@@ -83,6 +86,11 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   ...THREAD_JUMP_KEYBINDING_COMMANDS.map((command, index) => ({
     key: `mod+${index + 1}`,
     command,
+  })),
+  ...MODEL_PICKER_JUMP_KEYBINDING_COMMANDS.map((command, index) => ({
+    key: `mod+${index + 1}`,
+    command,
+    when: "modelPickerOpen",
   })),
 ];
 
@@ -675,14 +683,17 @@ const makeKeybindings = Effect.gen(function* () {
   });
 
   const writeConfigAtomically = (rules: readonly KeybindingRule[]) => {
-    const tempPath = `${keybindingsConfigPath}.${process.pid}.${Date.now()}.tmp`;
-
     return Schema.encodeEffect(KeybindingsConfigPrettyJson)(rules).pipe(
       Effect.map((encoded) => `${encoded}\n`),
-      Effect.tap(() => fs.makeDirectory(path.dirname(keybindingsConfigPath), { recursive: true })),
-      Effect.tap((encoded) => fs.writeFileString(tempPath, encoded)),
-      Effect.flatMap(() => fs.rename(tempPath, keybindingsConfigPath)),
-      Effect.ensuring(fs.remove(tempPath, { force: true }).pipe(Effect.ignore({ log: true }))),
+      Effect.flatMap((encoded) =>
+        writeFileStringAtomically({
+          filePath: keybindingsConfigPath,
+          contents: encoded,
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+        ),
+      ),
       Effect.mapError(
         (cause) =>
           new KeybindingsConfigError({

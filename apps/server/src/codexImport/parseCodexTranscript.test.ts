@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { classifyCodexSessionKind, parseCodexTranscript } from "./parseCodexTranscript";
+import { classifyCodexSessionKind, parseCodexTranscript } from "./parseCodexTranscript.js";
 
 describe("parseCodexTranscript", () => {
   it("parses importable text messages and transcript context", () => {

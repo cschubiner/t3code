@@ -1,14 +1,16 @@
 import {
   type ApprovalRequestId,
-  DEFAULT_MODEL_BY_PROVIDER,
-  type ClaudeCodeEffort,
+  DEFAULT_MODEL,
+  defaultInstanceIdForDriver,
   type EnvironmentId,
   type MessageId,
   type ModelSelection,
   type ProjectScript,
-  type ProviderKind,
   type ProjectId,
   type ProviderApprovalDecision,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ResolvedKeybindingsConfig,
   type ServerProvider,
   type ScopedThreadRef,
   type ThreadId,
@@ -25,7 +27,11 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime";
-import { applyClaudePromptEffortPrefix } from "@t3tools/shared/model";
+import {
+  applyClaudePromptEffortPrefix,
+  createModelSelection,
+  resolvePromptInjectedEffort,
+} from "@t3tools/shared/model";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
 import { Debouncer } from "@tanstack/react-pacer";
@@ -107,13 +113,9 @@ import {
   projectScriptIdFromCommand,
 } from "~/projectScripts";
 import { newCommandId, newDraftId, newMessageId, newThreadId } from "~/lib/utils";
-import {
-  getProviderModelCapabilities,
-  getProviderModels,
-  resolveSelectableProvider,
-} from "../providerModels";
+import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
 import { useSettings } from "../hooks/useSettings";
-import { resolveAppModelSelection } from "../modelSelection";
+import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { deriveLogicalProjectKey } from "../logicalProject";
 import {
@@ -308,17 +310,15 @@ function useThreadPlanCatalog(threadIds: readonly ThreadId[]): ThreadPlanCatalog
 }
 
 function formatOutgoingPrompt(params: {
-  provider: ProviderKind;
+  provider: ProviderDriverKind;
   model: string | null;
   models: ReadonlyArray<ServerProvider["models"][number]>;
   effort: string | null;
   text: string;
 }): string {
   const caps = getProviderModelCapabilities(params.models, params.model, params.provider);
-  if (params.effort && caps.promptInjectedEffortLevels.includes(params.effort)) {
-    return applyClaudePromptEffortPrefix(params.text, params.effort as ClaudeCodeEffort | null);
-  }
-  return params.text;
+  const promptEffort = resolvePromptInjectedEffort(caps, params.effort);
+  return applyClaudePromptEffortPrefix(params.text, promptEffort);
 }
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
@@ -421,6 +421,7 @@ interface PersistentThreadTerminalDrawerProps {
   threadRef: { environmentId: EnvironmentId; threadId: ThreadId };
   threadId: ThreadId;
   visible: boolean;
+  keybindings: ResolvedKeybindingsConfig;
   launchContext: PersistentTerminalLaunchContext | null;
   focusRequestId: number;
   splitShortcutLabel: string | undefined;
@@ -433,6 +434,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   threadRef,
   threadId,
   visible,
+  keybindings,
   launchContext,
   focusRequestId,
   splitShortcutLabel,
@@ -575,6 +577,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
         activeTerminalId={terminalState.activeTerminalId}
         terminalGroups={terminalState.terminalGroups}
         activeTerminalGroupId={terminalState.activeTerminalGroupId}
+        keybindings={keybindings}
         focusRequestId={focusRequestId + localFocusRequestId + (visible ? 1 : 0)}
         onSplitTerminal={splitTerminal}
         onNewTerminal={createNewTerminal}
@@ -788,8 +791,8 @@ export default function ChatView(props: ChatViewProps) {
             threadId,
             draftThread,
             fallbackDraftProject?.defaultModelSelection ?? {
-              provider: "codex",
-              model: DEFAULT_MODEL_BY_PROVIDER.codex,
+              instanceId: defaultInstanceIdForDriver(ProviderDriverKind.make("codex")),
+              model: DEFAULT_MODEL,
             },
             localDraftError,
           )
@@ -1044,7 +1047,9 @@ export default function ChatView(props: ChatViewProps) {
 
   const selectedProviderByThreadId = composerActiveProvider ?? null;
   const threadProvider =
-    activeThread?.modelSelection.provider ?? activeProject?.defaultModelSelection?.provider ?? null;
+    activeThread?.modelSelection.instanceId ??
+    activeProject?.defaultModelSelection?.instanceId ??
+    null;
   const lockedProvider = deriveLockedProvider({
     thread: activeThread,
     selectedProvider: selectedProviderByThreadId,
@@ -1062,11 +1067,14 @@ export default function ChatView(props: ChatViewProps) {
       ? primaryServerConfig
       : (activeEnvRuntimeState?.serverConfig ?? primaryServerConfig);
   const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
+  const selectedProviderCandidate = selectedProviderByThreadId ?? threadProvider;
   const unlockedSelectedProvider = resolveSelectableProvider(
     providerStatuses,
-    selectedProviderByThreadId ?? threadProvider ?? "codex",
+    selectedProviderCandidate
+      ? ProviderDriverKind.make(selectedProviderCandidate)
+      : ProviderDriverKind.make("codex"),
   );
-  const selectedProvider: ProviderKind = lockedProvider ?? unlockedSelectedProvider;
+  const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
   const phase = derivePhase(activeThread?.session ?? null);
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(
@@ -1438,10 +1446,20 @@ export default function ChatView(props: ChatViewProps) {
   const gitStatusQuery = useGitStatus({ environmentId, cwd: gitCwd });
   const keybindings = useServerKeybindings();
   const availableEditors = useServerAvailableEditors();
-  const activeProviderStatus = useMemo(
-    () => providerStatuses.find((status) => status.provider === selectedProvider) ?? null,
-    [selectedProvider, providerStatuses],
-  );
+  const activeProviderInstanceId =
+    activeThread?.session?.providerInstanceId ??
+    activeThread?.modelSelection.instanceId ??
+    activeProject?.defaultModelSelection?.instanceId ??
+    null;
+  const activeProviderStatus = useMemo(() => {
+    if (activeProviderInstanceId) {
+      return (
+        providerStatuses.find((status) => status.instanceId === activeProviderInstanceId) ?? null
+      );
+    }
+    const defaultInstanceId = defaultInstanceIdForDriver(selectedProvider);
+    return providerStatuses.find((status) => status.instanceId === defaultInstanceId) ?? null;
+  }, [activeProviderInstanceId, providerStatuses, selectedProvider]);
   const activeProjectCwd = activeProject?.cwd ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
@@ -1951,7 +1969,7 @@ export default function ChatView(props: ChatViewProps) {
       if (
         input.modelSelection !== undefined &&
         (input.modelSelection.model !== serverThread.modelSelection.model ||
-          input.modelSelection.provider !== serverThread.modelSelection.provider ||
+          input.modelSelection.instanceId !== serverThread.modelSelection.instanceId ||
           JSON.stringify(input.modelSelection.options ?? null) !==
             JSON.stringify(serverThread.modelSelection.options ?? null))
       ) {
@@ -2419,9 +2437,12 @@ export default function ChatView(props: ChatViewProps) {
       const threadIdForSend = activeThread.id;
       const messageIdForSend = newMessageId();
       const messageCreatedAt = new Date().toISOString();
-      const provider = queuedTurn.modelSelection.provider;
+      const providerInstance = providerStatuses.find(
+        (status) => status.instanceId === queuedTurn.modelSelection.instanceId,
+      );
+      const provider = providerInstance?.driver ?? ProviderDriverKind.make("codex");
       const providerModel = queuedTurn.modelSelection.model;
-      const providerModels = getProviderModels(providerStatuses, provider);
+      const providerModels = providerInstance?.models ?? [];
       const messageTextForSend = appendTerminalContextsToPrompt(
         queuedTurn.text,
         queuedTurn.terminalContexts,
@@ -2844,16 +2865,13 @@ export default function ChatView(props: ChatViewProps) {
         }
       }
       const title = truncate(titleSeed);
-      const threadCreateModelSelection: ModelSelection = {
-        provider: ctxSelectedProvider,
-        model:
-          ctxSelectedModel ||
-          activeProject.defaultModelSelection?.model ||
-          DEFAULT_MODEL_BY_PROVIDER.codex,
-        ...(ctxSelectedModelSelection.options
-          ? { options: ctxSelectedModelSelection.options }
-          : {}),
-      };
+      const selectedInstanceId =
+        ctxSelectedModelSelection.instanceId ?? ProviderInstanceId.make("codex");
+      const threadCreateModelSelection: ModelSelection = createModelSelection(
+        ProviderInstanceId.make(selectedInstanceId),
+        ctxSelectedModel || activeProject.defaultModelSelection?.model || DEFAULT_MODEL,
+        ctxSelectedModelSelection.options,
+      );
 
       // Auto-title from first message
       if (isFirstThreadMessage && isServerThread) {
@@ -3477,21 +3495,43 @@ export default function ChatView(props: ChatViewProps) {
   ]);
 
   const onProviderModelSelect = useCallback(
-    (provider: ProviderKind, model: string) => {
+    (instanceId: ProviderInstanceId, model: string) => {
       if (!activeThread) return;
-      if (lockedProvider !== null && provider !== lockedProvider) {
+      const entry = providerStatuses.find((snapshot) => snapshot.instanceId === instanceId);
+      const resolvedDriverKind = entry?.driver ?? null;
+      if (
+        lockedProvider !== null &&
+        resolvedDriverKind !== null &&
+        resolvedDriverKind !== lockedProvider
+      ) {
         scheduleComposerFocus();
         return;
       }
-      const resolvedProvider = resolveSelectableProvider(providerStatuses, provider);
-      const resolvedModel = resolveAppModelSelection(
-        resolvedProvider,
+      if (lockedProvider !== null && activeThread.session?.providerInstanceId) {
+        const currentEntry = providerStatuses.find(
+          (snapshot) => snapshot.instanceId === activeThread.session?.providerInstanceId,
+        );
+        if (
+          currentEntry?.continuation?.groupKey &&
+          entry?.continuation?.groupKey &&
+          currentEntry.continuation.groupKey !== entry.continuation.groupKey
+        ) {
+          scheduleComposerFocus();
+          return;
+        }
+      }
+      const resolvedModel = resolveAppModelSelectionForInstance(
+        instanceId,
         settings,
         providerStatuses,
         model,
       );
+      if (!resolvedModel) {
+        scheduleComposerFocus();
+        return;
+      }
       const nextModelSelection: ModelSelection = {
-        provider: resolvedProvider,
+        instanceId,
         model: resolvedModel,
       };
       setComposerDraftModelSelection(
@@ -3764,6 +3804,8 @@ export default function ChatView(props: ChatViewProps) {
               activeThreadActivities={activeThread?.activities}
               resolvedTheme={resolvedTheme}
               settings={settings}
+              keybindings={keybindings}
+              terminalOpen={Boolean(terminalState.terminalOpen)}
               gitCwd={gitCwd}
               promptRef={promptRef}
               composerImagesRef={composerImagesRef}
@@ -3866,6 +3908,7 @@ export default function ChatView(props: ChatViewProps) {
           threadRef={mountedThreadRef}
           threadId={mountedThreadRef.threadId}
           visible={mountedThreadKey === activeThreadKey && terminalState.terminalOpen}
+          keybindings={keybindings}
           launchContext={
             mountedThreadKey === activeThreadKey ? (activeTerminalLaunchContext ?? null) : null
           }
