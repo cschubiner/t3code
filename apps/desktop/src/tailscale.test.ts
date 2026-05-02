@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createTailscaleRemoteAccessHelpers } from "./tailscale";
+import { createTailscaleRemoteAccessHelpers } from "./tailscale.js";
 
 describe("tailscale remote access helpers", () => {
   const runCommand = vi.fn<(args: readonly string[]) => Promise<string>>();

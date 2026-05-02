@@ -253,6 +253,9 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // no longer transitively provides it. Exposing it at the runtime level
   // keeps a single Live for all opencode consumers.
   Layer.provideMerge(OpenCodeRuntimeLive),
+);
+
+const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   Layer.provideMerge(ServerSettingsLive),
   Layer.provideMerge(SnippetRepositoryLive),
   Layer.provideMerge(CodexImportLive),
