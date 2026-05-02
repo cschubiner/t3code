@@ -47,7 +47,7 @@ import type {
   SnippetCreateResult,
   SnippetDeleteInput,
   SnippetListResult,
-} from "./snippets";
+} from "./snippets.ts";
 import type {
   CodexImportImportSessionsInput,
   CodexImportImportSessionsResult,
@@ -55,7 +55,7 @@ import type {
   CodexImportPeekSessionInput,
   CodexImportPeekSessionResult,
   CodexImportSessionSummary,
-} from "./codexImport";
+} from "./codexImport.ts";
 import type { SkillSearchInput, SkillSearchResult } from "./skills.ts";
 import type {
   ClientOrchestrationCommand,

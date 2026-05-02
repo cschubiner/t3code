@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { readTailnetInfo } from "./tailnetInfo";
+import { readTailnetInfo } from "./tailnetInfo.js";
 
 describe("readTailnetInfo", () => {
   it("returns unavailable when the tailscale binary is missing", async () => {

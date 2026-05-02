@@ -820,7 +820,6 @@ export default function ChatView(props: ChatViewProps) {
   );
   const enqueueQueuedTurn = useQueuedTurnStore((store) => store.enqueue);
   const removeQueuedTurnById = useQueuedTurnStore((store) => store.removeById);
-  const popNextQueuedTurn = useQueuedTurnStore((store) => store.popNext);
   const replaceQueuedTurnText = useQueuedTurnStore((store) => store.replaceText);
   const clearQueuedTurnsForThread = useQueuedTurnStore((store) => store.clearThread);
 

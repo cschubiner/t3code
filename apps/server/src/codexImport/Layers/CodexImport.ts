@@ -223,17 +223,15 @@ const makeCodexImport = Effect.sync((): CodexImportShape => {
       });
       const match = rollouts.find((r) => r.sessionId === input.sessionId);
       if (!match) {
-        return yield* Effect.fail(
-          new CodexImportError({ message: `Codex session not found: ${input.sessionId}` }),
-        );
+        return yield* new CodexImportError({
+          message: `Codex session not found: ${input.sessionId}`,
+        });
       }
       const loaded = yield* Effect.promise(() => loadTranscript(match.filePath));
       if ("error" in loaded) {
-        return yield* Effect.fail(
-          new CodexImportError({
-            message: `Failed to read ${match.filePath}: ${loaded.error}`,
-          }),
-        );
+        return yield* new CodexImportError({
+          message: `Failed to read ${match.filePath}: ${loaded.error}`,
+        });
       }
       const parsed = loaded.parsed;
       const messageCount = input.messageCount ?? DEFAULT_PEEK_MESSAGE_COUNT;
