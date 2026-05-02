@@ -33,10 +33,16 @@ Issues found and fixed during this QA pass:
 - Disconnect/reconnect toast copy still hardcoded `T3 Server`; fixed to use `ClayCode Server` via `APP_BASE_NAME`.
 - Electron launcher attempted the renamed launcher path during local start; fixed by only using the renamed launcher when `T3CODE_USE_RENAMED_ELECTRON_LAUNCHER=1`.
 
+Additional gap QA performed after the final Electron session:
+
+- Verified GitHub PR pill rendering in Electron with a local project on branch `codex/fake-pr-qa`, a fake GitHub remote, a local upstream tracking ref, and a temporary fake `gh` shim that returned open PR `#4242`. The header action changed to `View PR`, and the sidebar thread row exposed `#4242 PR open: QA fake PR pill`.
+- Verified disconnect state in Electron by repeatedly killing the embedded server process. The visible toast and accessibility tree both showed `Disconnected from ClayCode Server`, retry countdown text, and a `Retry now` button.
+- Found and fixed a reconnect-success edge case: the success toast could be skipped if WebSocket recovery passed through an intermediate `connecting` state before `connected`. The recovered toast now keys off a remembered prior disconnect timestamp instead of only the immediate previous UI state.
+- Rebuilt and relaunched Electron from the patched branch, repeated the server-kill recovery test, and visually verified `Reconnected to ClayCode Server` with the disconnect/reconnect timestamps.
+
 Residual risks / not fully re-exercised manually:
 
-- I killed the desktop backend after the toast-copy fix, but the UI did not surface a disconnect toast before shutdown; the copy fix is code-reviewed and included in the rebuilt app, but that specific toast title was not visually observed after the fix.
-- GitHub PR pills were not live-verified against a real GitHub PR in this final Electron session; earlier browser/component coverage remains the confidence source for that feature.
+- GitHub PR pills were verified with a controlled local `gh` shim rather than a live GitHub API response, so the UI path is covered but live credential/network behavior remains dependent on the real `gh` environment.
 
 Automated gates to run after this artifact:
 

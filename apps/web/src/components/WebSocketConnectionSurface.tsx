@@ -121,6 +121,18 @@ export function shouldRestartStalledReconnect(
   );
 }
 
+export function shouldShowRecoveredToast(
+  status: WsConnectionStatus,
+  previousDisconnectedAt: string | null,
+): boolean {
+  return (
+    getWsConnectionUiState(status) === "connected" &&
+    status.hasConnected &&
+    status.disconnectedAt === null &&
+    previousDisconnectedAt !== null
+  );
+}
+
 export function WebSocketConnectionCoordinator() {
   const status = useWsConnectionStatus();
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -242,7 +254,6 @@ export function WebSocketConnectionCoordinator() {
 
   useEffect(() => {
     const uiState = getWsConnectionUiState(status);
-    const previousUiState = previousUiStateRef.current;
     const previousDisconnectedAt = previousDisconnectedAtRef.current;
     const shouldShowReconnectToast = status.hasConnected && uiState === "reconnecting";
     const shouldShowOfflineToast = uiState === "offline" && status.disconnectedAt !== null;
@@ -308,11 +319,7 @@ export function WebSocketConnectionCoordinator() {
       toastIdRef.current = null;
     }
 
-    if (
-      uiState === "connected" &&
-      (previousUiState === "offline" || previousUiState === "reconnecting") &&
-      previousDisconnectedAt !== null
-    ) {
+    if (shouldShowRecoveredToast(status, previousDisconnectedAt)) {
       const successToast = {
         description: describeRecoveredToast(previousDisconnectedAt, status.connectedAt),
         title: `Reconnected to ${appServerName()}`,
