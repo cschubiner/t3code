@@ -77,6 +77,18 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedSnippetsOpen.command, "snippets.open");
 
+    const parsedSidebarThreadNext = yield* decode(KeybindingRule, {
+      key: "alt+arrowdown",
+      command: "sidebar.thread.next",
+    });
+    assert.strictEqual(parsedSidebarThreadNext.command, "sidebar.thread.next");
+
+    const parsedSidebarProjectPrevious = yield* decode(KeybindingRule, {
+      key: "alt+shift+arrowup",
+      command: "sidebar.project.previous",
+    });
+    assert.strictEqual(parsedSidebarProjectPrevious.command, "sidebar.project.previous");
+
     const parsedThreadPrevious = yield* decode(KeybindingRule, {
       key: "mod+shift+[",
       command: "thread.previous",

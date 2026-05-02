@@ -193,6 +193,10 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       assert.equal(defaultsByCommand.get("thread.jump.1"), "mod+1");
       assert.equal(defaultsByCommand.get("thread.jump.9"), "mod+9");
       assert.equal(defaultsByCommand.get("sidebar.rename"), "mod+shift+r");
+      assert.equal(defaultsByCommand.get("sidebar.thread.previous"), "alt+arrowup");
+      assert.equal(defaultsByCommand.get("sidebar.thread.next"), "alt+arrowdown");
+      assert.equal(defaultsByCommand.get("sidebar.project.previous"), "alt+shift+arrowup");
+      assert.equal(defaultsByCommand.get("sidebar.project.next"), "alt+shift+arrowdown");
     }),
   );
 

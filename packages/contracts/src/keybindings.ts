@@ -45,6 +45,10 @@ const STATIC_KEYBINDING_COMMANDS = [
   "sidebar.history.previous",
   "sidebar.history.next",
   "sidebar.rename",
+  "sidebar.thread.previous",
+  "sidebar.thread.next",
+  "sidebar.project.previous",
+  "sidebar.project.next",
   ...THREAD_KEYBINDING_COMMANDS,
 ] as const;
 

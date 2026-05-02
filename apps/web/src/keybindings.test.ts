@@ -20,6 +20,7 @@ import {
   isTerminalSplitShortcut,
   isTerminalToggleShortcut,
   resolveShortcutCommand,
+  sidebarProjectTraversalDirectionFromCommand,
   shouldShowThreadJumpHints,
   shortcutLabelForCommand,
   terminalDeleteShortcutData,
@@ -52,6 +53,21 @@ function modShortcut(
     shiftKey: false,
     altKey: false,
     modKey: true,
+    ...overrides,
+  };
+}
+
+function shortcut(
+  key: string,
+  overrides: Partial<Omit<KeybindingShortcut, "key">> = {},
+): KeybindingShortcut {
+  return {
+    key,
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    altKey: false,
+    modKey: false,
     ...overrides,
   };
 }
@@ -117,6 +133,16 @@ const DEFAULT_BINDINGS = compile([
   { shortcut: modShortcut("s", { shiftKey: true }), command: "snippets.open" },
   { shortcut: modShortcut("k", { shiftKey: true }), command: "skills.open" },
   { shortcut: modShortcut("r", { shiftKey: true }), command: "sidebar.rename" },
+  { shortcut: shortcut("arrowup", { altKey: true }), command: "sidebar.thread.previous" },
+  { shortcut: shortcut("arrowdown", { altKey: true }), command: "sidebar.thread.next" },
+  {
+    shortcut: shortcut("arrowup", { altKey: true, shiftKey: true }),
+    command: "sidebar.project.previous",
+  },
+  {
+    shortcut: shortcut("arrowdown", { altKey: true, shiftKey: true }),
+    command: "sidebar.project.next",
+  },
   { shortcut: modShortcut("o"), command: "editor.openFavorite" },
   { shortcut: modShortcut("[", { shiftKey: true }), command: "thread.previous" },
   { shortcut: modShortcut("]", { shiftKey: true }), command: "thread.next" },
@@ -368,8 +394,20 @@ describe("thread navigation helpers", () => {
   it("maps traversal commands to directions", () => {
     assert.strictEqual(threadTraversalDirectionFromCommand("thread.previous"), "previous");
     assert.strictEqual(threadTraversalDirectionFromCommand("thread.next"), "next");
+    assert.strictEqual(threadTraversalDirectionFromCommand("sidebar.thread.previous"), "previous");
+    assert.strictEqual(threadTraversalDirectionFromCommand("sidebar.thread.next"), "next");
     assert.isNull(threadTraversalDirectionFromCommand("thread.jump.1"));
     assert.isNull(threadTraversalDirectionFromCommand(null));
+  });
+
+  it("maps sidebar project traversal commands to directions", () => {
+    assert.strictEqual(
+      sidebarProjectTraversalDirectionFromCommand("sidebar.project.previous"),
+      "previous",
+    );
+    assert.strictEqual(sidebarProjectTraversalDirectionFromCommand("sidebar.project.next"), "next");
+    assert.isNull(sidebarProjectTraversalDirectionFromCommand("sidebar.thread.next"));
+    assert.isNull(sidebarProjectTraversalDirectionFromCommand(null));
   });
 
   it("shows jump hints only when configured modifiers match", () => {
@@ -448,12 +486,40 @@ describe("chat/editor shortcuts", () => {
     );
   });
 
+  it("resolves macOS option-modified search shortcuts from the physical key code", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "ƒ", code: "KeyF", metaKey: true, altKey: true }),
+        DEFAULT_BINDINGS,
+        {
+          platform: "MacIntel",
+          context: { terminalFocus: false },
+        },
+      ),
+      "threads.searchAll",
+    );
+  });
+
   it("resolves projects.search from the default shortcut", () => {
     assert.strictEqual(
       resolveShortcutCommand(event({ key: "p", metaKey: true, altKey: true }), DEFAULT_BINDINGS, {
         platform: "MacIntel",
         context: { terminalFocus: false },
       }),
+      "projects.search",
+    );
+  });
+
+  it("resolves macOS option-modified project search shortcuts from the physical key code", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "π", code: "KeyP", metaKey: true, altKey: true }),
+        DEFAULT_BINDINGS,
+        {
+          platform: "MacIntel",
+          context: { terminalFocus: false },
+        },
+      ),
       "projects.search",
     );
   });
@@ -465,6 +531,27 @@ describe("chat/editor shortcuts", () => {
         context: { terminalFocus: false },
       }),
       "sidebar.rename",
+    );
+  });
+
+  it("resolves sidebar row traversal shortcuts", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "ArrowDown", altKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "sidebar.thread.next",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "ArrowUp", altKey: true, shiftKey: true }),
+        DEFAULT_BINDINGS,
+        {
+          platform: "MacIntel",
+          context: { terminalFocus: false },
+        },
+      ),
+      "sidebar.project.previous",
     );
   });
 

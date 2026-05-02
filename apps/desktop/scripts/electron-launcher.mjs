@@ -206,5 +206,13 @@ export function resolveElectronPath() {
     return electronBinaryPath;
   }
 
+  // The renamed wrapper is useful for checking macOS menu/app labels, but
+  // copying Electron.app out of package-manager storage can break helper
+  // resource lookup. Keep local dev launches on Electron's raw binary unless
+  // we explicitly need to exercise the wrapper.
+  if (process.env.T3CODE_USE_RENAMED_ELECTRON_LAUNCHER !== "1") {
+    return electronBinaryPath;
+  }
+
   return buildMacLauncher(electronBinaryPath);
 }

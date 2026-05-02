@@ -19,6 +19,7 @@ import {
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
+  resolveSidebarProjectNavigationTarget,
   resolveThreadSidebarRepositoryCwds,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
@@ -426,6 +427,59 @@ describe("resolveAdjacentThreadId", () => {
       resolveAdjacentThreadId({
         threadIds: threads,
         currentThreadId: threads[0] ?? null,
+        direction: "previous",
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("resolveSidebarProjectNavigationTarget", () => {
+  const projects = [
+    { projectKey: "project-a", threadKeys: ["thread-a1", "thread-a2"] },
+    { projectKey: "project-empty", threadKeys: [] },
+    { projectKey: "project-b", threadKeys: ["thread-b1"] },
+    { projectKey: "project-c", threadKeys: ["thread-c1"] },
+  ] as const;
+
+  it("targets the first thread in the next navigable project", () => {
+    expect(
+      resolveSidebarProjectNavigationTarget({
+        projects,
+        currentProjectKey: "project-a",
+        currentThreadKey: "thread-a2",
+        direction: "next",
+      }),
+    ).toEqual({ projectKey: "project-b", threadKey: "thread-b1" });
+  });
+
+  it("targets the first thread in the previous navigable project", () => {
+    expect(
+      resolveSidebarProjectNavigationTarget({
+        projects,
+        currentProjectKey: "project-c",
+        currentThreadKey: "thread-c1",
+        direction: "previous",
+      }),
+    ).toEqual({ projectKey: "project-b", threadKey: "thread-b1" });
+  });
+
+  it("infers the current project from the active thread when needed", () => {
+    expect(
+      resolveSidebarProjectNavigationTarget({
+        projects,
+        currentProjectKey: null,
+        currentThreadKey: "thread-a2",
+        direction: "next",
+      }),
+    ).toEqual({ projectKey: "project-b", threadKey: "thread-b1" });
+  });
+
+  it("returns null when traversal would leave the project list", () => {
+    expect(
+      resolveSidebarProjectNavigationTarget({
+        projects,
+        currentProjectKey: "project-a",
+        currentThreadKey: "thread-a1",
         direction: "previous",
       }),
     ).toBeNull();

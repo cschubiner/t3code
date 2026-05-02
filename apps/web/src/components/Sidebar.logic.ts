@@ -461,6 +461,52 @@ export function resolveAdjacentThreadId<T>(input: {
   return currentIndex < threadIds.length - 1 ? (threadIds[currentIndex + 1] ?? null) : null;
 }
 
+export function resolveSidebarProjectNavigationTarget<TProjectKey, TThreadKey>(input: {
+  projects: readonly {
+    projectKey: TProjectKey;
+    threadKeys: readonly TThreadKey[];
+  }[];
+  currentProjectKey: TProjectKey | null;
+  currentThreadKey: TThreadKey | null;
+  direction: ThreadTraversalDirection;
+}): { projectKey: TProjectKey; threadKey: TThreadKey } | null {
+  const navigableProjects = input.projects.filter((project) => project.threadKeys.length > 0);
+  if (navigableProjects.length === 0) {
+    return null;
+  }
+
+  const inferredCurrentProjectKey =
+    input.currentProjectKey ??
+    navigableProjects.find((project) =>
+      input.currentThreadKey === null ? false : project.threadKeys.includes(input.currentThreadKey),
+    )?.projectKey ??
+    null;
+
+  if (inferredCurrentProjectKey === null) {
+    const fallbackProject =
+      input.direction === "previous" ? navigableProjects.at(-1) : navigableProjects[0];
+    const fallbackThreadKey = fallbackProject?.threadKeys[0];
+    return fallbackProject && fallbackThreadKey
+      ? { projectKey: fallbackProject.projectKey, threadKey: fallbackThreadKey }
+      : null;
+  }
+
+  const currentProjectIndex = navigableProjects.findIndex(
+    (project) => project.projectKey === inferredCurrentProjectKey,
+  );
+  if (currentProjectIndex === -1) {
+    return null;
+  }
+
+  const targetProjectIndex =
+    input.direction === "previous" ? currentProjectIndex - 1 : currentProjectIndex + 1;
+  const targetProject = navigableProjects[targetProjectIndex];
+  const targetThreadKey = targetProject?.threadKeys[0];
+  return targetProject && targetThreadKey
+    ? { projectKey: targetProject.projectKey, threadKey: targetThreadKey }
+    : null;
+}
+
 export function isContextMenuPointerDown(input: {
   button: number;
   ctrlKey: boolean;

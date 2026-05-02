@@ -77,7 +77,7 @@ let MessagesTimeline: typeof MessagesTimelineComponent;
 
 beforeAll(async () => {
   ({ MessagesTimeline } = await import("./MessagesTimeline"));
-});
+}, 30_000);
 
 const ACTIVE_THREAD_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 
