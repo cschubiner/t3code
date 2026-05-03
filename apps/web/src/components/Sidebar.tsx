@@ -3240,13 +3240,7 @@ export default function Sidebar() {
         platform,
         context: shortcutContext,
       });
-      const isSidebarNavigationCommand =
-        command === "sidebar.thread.previous" ||
-        command === "sidebar.thread.next" ||
-        command === "sidebar.project.previous" ||
-        command === "sidebar.project.next" ||
-        command === "sidebar.rename";
-      if (isSidebarNavigationCommand && isTextEntryTarget(event.target)) {
+      if (command === "sidebar.rename" && isTextEntryTarget(event.target)) {
         return;
       }
       if (command === "sidebar.history.previous") {

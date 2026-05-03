@@ -54,6 +54,8 @@ const STATIC_KEYBINDING_COMMANDS = [
   "terminal.close",
   "diff.toggle",
   "commandPalette.toggle",
+  "thread.search",
+  "projects.search",
   "chat.new",
   "chat.newLocal",
   "chat.branchSelector.focus",

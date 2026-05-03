@@ -113,6 +113,16 @@ const DEFAULT_BINDINGS = compile([
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
   {
+    shortcut: modShortcut("f"),
+    command: "thread.search",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
+    shortcut: modShortcut("k", { shiftKey: true }),
+    command: "projects.search",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
     shortcut: modShortcut("m", { shiftKey: true }),
     command: "modelPicker.toggle",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
@@ -546,6 +556,29 @@ describe("chat/editor shortcuts", () => {
         context: { terminalFocus: true },
       }),
       "commandPalette.toggle",
+    );
+  });
+
+  it("matches direct search shortcuts outside terminal focus", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "f", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "thread.search",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "k", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "projects.search",
+    );
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "f", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
     );
   });
 
