@@ -943,13 +943,13 @@ export default function ChatView(props: ChatViewProps) {
   const queueAutoDispatchInFlightRef = useRef(false);
   const queuePendingCommitRef = useRef<string | null>(null);
 
-  // ---- Snippet picker (cmd+; / ctrl+;) ----
+  // ---- Snippet picker (cmd+shift+s / ctrl+shift+s, cmd+; / ctrl+;) ----
   const [snippetPickerOpen, setSnippetPickerOpen] = useState(false);
   const [snippetPickerFocusRequest, setSnippetPickerFocusRequest] = useState(0);
   const [deletingSnippetId, setDeletingSnippetId] = useState<SnippetId | null>(null);
   // ---- Codex import (cmd+shift+I / ctrl+shift+I) ----
   const [codexImportDialogOpen, setCodexImportDialogOpen] = useState(false);
-  // ---- Skill picker (cmd+shift+K / ctrl+shift+K) ----
+  // ---- Skill picker (cmd+shift+l / ctrl+shift+l) ----
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
   const [skillPickerFocusRequest, setSkillPickerFocusRequest] = useState(0);
   const [branchSelectorFocusRequest, setBranchSelectorFocusRequest] = useState(0);
@@ -3029,7 +3029,7 @@ export default function ChatView(props: ChatViewProps) {
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, []);
 
-  // ---- Global shortcut: open Skills picker ----
+  // ---- Global shortcuts: open snippets / Skills picker ----
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.repeat) return;
@@ -3040,9 +3040,14 @@ export default function ChatView(props: ChatViewProps) {
           modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,
         },
       });
-      if (command !== "skills.open") return;
+      if (command !== "skills.open" && command !== "snippets.open") return;
       event.preventDefault();
       event.stopPropagation();
+      if (command === "snippets.open") {
+        setSnippetPickerFocusRequest((previous) => previous + 1);
+        setSnippetPickerOpen(true);
+        return;
+      }
       setSkillPickerFocusRequest((previous) => previous + 1);
       setSkillPickerOpen(true);
     };

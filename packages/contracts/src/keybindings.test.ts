@@ -77,8 +77,14 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedEnvModeToggle.command, "chat.envMode.toggle");
 
-    const parsedSkillsOpen = yield* decode(KeybindingRule, {
+    const parsedSnippetsOpen = yield* decode(KeybindingRule, {
       key: "mod+shift+s",
+      command: "snippets.open",
+    });
+    assert.strictEqual(parsedSnippetsOpen.command, "snippets.open");
+
+    const parsedSkillsOpen = yield* decode(KeybindingRule, {
+      key: "mod+shift+l",
       command: "skills.open",
     });
     assert.strictEqual(parsedSkillsOpen.command, "skills.open");

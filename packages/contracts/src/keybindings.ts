@@ -61,6 +61,7 @@ const STATIC_KEYBINDING_COMMANDS = [
   "chat.newLocal",
   "chat.branchSelector.focus",
   "chat.envMode.toggle",
+  "snippets.open",
   "skills.open",
   "editor.openFavorite",
   ...MODEL_PICKER_KEYBINDING_COMMANDS,

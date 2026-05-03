@@ -141,6 +141,11 @@ const DEFAULT_BINDINGS = compile([
   },
   {
     shortcut: modShortcut("s", { shiftKey: true }),
+    command: "snippets.open",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
+    shortcut: modShortcut("l", { shiftKey: true }),
     command: "skills.open",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
@@ -620,16 +625,32 @@ describe("chat/editor shortcuts", () => {
     );
   });
 
-  it("matches skills picker shortcut outside terminal focus", () => {
+  it("matches snippets shortcut outside terminal focus", () => {
     assert.strictEqual(
       resolveShortcutCommand(event({ key: "s", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "snippets.open",
+    );
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "s", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+    );
+  });
+
+  it("matches skills picker shortcut outside terminal focus", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "l", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
         platform: "MacIntel",
         context: { terminalFocus: false },
       }),
       "skills.open",
     );
     assert.isNull(
-      resolveShortcutCommand(event({ key: "s", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+      resolveShortcutCommand(event({ key: "l", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
         platform: "MacIntel",
         context: { terminalFocus: true },
       }),
