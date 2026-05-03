@@ -35,7 +35,7 @@ import {
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
 import { Debouncer } from "@tanstack/react-pacer";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useShallow } from "zustand/react/shallow";
 import { useGitStatus } from "~/lib/gitStatusState";
@@ -104,7 +104,7 @@ import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronUpIcon, SearchIcon, XIcon } from "lucide-react";
 import { cn, randomUUID } from "~/lib/utils";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
@@ -152,6 +152,10 @@ import { ImportFromCodexDialog } from "./ImportFromCodexDialog";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
+import {
+  buildThreadMessageSearchMatches,
+  type ThreadMessageSearchMatch,
+} from "./threadMessageSearch.logic";
 import { ChatHeader } from "./chat/ChatHeader";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
@@ -328,6 +332,98 @@ function formatOutgoingPrompt(params: {
 function isComposerFormTarget(target: EventTarget | null): boolean {
   return (
     target instanceof HTMLElement && target.closest('[data-chat-composer-form="true"]') !== null
+  );
+}
+
+function ThreadMessageSearchBar({
+  inputRef,
+  query,
+  matches,
+  activeIndex,
+  activeMatch,
+  onQueryChange,
+  onNext,
+  onPrevious,
+  onClose,
+}: {
+  inputRef: RefObject<HTMLInputElement | null>;
+  query: string;
+  matches: ReadonlyArray<ThreadMessageSearchMatch>;
+  activeIndex: number;
+  activeMatch: ThreadMessageSearchMatch | null;
+  onQueryChange: (query: string) => void;
+  onNext: () => void;
+  onPrevious: () => void;
+  onClose: () => void;
+}) {
+  const hasQuery = query.trim().length > 0;
+  const statusLabel = !hasQuery
+    ? "Search messages"
+    : matches.length === 0
+      ? "No matches"
+      : `${Math.min(activeIndex + 1, matches.length)} / ${matches.length}`;
+
+  return (
+    <div className="absolute right-4 top-3 z-40 w-[min(28rem,calc(100%-2rem))] rounded-lg border border-border bg-popover p-2 text-popover-foreground shadow-lg">
+      <div className="flex min-w-0 items-center gap-2">
+        <SearchIcon className="size-4 shrink-0 text-muted-foreground" />
+        <input
+          ref={inputRef}
+          type="search"
+          value={query}
+          onChange={(event) => onQueryChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              onClose();
+              return;
+            }
+            if (event.key === "Enter") {
+              event.preventDefault();
+              if (event.shiftKey) {
+                onPrevious();
+              } else {
+                onNext();
+              }
+            }
+          }}
+          placeholder="Search messages"
+          className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+        />
+        <span className="shrink-0 text-muted-foreground text-xs tabular-nums">{statusLabel}</span>
+        <button
+          type="button"
+          aria-label="Previous match"
+          disabled={matches.length === 0}
+          onClick={onPrevious}
+          className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground disabled:cursor-default disabled:opacity-40"
+        >
+          <ChevronUpIcon className="size-4" />
+        </button>
+        <button
+          type="button"
+          aria-label="Next match"
+          disabled={matches.length === 0}
+          onClick={onNext}
+          className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground disabled:cursor-default disabled:opacity-40"
+        >
+          <ChevronDownIcon className="size-4" />
+        </button>
+        <button
+          type="button"
+          aria-label="Close message search"
+          onClick={onClose}
+          className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+        >
+          <XIcon className="size-4" />
+        </button>
+      </div>
+      {activeMatch && (
+        <div className="mt-1 truncate pl-6 text-muted-foreground text-xs">
+          {activeMatch.role === "user" ? "You" : "Assistant"}: {activeMatch.preview}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -685,6 +781,10 @@ export default function ChatView(props: ChatViewProps) {
   const composerRef = useComposerHandleContext() ?? localComposerRef;
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
+  const [threadSearchOpen, setThreadSearchOpen] = useState(false);
+  const [threadSearchQuery, setThreadSearchQuery] = useState("");
+  const [threadSearchActiveIndex, setThreadSearchActiveIndex] = useState(0);
+  const threadSearchInputRef = useRef<HTMLInputElement | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
   optimisticUserMessagesRef.current = optimisticUserMessages;
@@ -1433,6 +1533,16 @@ export default function ChatView(props: ChatViewProps) {
       deriveTimelineEntries(timelineMessages, activeThread?.proposedPlans ?? [], workLogEntries),
     [activeThread?.proposedPlans, timelineMessages, workLogEntries],
   );
+  const threadSearchMatches = useMemo(
+    () => buildThreadMessageSearchMatches(timelineEntries, threadSearchQuery),
+    [threadSearchQuery, timelineEntries],
+  );
+  const activeThreadSearchMatch =
+    threadSearchOpen && threadSearchMatches.length > 0
+      ? (threadSearchMatches[Math.min(threadSearchActiveIndex, threadSearchMatches.length - 1)] ??
+        null)
+      : null;
+  const activeSearchMessageId = activeThreadSearchMatch?.messageId ?? null;
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
   const turnDiffSummaryByAssistantMessageId = useMemo(() => {
@@ -2098,6 +2208,9 @@ export default function ChatView(props: ChatViewProps) {
 
   useEffect(() => {
     setPullRequestDialogState(null);
+    setThreadSearchOpen(false);
+    setThreadSearchQuery("");
+    setThreadSearchActiveIndex(0);
     isAtEndRef.current = true;
     showScrollDebouncer.current.cancel();
     setShowScrollToBottom(false);
@@ -2110,6 +2223,49 @@ export default function ChatView(props: ChatViewProps) {
     }
     planSidebarDismissedForTurnRef.current = null;
   }, [activeThread?.id]);
+
+  useEffect(() => {
+    if (!threadSearchOpen) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      threadSearchInputRef.current?.focus({ preventScroll: true });
+      threadSearchInputRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [threadSearchOpen]);
+
+  useEffect(() => {
+    if (threadSearchMatches.length === 0) {
+      setThreadSearchActiveIndex(0);
+      return;
+    }
+    setThreadSearchActiveIndex((index) => Math.min(index, threadSearchMatches.length - 1));
+  }, [threadSearchMatches.length]);
+
+  useEffect(() => {
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (!activeThread || event.defaultPrevented || useCommandPaletteStore.getState().open) {
+        return;
+      }
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: {
+          terminalFocus: isTerminalFocused(),
+          terminalOpen: Boolean(terminalState.terminalOpen),
+          modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,
+        },
+      });
+      if (command !== "thread.search") {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      setThreadSearchOpen(true);
+    };
+
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [activeThread, composerRef, keybindings, terminalState.terminalOpen]);
 
   // Auto-open the plan sidebar when plan/todo steps arrive for the current turn.
   // Don't auto-open for plans carried over from a previous turn (the user can open manually).
@@ -3635,6 +3791,18 @@ export default function ChatView(props: ChatViewProps) {
     }
     void onRevertToTurnCountRef.current(targetTurnCount);
   }, []);
+  const goToNextThreadSearchMatch = useCallback(() => {
+    setThreadSearchActiveIndex((index) =>
+      threadSearchMatches.length === 0 ? 0 : (index + 1) % threadSearchMatches.length,
+    );
+  }, [threadSearchMatches.length]);
+  const goToPreviousThreadSearchMatch = useCallback(() => {
+    setThreadSearchActiveIndex((index) =>
+      threadSearchMatches.length === 0
+        ? 0
+        : (index - 1 + threadSearchMatches.length) % threadSearchMatches.length,
+    );
+  }, [threadSearchMatches.length]);
 
   // Empty state: no active thread
   if (!activeThread) {
@@ -3697,6 +3865,27 @@ export default function ChatView(props: ChatViewProps) {
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {/* Messages Wrapper */}
           <div className="relative flex min-h-0 flex-1 flex-col">
+            {threadSearchOpen && (
+              <ThreadMessageSearchBar
+                inputRef={threadSearchInputRef}
+                query={threadSearchQuery}
+                matches={threadSearchMatches}
+                activeIndex={threadSearchActiveIndex}
+                activeMatch={activeThreadSearchMatch}
+                onQueryChange={(query) => {
+                  setThreadSearchQuery(query);
+                  setThreadSearchActiveIndex(0);
+                }}
+                onNext={goToNextThreadSearchMatch}
+                onPrevious={goToPreviousThreadSearchMatch}
+                onClose={() => {
+                  setThreadSearchOpen(false);
+                  setThreadSearchQuery("");
+                  setThreadSearchActiveIndex(0);
+                  scheduleComposerFocus();
+                }}
+              />
+            )}
             {/* Messages — LegendList handles virtualization and scrolling internally */}
             <MessagesTimeline
               key={activeThread.id}
@@ -3721,6 +3910,7 @@ export default function ChatView(props: ChatViewProps) {
               timestampFormat={timestampFormat}
               workspaceRoot={activeWorkspaceRoot}
               onIsAtEndChange={onIsAtEndChange}
+              activeSearchMessageId={activeSearchMessageId}
             />
 
             {/* scroll to bottom pill — shown when user has scrolled away from the bottom */}

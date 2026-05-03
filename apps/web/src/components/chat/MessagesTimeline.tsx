@@ -114,6 +114,7 @@ interface MessagesTimelineProps {
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
   onIsAtEndChange: (isAtEnd: boolean) => void;
+  activeSearchMessageId: MessageId | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -142,6 +143,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   timestampFormat,
   workspaceRoot,
   onIsAtEndChange,
+  activeSearchMessageId,
 }: MessagesTimelineProps) {
   const rawRows = useMemo(
     () =>
@@ -163,6 +165,19 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     ],
   );
   const rows = useStableRows(rawRows);
+
+  useEffect(() => {
+    if (activeSearchMessageId === null) {
+      return;
+    }
+    const index = rows.findIndex(
+      (row) => row.kind === "message" && row.message.id === activeSearchMessageId,
+    );
+    if (index === -1) {
+      return;
+    }
+    void listRef.current?.scrollToIndex?.({ index, animated: true, viewPosition: 0.35 });
+  }, [activeSearchMessageId, listRef, rows]);
 
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
@@ -231,10 +246,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const renderItem = useCallback(
     ({ item }: { item: MessagesTimelineRow }) => (
       <div className="mx-auto w-full min-w-0 max-w-3xl overflow-x-hidden" data-timeline-root="true">
-        <TimelineRowContent row={item} />
+        <TimelineRowContent activeSearchMessageId={activeSearchMessageId} row={item} />
       </div>
     ),
-    [],
+    [activeSearchMessageId],
   );
 
   if (rows.length === 0 && !isWorking) {
@@ -281,14 +296,25 @@ type TimelineMessage = Extract<TimelineEntry, { kind: "message" }>["message"];
 type TimelineWorkEntry = Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"][number];
 type TimelineRow = MessagesTimelineRow;
 
-function TimelineRowContent({ row }: { row: TimelineRow }) {
+function TimelineRowContent({
+  row,
+  activeSearchMessageId,
+}: {
+  row: TimelineRow;
+  activeSearchMessageId: MessageId | null;
+}) {
   const ctx = use(TimelineRowCtx);
+  const isActiveSearchMatch =
+    row.kind === "message" &&
+    activeSearchMessageId !== null &&
+    row.message.id === activeSearchMessageId;
 
   return (
     <div
       className={cn(
         "pb-4",
         row.kind === "message" && row.message.role === "assistant" ? "group/assistant" : null,
+        isActiveSearchMatch && "rounded-xl bg-accent/20 ring-2 ring-ring/50",
       )}
       data-timeline-row-id={row.id}
       data-timeline-row-kind={row.kind}
