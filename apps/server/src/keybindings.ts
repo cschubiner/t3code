@@ -65,6 +65,7 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+d", command: "diff.toggle", when: "!terminalFocus" },
   { key: "mod+k", command: "commandPalette.toggle", when: "!terminalFocus" },
   { key: "mod+f", command: "thread.search", when: "!terminalFocus" },
+  { key: "mod+shift+f", command: "threads.search", when: "!terminalFocus" },
   { key: "mod+shift+k", command: "projects.search", when: "!terminalFocus" },
   { key: "mod+n", command: "chat.new", when: "!terminalFocus" },
   { key: "mod+shift+o", command: "chat.new", when: "!terminalFocus" },

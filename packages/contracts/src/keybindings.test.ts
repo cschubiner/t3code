@@ -53,6 +53,12 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedThreadSearch.command, "thread.search");
 
+    const parsedThreadsSearch = yield* decode(KeybindingRule, {
+      key: "mod+shift+f",
+      command: "threads.search",
+    });
+    assert.strictEqual(parsedThreadsSearch.command, "threads.search");
+
     const parsedProjectsSearch = yield* decode(KeybindingRule, {
       key: "mod+shift+k",
       command: "projects.search",
