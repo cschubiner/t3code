@@ -1,6 +1,6 @@
 import { Effect, Exit, PubSub, Scope, Stream } from "effect";
-import { ORCHESTRATION_WS_METHODS, WS_METHODS, WsRpcGroup } from "@t3tools/contracts";
-import { RpcMessage, RpcSerialization, RpcServer } from "effect/unstable/rpc";
+import { WS_METHODS, WsRpcGroup } from "@t3tools/contracts";
+import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 type RpcServerInstance = RpcServer.RpcServer<any>;
 
@@ -23,10 +23,9 @@ interface BrowserWsRpcHarnessOptions {
 }
 
 const STREAM_METHODS = new Set<string>([
-  ORCHESTRATION_WS_METHODS.subscribeShell,
-  ORCHESTRATION_WS_METHODS.subscribeThread,
   WS_METHODS.gitRunStackedAction,
-  WS_METHODS.subscribeGitStatus,
+  WS_METHODS.subscribeOrchestrationDomainEvents,
+  WS_METHODS.subscribeSnippetsUpdated,
   WS_METHODS.subscribeTerminalEvents,
   WS_METHODS.subscribeServerConfig,
   WS_METHODS.subscribeServerLifecycle,
@@ -108,19 +107,15 @@ export class BrowserWsRpcHarness {
   }
 
   async onMessage(rawData: string): Promise<void> {
+    if (!this.serverReady) {
+      return;
+    }
     const server = await this.serverReady;
     if (!server) {
       return;
     }
     const messages = this.parser.decode(rawData);
     for (const message of messages) {
-      if (message && typeof message === "object" && "_tag" in message && message._tag === "Ping") {
-        const encoded = this.parser.encode(RpcMessage.constPong);
-        if (typeof encoded === "string") {
-          this.client?.send(encoded);
-        }
-        continue;
-      }
       await Effect.runPromise(server.write(0, message as never));
     }
   }

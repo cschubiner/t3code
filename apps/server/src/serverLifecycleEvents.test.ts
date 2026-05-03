@@ -1,4 +1,3 @@
-import { EnvironmentId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import { assertTrue } from "@effect/vitest/utils";
 import { Effect, Option } from "effect";
@@ -10,20 +9,12 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const lifecycleEvents = yield* ServerLifecycleEvents;
-      const environment = {
-        environmentId: EnvironmentId.make("environment-test"),
-        label: "Test environment",
-        platform: { os: "darwin" as const, arch: "arm64" as const },
-        serverVersion: "0.0.0-test",
-        capabilities: { repositoryIdentity: true },
-      };
 
       const welcome = yield* lifecycleEvents
         .publish({
           version: 1,
           type: "welcome",
           payload: {
-            environment,
             cwd: "/tmp/project",
             projectName: "project",
           },
@@ -38,7 +29,6 @@ it.effect(
           type: "ready",
           payload: {
             at: new Date().toISOString(),
-            environment,
           },
         })
         .pipe(Effect.timeoutOption("50 millis"));

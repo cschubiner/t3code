@@ -7,7 +7,7 @@
  * @module ProjectionProjectRepository
  */
 import { IsoDateTime, ModelSelection, ProjectId, ProjectScript } from "@t3tools/contracts";
-import { Option, Schema, Context } from "effect";
+import { Option, Schema, ServiceMap } from "effect";
 import type { Effect } from "effect";
 
 import type { ProjectionRepositoryError } from "../Errors.ts";
@@ -73,7 +73,7 @@ export interface ProjectionProjectRepositoryShape {
 /**
  * ProjectionProjectRepository - Service tag for project projection persistence.
  */
-export class ProjectionProjectRepository extends Context.Service<
+export class ProjectionProjectRepository extends ServiceMap.Service<
   ProjectionProjectRepository,
   ProjectionProjectRepositoryShape
 >()("t3/persistence/Services/ProjectionProjects/ProjectionProjectRepository") {}

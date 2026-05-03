@@ -6,11 +6,10 @@ import {
   CodexModelOptions,
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_SERVER_SETTINGS,
-  EnvironmentId,
+  ProjectId,
   type ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
-import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
 import { page } from "vitest/browser";
 import { useCallback } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -28,13 +27,7 @@ import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
 // ── Claude TraitsPicker tests ─────────────────────────────────────────
 
-const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
-const CLAUDE_THREAD_ID = ThreadId.make("thread-claude-traits");
-const CLAUDE_THREAD_REF = scopeThreadRef(LOCAL_ENVIRONMENT_ID, CLAUDE_THREAD_ID);
-const CLAUDE_THREAD_KEY = scopedThreadKey(CLAUDE_THREAD_REF);
-const CODEX_THREAD_ID = ThreadId.make("thread-codex-traits");
-const CODEX_THREAD_REF = scopeThreadRef(LOCAL_ENVIRONMENT_ID, CODEX_THREAD_ID);
-const CODEX_THREAD_KEY = scopedThreadKey(CODEX_THREAD_REF);
+const CLAUDE_THREAD_ID = ThreadId.makeUnsafe("thread-claude-traits");
 const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
   {
     provider: "codex",
@@ -44,8 +37,6 @@ const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
     status: "ready",
     auth: { status: "authenticated" },
     checkedAt: "2026-01-01T00:00:00.000Z",
-    slashCommands: [],
-    skills: [],
     models: [
       {
         slug: "gpt-5.4",
@@ -72,8 +63,6 @@ const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
     status: "ready",
     auth: { status: "authenticated" },
     checkedAt: "2026-01-01T00:00:00.000Z",
-    slashCommands: [],
-    skills: [],
     models: [
       {
         slug: "claude-opus-4-6",
@@ -131,10 +120,10 @@ function ClaudeTraitsPickerHarness(props: {
   fallbackModelSelection: ModelSelection | null;
   triggerVariant?: "ghost" | "outline";
 }) {
-  const prompt = useComposerThreadDraft(CLAUDE_THREAD_REF).prompt;
+  const prompt = useComposerThreadDraft(CLAUDE_THREAD_ID).prompt;
   const setPrompt = useComposerDraftStore((store) => store.setPrompt);
   const { modelOptions, selectedModel } = useEffectiveComposerModelState({
-    threadRef: CLAUDE_THREAD_REF,
+    threadId: CLAUDE_THREAD_ID,
     providers: TEST_PROVIDERS,
     selectedProvider: "claudeAgent",
     threadModelSelection: props.fallbackModelSelection,
@@ -146,7 +135,7 @@ function ClaudeTraitsPickerHarness(props: {
   });
   const handlePromptChange = useCallback(
     (nextPrompt: string) => {
-      setPrompt(CLAUDE_THREAD_REF, nextPrompt);
+      setPrompt(CLAUDE_THREAD_ID, nextPrompt);
     },
     [setPrompt],
   );
@@ -155,7 +144,7 @@ function ClaudeTraitsPickerHarness(props: {
     <TraitsPicker
       provider="claudeAgent"
       models={TEST_PROVIDERS[1]!.models}
-      threadRef={CLAUDE_THREAD_REF}
+      threadId={CLAUDE_THREAD_ID}
       model={selectedModel ?? props.model}
       prompt={prompt}
       modelOptions={modelOptions?.claudeAgent}
@@ -179,8 +168,8 @@ async function mountClaudePicker(props?: {
 }) {
   const model = props?.model ?? "claude-opus-4-6";
   const claudeOptions = !props?.skipDraftModelOptions ? props?.options : undefined;
-  const draftsByThreadKey: Record<string, ComposerThreadDraftState> = {
-    [CLAUDE_THREAD_KEY]: {
+  const draftsByThreadId: Record<ThreadId, ComposerThreadDraftState> = {
+    [CLAUDE_THREAD_ID]: {
       prompt: props?.prompt ?? "",
       images: [],
       nonPersistedImageIds: [],
@@ -203,9 +192,9 @@ async function mountClaudePicker(props?: {
     },
   };
   useComposerDraftStore.setState({
-    draftsByThreadKey,
-    draftThreadsByThreadKey: {},
-    logicalProjectDraftThreadKeyByLogicalProjectKey: {},
+    draftsByThreadId,
+    draftThreadsByThreadId: {},
+    projectDraftThreadIdByProjectId: {},
   });
   const host = document.createElement("div");
   document.body.append(host);
@@ -241,9 +230,9 @@ describe("TraitsPicker (Claude)", () => {
   afterEach(() => {
     document.body.innerHTML = "";
     useComposerDraftStore.setState({
-      draftsByThreadKey: {},
-      draftThreadsByThreadKey: {},
-      logicalProjectDraftThreadKeyByLogicalProjectKey: {},
+      draftsByThreadId: {},
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
       stickyModelSelectionByProvider: {},
     });
   });
@@ -380,9 +369,10 @@ describe("TraitsPicker (Claude)", () => {
 // ── Codex TraitsPicker tests ──────────────────────────────────────────
 
 async function mountCodexPicker(props: { model?: string; options?: CodexModelOptions }) {
+  const threadId = ThreadId.makeUnsafe("thread-codex-traits");
   const model = props.model ?? DEFAULT_MODEL_BY_PROVIDER.codex;
-  const draftsByThreadKey: Record<string, ComposerThreadDraftState> = {
-    [CODEX_THREAD_KEY]: {
+  const draftsByThreadId: Record<ThreadId, ComposerThreadDraftState> = {
+    [threadId]: {
       prompt: "",
       images: [],
       nonPersistedImageIds: [],
@@ -402,10 +392,10 @@ async function mountCodexPicker(props: { model?: string; options?: CodexModelOpt
   };
 
   useComposerDraftStore.setState({
-    draftsByThreadKey,
-    draftThreadsByThreadKey: {},
-    logicalProjectDraftThreadKeyByLogicalProjectKey: {
-      "environment-local:project-codex-traits": CODEX_THREAD_KEY,
+    draftsByThreadId,
+    draftThreadsByThreadId: {},
+    projectDraftThreadIdByProjectId: {
+      [ProjectId.makeUnsafe("project-codex-traits")]: threadId,
     },
   });
   const host = document.createElement("div");
@@ -414,7 +404,7 @@ async function mountCodexPicker(props: { model?: string; options?: CodexModelOpt
     <TraitsPicker
       provider="codex"
       models={TEST_PROVIDERS[0]!.models}
-      threadRef={CODEX_THREAD_REF}
+      threadId={threadId}
       model={props.model ?? DEFAULT_MODEL_BY_PROVIDER.codex}
       prompt=""
       modelOptions={props.options}
@@ -439,9 +429,9 @@ describe("TraitsPicker (Codex)", () => {
     document.body.innerHTML = "";
     localStorage.removeItem(COMPOSER_DRAFT_STORAGE_KEY);
     useComposerDraftStore.setState({
-      draftsByThreadKey: {},
-      draftThreadsByThreadKey: {},
-      logicalProjectDraftThreadKeyByLogicalProjectKey: {},
+      draftsByThreadId: {},
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
       stickyModelSelectionByProvider: {},
     });
   });

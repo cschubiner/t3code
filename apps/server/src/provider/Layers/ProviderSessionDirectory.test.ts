@@ -36,7 +36,7 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
       const directory = yield* ProviderSessionDirectory;
       const runtimeRepository = yield* ProviderSessionRuntimeRepository;
 
-      const initialThreadId = ThreadId.make("thread-1");
+      const initialThreadId = ThreadId.makeUnsafe("thread-1");
 
       yield* directory.upsert({
         provider: "codex",
@@ -54,7 +54,7 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
         assert.equal(resolvedBinding.value.threadId, initialThreadId);
       }
 
-      const nextThreadId = ThreadId.make("thread-2");
+      const nextThreadId = ThreadId.makeUnsafe("thread-2");
 
       yield* directory.upsert({
         provider: "codex",
@@ -93,7 +93,7 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
       const directory = yield* ProviderSessionDirectory;
       const runtimeRepository = yield* ProviderSessionRuntimeRepository;
 
-      const threadId = ThreadId.make("thread-runtime");
+      const threadId = ThreadId.makeUnsafe("thread-runtime");
 
       yield* directory.upsert({
         provider: "codex",
@@ -137,7 +137,7 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
     Effect.gen(function* () {
       const directory = yield* ProviderSessionDirectory;
       const runtimeRepository = yield* ProviderSessionRuntimeRepository;
-      const threadId = ThreadId.make("thread-provider-change");
+      const threadId = ThreadId.makeUnsafe("thread-provider-change");
 
       yield* runtimeRepository.upsert({
         threadId,
@@ -169,7 +169,7 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
       const dbPath = path.join(tempDir, "orchestration.sqlite");
       const directoryLayer = makeDirectoryLayer(makeSqlitePersistenceLive(dbPath));
 
-      const threadId = ThreadId.make("thread-restart");
+      const threadId = ThreadId.makeUnsafe("thread-restart");
 
       yield* Effect.gen(function* () {
         const directory = yield* ProviderSessionDirectory;

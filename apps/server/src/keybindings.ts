@@ -39,7 +39,7 @@ import {
   SchemaIssue,
   SchemaTransformation,
   Ref,
-  Context,
+  ServiceMap,
   Scope,
   Stream,
 } from "effect";
@@ -61,10 +61,22 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+n", command: "terminal.new", when: "terminalFocus" },
   { key: "mod+w", command: "terminal.close", when: "terminalFocus" },
   { key: "mod+d", command: "diff.toggle", when: "!terminalFocus" },
-  { key: "mod+k", command: "commandPalette.toggle", when: "!terminalFocus" },
+  { key: "mod+[", command: "sidebar.history.previous" },
+  { key: "mod+]", command: "sidebar.history.next" },
+  { key: "mod+f", command: "thread.search", when: "!terminalFocus" },
+  { key: "mod+shift+f", command: "threads.search", when: "!terminalFocus" },
+  { key: "mod+shift+a", command: "threads.searchAll", when: "!terminalFocus" },
+  { key: "mod+shift+k", command: "projects.search", when: "!terminalFocus" },
+  { key: "alt+arrowup", command: "sidebar.thread.previous" },
+  { key: "alt+arrowdown", command: "sidebar.thread.next" },
+  { key: "alt+shift+arrowup", command: "sidebar.project.previous" },
+  { key: "alt+shift+arrowdown", command: "sidebar.project.next" },
+  { key: "mod+shift+r", command: "sidebar.rename", when: "!terminalFocus" },
   { key: "mod+n", command: "chat.new", when: "!terminalFocus" },
   { key: "mod+shift+o", command: "chat.new", when: "!terminalFocus" },
   { key: "mod+shift+n", command: "chat.newLocal", when: "!terminalFocus" },
+  { key: "mod+shift+e", command: "chat.branchSelector.focus", when: "!terminalFocus" },
+  { key: "mod+shift+s", command: "snippets.open", when: "!terminalFocus" },
   { key: "mod+o", command: "editor.openFavorite" },
   { key: "mod+shift+[", command: "thread.previous" },
   { key: "mod+shift+]", command: "thread.next" },
@@ -323,7 +335,7 @@ export const ResolvedKeybindingFromConfig = KeybindingRule.pipe(
             Predicate.isNotNull,
             () =>
               new SchemaIssue.InvalidValue(Option.some(rule), {
-                message: "Invalid keybinding rule",
+                title: "Invalid keybinding rule",
               }),
           ),
           Effect.map((resolved) => resolved),
@@ -335,7 +347,7 @@ export const ResolvedKeybindingFromConfig = KeybindingRule.pipe(
           if (!key) {
             return yield* Effect.fail(
               new SchemaIssue.InvalidValue(Option.some(resolved), {
-                message: "Resolved shortcut cannot be encoded to key string",
+                title: "Resolved shortcut cannot be encoded to key string",
               }),
             );
           }
@@ -522,7 +534,7 @@ export interface KeybindingsShape {
 /**
  * Keybindings - Service tag for keybinding configuration operations.
  */
-export class Keybindings extends Context.Service<Keybindings, KeybindingsShape>()(
+export class Keybindings extends ServiceMap.Service<Keybindings, KeybindingsShape>()(
   "t3/keybindings",
 ) {}
 

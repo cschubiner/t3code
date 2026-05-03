@@ -23,7 +23,7 @@ import {
   TerminalWriteInput,
 } from "@t3tools/contracts";
 import { PtyProcess } from "./PTY";
-import { Effect, Context } from "effect";
+import { Effect, ServiceMap } from "effect";
 
 export {
   TerminalCwdError,
@@ -37,7 +37,6 @@ export interface TerminalSessionState {
   threadId: string;
   terminalId: string;
   cwd: string;
-  worktreePath: string | null;
   status: TerminalSessionStatus;
   pid: number | null;
   history: string;
@@ -122,6 +121,6 @@ export interface TerminalManagerShape {
 /**
  * TerminalManager - Service tag for terminal session orchestration.
  */
-export class TerminalManager extends Context.Service<TerminalManager, TerminalManagerShape>()(
+export class TerminalManager extends ServiceMap.Service<TerminalManager, TerminalManagerShape>()(
   "t3/terminal/Services/Manager/TerminalManager",
 ) {}

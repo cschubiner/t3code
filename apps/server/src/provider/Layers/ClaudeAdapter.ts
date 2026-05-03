@@ -17,10 +17,7 @@ import {
   type SDKResultMessage,
   type SettingSource,
   type SDKUserMessage,
-  ModelUsage,
-  NonNullableUsage,
 } from "@anthropic-ai/claude-agent-sdk";
-import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import {
   ApprovalRequestId,
   type CanonicalItemType,
@@ -272,17 +269,27 @@ function isInterruptedResult(result: SDKResultMessage): boolean {
 }
 
 function asRuntimeItemId(value: string): RuntimeItemId {
-  return RuntimeItemId.make(value);
+  return RuntimeItemId.makeUnsafe(value);
 }
 
-function maxClaudeContextWindowFromModelUsage(
-  modelUsage: Record<string, ModelUsage> | undefined,
-): number | undefined {
-  if (!modelUsage) return undefined;
+function maxClaudeContextWindowFromModelUsage(modelUsage: unknown): number | undefined {
+  if (!modelUsage || typeof modelUsage !== "object") {
+    return undefined;
+  }
 
   let maxContextWindow: number | undefined;
-  for (const value of Object.values(modelUsage)) {
-    const contextWindow = value.contextWindow;
+  for (const value of Object.values(modelUsage as Record<string, unknown>)) {
+    if (!value || typeof value !== "object") {
+      continue;
+    }
+    const contextWindow = (value as { contextWindow?: unknown }).contextWindow;
+    if (
+      typeof contextWindow !== "number" ||
+      !Number.isFinite(contextWindow) ||
+      contextWindow <= 0
+    ) {
+      continue;
+    }
     maxContextWindow = Math.max(maxContextWindow ?? 0, contextWindow);
   }
 
@@ -290,58 +297,53 @@ function maxClaudeContextWindowFromModelUsage(
 }
 
 function normalizeClaudeTokenUsage(
-  value: NonNullableUsage | undefined,
+  usage: unknown,
   contextWindow?: number,
 ): ThreadTokenUsageSnapshot | undefined {
-  if (!value || typeof value !== "object") {
+  if (!usage || typeof usage !== "object") {
     return undefined;
   }
 
-  const usage = value as Record<string, unknown>;
+  const record = usage as Record<string, unknown>;
+  const directUsedTokens =
+    typeof record.total_tokens === "number" && Number.isFinite(record.total_tokens)
+      ? record.total_tokens
+      : undefined;
   const inputTokens =
-    (typeof usage.input_tokens === "number" && Number.isFinite(usage.input_tokens)
-      ? usage.input_tokens
+    (typeof record.input_tokens === "number" && Number.isFinite(record.input_tokens)
+      ? record.input_tokens
       : 0) +
-    (typeof usage.cache_creation_input_tokens === "number" &&
-    Number.isFinite(usage.cache_creation_input_tokens)
-      ? usage.cache_creation_input_tokens
+    (typeof record.cache_creation_input_tokens === "number" &&
+    Number.isFinite(record.cache_creation_input_tokens)
+      ? record.cache_creation_input_tokens
       : 0) +
-    (typeof usage.cache_read_input_tokens === "number" &&
-    Number.isFinite(usage.cache_read_input_tokens)
-      ? usage.cache_read_input_tokens
+    (typeof record.cache_read_input_tokens === "number" &&
+    Number.isFinite(record.cache_read_input_tokens)
+      ? record.cache_read_input_tokens
       : 0);
   const outputTokens =
-    typeof usage.output_tokens === "number" && Number.isFinite(usage.output_tokens)
-      ? usage.output_tokens
+    typeof record.output_tokens === "number" && Number.isFinite(record.output_tokens)
+      ? record.output_tokens
       : 0;
-  const derivedTotalProcessedTokens = inputTokens + outputTokens;
-  const totalProcessedTokens =
-    (typeof usage.total_tokens === "number" && Number.isFinite(usage.total_tokens)
-      ? usage.total_tokens
-      : undefined) ?? (derivedTotalProcessedTokens > 0 ? derivedTotalProcessedTokens : undefined);
-  if (totalProcessedTokens === undefined || totalProcessedTokens <= 0) {
+  const derivedUsedTokens = inputTokens + outputTokens;
+  const usedTokens = directUsedTokens ?? (derivedUsedTokens > 0 ? derivedUsedTokens : undefined);
+  if (usedTokens === undefined || usedTokens <= 0) {
     return undefined;
   }
-
-  const maxTokens =
-    typeof contextWindow === "number" && Number.isFinite(contextWindow) && contextWindow > 0
-      ? contextWindow
-      : undefined;
-  const usedTokens =
-    maxTokens !== undefined ? Math.min(totalProcessedTokens, maxTokens) : totalProcessedTokens;
 
   return {
     usedTokens,
     lastUsedTokens: usedTokens,
-    ...(totalProcessedTokens > usedTokens ? { totalProcessedTokens } : {}),
     ...(inputTokens > 0 ? { inputTokens } : {}),
     ...(outputTokens > 0 ? { outputTokens } : {}),
-    ...(maxTokens !== undefined ? { maxTokens } : {}),
-    ...(typeof usage.tool_uses === "number" && Number.isFinite(usage.tool_uses)
-      ? { toolUses: usage.tool_uses }
+    ...(typeof contextWindow === "number" && Number.isFinite(contextWindow) && contextWindow > 0
+      ? { maxTokens: contextWindow }
       : {}),
-    ...(typeof usage.duration_ms === "number" && Number.isFinite(usage.duration_ms)
-      ? { durationMs: usage.duration_ms }
+    ...(typeof record.tool_uses === "number" && Number.isFinite(record.tool_uses)
+      ? { toolUses: record.tool_uses }
+      : {}),
+    ...(typeof record.duration_ms === "number" && Number.isFinite(record.duration_ms)
+      ? { durationMs: record.duration_ms }
       : {}),
   };
 }
@@ -351,7 +353,7 @@ function asCanonicalTurnId(value: TurnId): TurnId {
 }
 
 function asRuntimeRequestId(value: ApprovalRequestId): RuntimeRequestId {
-  return RuntimeRequestId.make(value);
+  return RuntimeRequestId.makeUnsafe(value);
 }
 
 function readClaudeResumeState(resumeCursor: unknown): ClaudeResumeState | undefined {
@@ -369,7 +371,7 @@ function readClaudeResumeState(resumeCursor: unknown): ClaudeResumeState | undef
   const threadIdCandidate = typeof cursor.threadId === "string" ? cursor.threadId : undefined;
   const threadId =
     threadIdCandidate && !isSyntheticClaudeThreadId(threadIdCandidate)
-      ? ThreadId.make(threadIdCandidate)
+      ? ThreadId.makeUnsafe(threadIdCandidate)
       : undefined;
   const resumeCandidate =
     typeof cursor.resume === "string"
@@ -460,53 +462,11 @@ function classifyRequestType(toolName: string): CanonicalRequestType {
       : "dynamic_tool_call";
 }
 
-function isTodoTool(toolName: string): boolean {
-  return toolName.toLowerCase().includes("todowrite");
-}
-
-type PlanStep = { step: string; status: "pending" | "inProgress" | "completed" };
-
-function extractPlanStepsFromTodoInput(input: Record<string, unknown>): PlanStep[] | null {
-  // TodoWrite format: { todos: [{ content, status, activeForm? }] }
-  const todos = input.todos;
-  if (!Array.isArray(todos) || todos.length === 0) {
-    return null;
-  }
-  return todos
-    .filter((t): t is Record<string, unknown> => t !== null && typeof t === "object")
-    .map((todo) => ({
-      step:
-        typeof todo.content === "string" && todo.content.trim().length > 0
-          ? todo.content.trim()
-          : "Task",
-      status:
-        todo.status === "completed"
-          ? "completed"
-          : todo.status === "in_progress"
-            ? "inProgress"
-            : "pending",
-    }));
-}
-
 function summarizeToolRequest(toolName: string, input: Record<string, unknown>): string {
   const commandValue = input.command ?? input.cmd;
   const command = typeof commandValue === "string" ? commandValue : undefined;
   if (command && command.trim().length > 0) {
     return `${toolName}: ${command.trim().slice(0, 400)}`;
-  }
-
-  // For agent/subagent tools, prefer human-readable description or prompt over raw JSON
-  const itemType = classifyToolItemType(toolName);
-  if (itemType === "collab_agent_tool_call") {
-    const description =
-      typeof input.description === "string" ? input.description.trim() : undefined;
-    const prompt = typeof input.prompt === "string" ? input.prompt.trim() : undefined;
-    const subagentType =
-      typeof input.subagent_type === "string" ? input.subagent_type.trim() : undefined;
-    const label = description || (prompt ? prompt.slice(0, 200) : undefined);
-    if (label) {
-      return subagentType ? `${subagentType}: ${label}` : label;
-    }
   }
 
   const serialized = JSON.stringify(input);
@@ -681,7 +641,7 @@ function nativeProviderRefs(
 ): NonNullable<ProviderRuntimeEvent["providerRefs"]> {
   if (options?.providerItemId) {
     return {
-      providerItemId: ProviderItemId.make(options.providerItemId),
+      providerItemId: ProviderItemId.makeUnsafe(options.providerItemId),
     };
   }
   return {};
@@ -974,7 +934,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const serverSettingsService = yield* ServerSettingsService;
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
-  const nextEventId = Effect.map(Random.nextUUIDv4, (id) => EventId.make(id));
+  const nextEventId = Effect.map(Random.nextUUIDv4, (id) => EventId.makeUnsafe(id));
   const makeEventStamp = () => Effect.all({ eventId: nextEventId, createdAt: nowIso });
 
   const offerRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
@@ -1007,7 +967,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             ? { providerThreadId: message.session_id }
             : {}),
           ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
-          ...(itemId ? { itemId: ProviderItemId.make(itemId) } : {}),
+          ...(itemId ? { itemId: ProviderItemId.makeUnsafe(itemId) } : {}),
           payload: message,
         },
       },
@@ -1368,6 +1328,8 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     errorMessage?: string,
     result?: SDKResultMessage,
   ) {
+    const resultUsage =
+      result?.usage && typeof result.usage === "object" ? { ...result.usage } : undefined;
     const resultContextWindow = maxClaudeContextWindowFromModelUsage(result?.modelUsage);
     if (resultContextWindow !== undefined) {
       context.lastKnownContextWindow = resultContextWindow;
@@ -1379,11 +1341,9 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     // Instead, use the last known context-window-accurate usage from task_progress
     // events and treat the accumulated total as totalProcessedTokens.
     const accumulatedSnapshot = normalizeClaudeTokenUsage(
-      result?.usage,
+      resultUsage,
       resultContextWindow ?? context.lastKnownContextWindow,
     );
-    const accumulatedTotalProcessedTokens =
-      accumulatedSnapshot?.totalProcessedTokens ?? accumulatedSnapshot?.usedTokens;
     const lastGoodUsage = context.lastKnownTokenUsage;
     const maxTokens = resultContextWindow ?? context.lastKnownContextWindow;
     const usageSnapshot: ThreadTokenUsageSnapshot | undefined = lastGoodUsage
@@ -1392,10 +1352,8 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ...(typeof maxTokens === "number" && Number.isFinite(maxTokens) && maxTokens > 0
             ? { maxTokens }
             : {}),
-          ...(typeof accumulatedTotalProcessedTokens === "number" &&
-          Number.isFinite(accumulatedTotalProcessedTokens) &&
-          accumulatedTotalProcessedTokens > lastGoodUsage.usedTokens
-            ? { totalProcessedTokens: accumulatedTotalProcessedTokens }
+          ...(accumulatedSnapshot && accumulatedSnapshot.usedTokens > lastGoodUsage.usedTokens
+            ? { totalProcessedTokens: accumulatedSnapshot.usedTokens }
             : {}),
         }
       : accumulatedSnapshot;
@@ -1659,26 +1617,6 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             payload: message,
           },
         });
-
-        // Emit plan update when TodoWrite input is parsed
-        if (parsedInput && isTodoTool(nextTool.toolName)) {
-          const planSteps = extractPlanStepsFromTodoInput(parsedInput);
-          if (planSteps && planSteps.length > 0) {
-            const planStamp = yield* makeEventStamp();
-            yield* offerRuntimeEvent({
-              type: "turn.plan.updated",
-              eventId: planStamp.eventId,
-              provider: PROVIDER,
-              createdAt: planStamp.createdAt,
-              threadId: context.session.threadId,
-              ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
-              payload: {
-                plan: planSteps,
-              },
-              providerRefs: nativeProviderRefs(context),
-            });
-          }
-        }
       }
       return;
     }
@@ -1884,7 +1822,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     // Auto-start a synthetic turn for assistant messages that arrive without
     // an active turn (e.g., background agent/subagent responses between user prompts).
     if (!context.turnState) {
-      const turnId = TurnId.make(yield* Random.nextUUIDv4);
+      const turnId = TurnId.makeUnsafe(yield* Random.nextUUIDv4);
       const startedAt = yield* nowIso;
       context.turnState = {
         turnId,
@@ -2075,7 +2013,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ...base,
           type: "task.started",
           payload: {
-            taskId: RuntimeTaskId.make(message.task_id),
+            taskId: RuntimeTaskId.makeUnsafe(message.task_id),
             description: message.description,
             ...(message.task_type ? { taskType: message.task_type } : {}),
           },
@@ -2105,7 +2043,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ...base,
           type: "task.progress",
           payload: {
-            taskId: RuntimeTaskId.make(message.task_id),
+            taskId: RuntimeTaskId.makeUnsafe(message.task_id),
             description: message.description,
             ...(message.summary ? { summary: message.summary } : {}),
             ...(message.usage ? { usage: message.usage } : {}),
@@ -2137,7 +2075,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ...base,
           type: "task.completed",
           payload: {
-            taskId: RuntimeTaskId.make(message.task_id),
+            taskId: RuntimeTaskId.makeUnsafe(message.task_id),
             status: message.status,
             ...(message.summary ? { summary: message.summary } : {}),
             ...(message.usage ? { usage: message.usage } : {}),
@@ -2442,9 +2380,9 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         existingResumeSessionId === undefined ? yield* Random.nextUUIDv4 : undefined;
       const sessionId = existingResumeSessionId ?? newSessionId;
 
-      const runtimeContext = yield* Effect.context<never>();
-      const runFork = Effect.runForkWith(runtimeContext);
-      const runPromise = Effect.runPromiseWith(runtimeContext);
+      const services = yield* Effect.services();
+      const runFork = Effect.runForkWith(services);
+      const runPromise = Effect.runPromiseWith(services);
 
       const promptQueue = yield* Queue.unbounded<PromptQueueItem>();
       const prompt = Stream.fromQueue(promptQueue).pipe(
@@ -2471,7 +2409,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         toolInput: Record<string, unknown>,
         callbackOptions: { readonly signal: AbortSignal; readonly toolUseID?: string },
       ) {
-        const requestId = ApprovalRequestId.make(yield* Random.nextUUIDv4);
+        const requestId = ApprovalRequestId.makeUnsafe(yield* Random.nextUUIDv4);
 
         // Parse questions from the SDK's AskUserQuestion input.
         const rawQuestions = Array.isArray(toolInput.questions) ? toolInput.questions : [];
@@ -2624,7 +2562,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           } satisfies PermissionResult;
         }
 
-        const requestId = ApprovalRequestId.make(yield* Random.nextUUIDv4);
+        const requestId = ApprovalRequestId.makeUnsafe(yield* Random.nextUUIDv4);
         const requestType = classifyRequestType(toolName);
         const detail = summarizeToolRequest(toolName, toolInput);
         const decisionDeferred = yield* Deferred.make<ProviderApprovalDecision>();
@@ -2743,7 +2681,6 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ),
       );
       const claudeBinaryPath = claudeSettings.binaryPath;
-      const extraArgs = parseCliArgs(claudeSettings.launchArgs).flags;
       const modelSelection =
         input.modelSelection?.provider === "claudeAgent" ? input.modelSelection : undefined;
       const caps = getClaudeModelCapabilities(modelSelection?.model);
@@ -2756,11 +2693,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ? modelSelection.options.thinking
           : undefined;
       const effectiveEffort = getEffectiveClaudeCodeEffort(effort);
-      const runtimeModeToPermission: Record<string, PermissionMode> = {
-        "auto-accept-edits": "acceptEdits",
-        "full-access": "bypassPermissions",
-      };
-      const permissionMode = runtimeModeToPermission[input.runtimeMode];
+      const permissionMode = input.runtimeMode === "full-access" ? "bypassPermissions" : undefined;
       const settings = {
         ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
         ...(fastMode ? { fastMode: true } : {}),
@@ -2783,7 +2716,6 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         canUseTool,
         env: process.env,
         ...(input.cwd ? { additionalDirectories: [input.cwd] } : {}),
-        ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
       };
 
       const queryRuntime = yield* Effect.try({
@@ -2949,12 +2881,13 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       });
     } else if (input.interactionMode === "default") {
       yield* Effect.tryPromise({
-        try: () => context.query.setPermissionMode(context.basePermissionMode ?? "default"),
+        try: () =>
+          context.query.setPermissionMode(context.basePermissionMode ?? "bypassPermissions"),
         catch: (cause) => toRequestError(input.threadId, "turn/setPermissionMode", cause),
       });
     }
 
-    const turnId = TurnId.make(yield* Random.nextUUIDv4);
+    const turnId = TurnId.makeUnsafe(yield* Random.nextUUIDv4);
     const turnState: ClaudeTurnState = {
       turnId,
       startedAt: yield* nowIso,
@@ -3121,9 +3054,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     listSessions,
     hasSession,
     stopAll,
-    get streamEvents() {
-      return Stream.fromQueue(runtimeEventQueue);
-    },
+    streamEvents: Stream.fromQueue(runtimeEventQueue),
   } satisfies ClaudeAdapterShape;
 });
 

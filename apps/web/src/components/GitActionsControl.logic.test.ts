@@ -13,9 +13,6 @@ import {
 
 function status(overrides: Partial<GitStatusResult> = {}): GitStatusResult {
   return {
-    isRepo: true,
-    hasOriginRemote: true,
-    isDefaultBranch: false,
     branch: "feature/test",
     hasWorkingTreeChanges: false,
     workingTree: {
@@ -880,12 +877,7 @@ describe("buildGitActionProgressStages", () => {
       pushTarget: "origin/feature/test",
       shouldPushBeforePr: true,
     });
-    assert.deepEqual(stages, [
-      "Pushing to origin/feature/test...",
-      "Preparing PR...",
-      "Generating PR content...",
-      "Creating GitHub pull request...",
-    ]);
+    assert.deepEqual(stages, ["Pushing to origin/feature/test...", "Creating PR..."]);
   });
 
   it("shows only PR progress when create-pr can skip the push", () => {
@@ -895,11 +887,7 @@ describe("buildGitActionProgressStages", () => {
       hasWorkingTreeChanges: false,
       shouldPushBeforePr: false,
     });
-    assert.deepEqual(stages, [
-      "Preparing PR...",
-      "Generating PR content...",
-      "Creating GitHub pull request...",
-    ]);
+    assert.deepEqual(stages, ["Creating PR..."]);
   });
 
   it("includes commit stages for commit+push when working tree is dirty", () => {
@@ -913,22 +901,6 @@ describe("buildGitActionProgressStages", () => {
       "Generating commit message...",
       "Committing...",
       "Pushing to origin/feature/test...",
-    ]);
-  });
-
-  it("includes granular PR stages for commit+push+PR actions", () => {
-    const stages = buildGitActionProgressStages({
-      action: "commit_push_pr",
-      hasCustomCommitMessage: true,
-      hasWorkingTreeChanges: true,
-      pushTarget: "origin/feature/test",
-    });
-    assert.deepEqual(stages, [
-      "Committing...",
-      "Pushing to origin/feature/test...",
-      "Preparing PR...",
-      "Generating PR content...",
-      "Creating GitHub pull request...",
     ]);
   });
 });
@@ -1016,15 +988,6 @@ describe("resolveLiveThreadBranchUpdate", () => {
     const update = resolveLiveThreadBranchUpdate({
       threadBranch: "effect-atom",
       gitStatus: status({ branch: null }),
-    });
-
-    assert.equal(update, null);
-  });
-
-  it("does not regress a semantic thread branch back to a temporary worktree branch", () => {
-    const update = resolveLiveThreadBranchUpdate({
-      threadBranch: "t3code/github-query-rate-limit",
-      gitStatus: status({ branch: "t3code/bda76797" }),
     });
 
     assert.equal(update, null);

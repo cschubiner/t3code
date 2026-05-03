@@ -5,6 +5,7 @@ import { defineConfig, mergeConfig } from "vitest/config";
 import viteConfig from "./vite.config";
 
 const srcPath = fileURLToPath(new URL("./src", import.meta.url));
+const browserApiPort = Number(process.env.VITEST_BROWSER_PORT ?? 63315);
 
 export default mergeConfig(
   viteConfig,
@@ -14,11 +15,6 @@ export default mergeConfig(
         "~": srcPath,
       },
     },
-    server: {
-      // The app dev server uses a fixed port, but browser tests need to allow
-      // concurrent runs to claim the next available port.
-      strictPort: false,
-    },
     test: {
       include: ["src/components/**/*.browser.tsx"],
       browser: {
@@ -27,7 +23,8 @@ export default mergeConfig(
         instances: [{ browser: "chromium" }],
         headless: true,
         api: {
-          strictPort: false,
+          port: browserApiPort,
+          strictPort: true,
         },
       },
       testTimeout: 30_000,

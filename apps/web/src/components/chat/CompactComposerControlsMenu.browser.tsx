@@ -1,10 +1,4 @@
-import {
-  DEFAULT_MODEL_BY_PROVIDER,
-  EnvironmentId,
-  ModelSelection,
-  ThreadId,
-} from "@t3tools/contracts";
-import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
+import { DEFAULT_MODEL_BY_PROVIDER, ModelSelection, ThreadId } from "@t3tools/contracts";
 import "../../index.css";
 
 import { page } from "vitest/browser";
@@ -15,37 +9,35 @@ import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { TraitsMenuContent } from "./TraitsPicker";
 import { useComposerDraftStore } from "../../composerDraftStore";
 
-const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
-
 async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: string }) {
-  const threadId = ThreadId.make("thread-compact-menu");
-  const threadRef = scopeThreadRef(LOCAL_ENVIRONMENT_ID, threadId);
-  const threadKey = scopedThreadKey(threadRef);
+  const threadId = ThreadId.makeUnsafe("thread-compact-menu");
   const provider = props?.modelSelection?.provider ?? "claudeAgent";
+  const draftsByThreadId = {} as ReturnType<
+    typeof useComposerDraftStore.getState
+  >["draftsByThreadId"];
   const model = props?.modelSelection?.model ?? DEFAULT_MODEL_BY_PROVIDER[provider];
 
-  useComposerDraftStore.setState({
-    draftsByThreadKey: {
-      [threadKey]: {
-        prompt: props?.prompt ?? "",
-        images: [],
-        nonPersistedImageIds: [],
-        persistedAttachments: [],
-        terminalContexts: [],
-        modelSelectionByProvider: {
-          [provider]: {
-            provider,
-            model,
-            ...(props?.modelSelection?.options ? { options: props.modelSelection.options } : {}),
-          },
-        },
-        activeProvider: provider,
-        runtimeMode: null,
-        interactionMode: null,
+  draftsByThreadId[threadId] = {
+    prompt: props?.prompt ?? "",
+    images: [],
+    nonPersistedImageIds: [],
+    persistedAttachments: [],
+    terminalContexts: [],
+    modelSelectionByProvider: {
+      [provider]: {
+        provider,
+        model,
+        ...(props?.modelSelection?.options ? { options: props.modelSelection.options } : {}),
       },
     },
-    draftThreadsByThreadKey: {},
-    logicalProjectDraftThreadKeyByLogicalProjectKey: {},
+    activeProvider: provider,
+    runtimeMode: null,
+    interactionMode: null,
+  };
+  useComposerDraftStore.setState({
+    draftsByThreadId,
+    draftThreadsByThreadId: {},
+    projectDraftThreadIdByProjectId: {},
   });
   const host = document.createElement("div");
   document.body.append(host);
@@ -123,14 +115,13 @@ async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: str
     <CompactComposerControlsMenu
       activePlan={false}
       interactionMode="default"
-      planSidebarLabel="Plan"
       planSidebarOpen={false}
       runtimeMode="approval-required"
       traitsMenuContent={
         <TraitsMenuContent
           provider={provider}
           models={models}
-          threadRef={threadRef}
+          threadId={threadId}
           model={model}
           prompt={props?.prompt ?? ""}
           modelOptions={providerOptions}
@@ -139,7 +130,7 @@ async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: str
       }
       onToggleInteractionMode={vi.fn()}
       onTogglePlanSidebar={vi.fn()}
-      onRuntimeModeChange={vi.fn()}
+      onToggleRuntimeMode={vi.fn()}
     />,
     { container: host },
   );
@@ -159,9 +150,9 @@ describe("CompactComposerControlsMenu", () => {
   afterEach(() => {
     document.body.innerHTML = "";
     useComposerDraftStore.setState({
-      draftsByThreadKey: {},
-      draftThreadsByThreadKey: {},
-      logicalProjectDraftThreadKeyByLogicalProjectKey: {},
+      draftsByThreadId: {},
+      draftThreadsByThreadId: {},
+      projectDraftThreadIdByProjectId: {},
       stickyModelSelectionByProvider: {},
     });
   });

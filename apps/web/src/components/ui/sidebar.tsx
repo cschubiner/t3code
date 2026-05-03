@@ -87,6 +87,7 @@ function useSidebar() {
 
 function SidebarProvider({
   defaultOpen = true,
+  layout = "boxed",
   open: openProp,
   onOpenChange: setOpenProp,
   className,
@@ -95,6 +96,7 @@ function SidebarProvider({
   ...props
 }: React.ComponentProps<"div"> & {
   defaultOpen?: boolean;
+  layout?: "boxed" | "contents";
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }) {
@@ -151,7 +153,10 @@ function SidebarProvider({
     <SidebarContext.Provider value={contextValue}>
       <div
         className={cn(
-          "group/sidebar-wrapper flex min-h-svh w-full has-data-[variant=inset]:bg-sidebar",
+          "group/sidebar-wrapper",
+          layout === "boxed"
+            ? "flex min-h-svh w-full has-data-[variant=inset]:bg-sidebar"
+            : "contents",
           className,
         )}
         data-slot="sidebar-wrapper"

@@ -28,31 +28,10 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
         ),
       );
 
-    const normalizeProjectWorkspaceRootForCreate = (
-      workspaceRoot: string,
-      createIfMissing: boolean | undefined,
-    ) =>
-      workspacePaths
-        .normalizeWorkspaceRoot(workspaceRoot, {
-          createIfMissing: createIfMissing === true,
-        })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new OrchestrationDispatchCommandError({
-                message: cause.message,
-              }),
-          ),
-        );
-
     if (command.type === "project.create") {
       return {
         ...command,
-        workspaceRoot: yield* normalizeProjectWorkspaceRootForCreate(
-          command.workspaceRoot,
-          command.createWorkspaceRootIfMissing,
-        ),
-        createWorkspaceRootIfMissing: command.createWorkspaceRootIfMissing === true,
+        workspaceRoot: yield* normalizeProjectWorkspaceRoot(command.workspaceRoot),
       } satisfies OrchestrationCommand;
     }
 

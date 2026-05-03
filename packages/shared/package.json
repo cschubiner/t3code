@@ -40,33 +40,21 @@
       "types": "./src/Struct.ts",
       "import": "./src/Struct.ts"
     },
-    "./serverSettings": {
-      "types": "./src/serverSettings.ts",
-      "import": "./src/serverSettings.ts"
-    },
     "./String": {
       "types": "./src/String.ts",
       "import": "./src/String.ts"
     },
-    "./projectScripts": {
-      "types": "./src/projectScripts.ts",
-      "import": "./src/projectScripts.ts"
+    "./fuzzySearch": {
+      "types": "./src/fuzzySearch.ts",
+      "import": "./src/fuzzySearch.ts"
     },
-    "./searchRanking": {
-      "types": "./src/searchRanking.ts",
-      "import": "./src/searchRanking.ts"
+    "./providerAuth": {
+      "types": "./src/providerAuth.ts",
+      "import": "./src/providerAuth.ts"
     },
-    "./qrCode": {
-      "types": "./src/qrCode.ts",
-      "import": "./src/qrCode.ts"
-    },
-    "./cliArgs": {
-      "types": "./src/cliArgs.ts",
-      "import": "./src/cliArgs.ts"
-    },
-    "./path": {
-      "types": "./src/path.ts",
-      "import": "./src/path.ts"
+    "./githubPullRequest": {
+      "types": "./src/githubPullRequest.ts",
+      "import": "./src/githubPullRequest.ts"
     }
   },
   "scripts": {

@@ -37,7 +37,6 @@ const TERMINAL_WORD_BACKWARD = "\u001bb";
 const TERMINAL_WORD_FORWARD = "\u001bf";
 const TERMINAL_LINE_START = "\u0001";
 const TERMINAL_LINE_END = "\u0005";
-const TERMINAL_DELETE_TO_LINE_START = "\u0015";
 const EVENT_CODE_KEY_ALIASES: Readonly<Record<string, readonly string[]>> = {
   BracketLeft: ["["],
   BracketRight: ["]"],
@@ -262,6 +261,8 @@ export function threadTraversalDirectionFromCommand(
 ): "previous" | "next" | null {
   if (command === "thread.previous") return "previous";
   if (command === "thread.next") return "next";
+  if (command === "sidebar.thread.previous") return "previous";
+  if (command === "sidebar.thread.next") return "next";
   return null;
 }
 
@@ -323,6 +324,70 @@ export function isDiffToggleShortcut(
   return matchesCommandShortcut(event, keybindings, "diff.toggle", options);
 }
 
+export function isThreadSearchShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "thread.search", options);
+}
+
+export function isThreadsSearchShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "threads.search", options);
+}
+
+export function isSidebarHistoryPreviousShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "sidebar.history.previous", options);
+}
+
+export function isSidebarHistoryNextShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "sidebar.history.next", options);
+}
+
+export function isSidebarThreadPreviousShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "sidebar.thread.previous", options);
+}
+
+export function isSidebarThreadNextShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "sidebar.thread.next", options);
+}
+
+export function isSidebarProjectPreviousShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "sidebar.project.previous", options);
+}
+
+export function isSidebarProjectNextShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "sidebar.project.next", options);
+}
+
 export function isChatNewShortcut(
   event: ShortcutEventLike,
   keybindings: ResolvedKeybindingsConfig,
@@ -369,28 +434,6 @@ export function isTerminalClearShortcut(
     !event.altKey &&
     !event.shiftKey
   );
-}
-
-export function terminalDeleteShortcutData(
-  event: ShortcutEventLike,
-  platform = navigator.platform,
-): string | null {
-  if (event.type !== undefined && event.type !== "keydown") {
-    return null;
-  }
-
-  if (!isMacPlatform(platform)) {
-    return null;
-  }
-
-  const key = normalizeEventKey(event.key);
-  if (key !== "backspace") {
-    return null;
-  }
-
-  return event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey
-    ? TERMINAL_DELETE_TO_LINE_START
-    : null;
 }
 
 export function terminalNavigationShortcutData(

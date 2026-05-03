@@ -127,13 +127,22 @@ function ComboboxInput({
   );
 }
 
-function ComboboxTrigger({ className, children, ...props }: ComboboxPrimitive.Trigger.Props) {
-  return (
-    <ComboboxPrimitive.Trigger className={className} data-slot="combobox-trigger" {...props}>
-      {children}
-    </ComboboxPrimitive.Trigger>
-  );
-}
+const ComboboxTrigger = React.forwardRef<HTMLButtonElement, ComboboxPrimitive.Trigger.Props>(
+  ({ className, children, ...props }, ref) => {
+    return (
+      <ComboboxPrimitive.Trigger
+        ref={ref}
+        className={className}
+        data-slot="combobox-trigger"
+        {...props}
+      >
+        {children}
+      </ComboboxPrimitive.Trigger>
+    );
+  },
+);
+
+ComboboxTrigger.displayName = "ComboboxTrigger";
 
 function ComboboxPopup({
   className,
@@ -275,20 +284,6 @@ function ComboboxList({ className, ...props }: ComboboxPrimitive.List.Props) {
   );
 }
 
-/**
- * A variant of `ComboboxList` without `ScrollArea`, for use when
- * an external virtualizer (e.g. LegendList) owns the scroll container.
- */
-function ComboboxListVirtualized({ className, ...props }: ComboboxPrimitive.List.Props) {
-  return (
-    <ComboboxPrimitive.List
-      className={cn("not-empty:px-1 not-empty:py-1", className)}
-      data-slot="combobox-list"
-      {...props}
-    />
-  );
-}
-
 function ComboboxClear({ className, ...props }: ComboboxPrimitive.Clear.Props) {
   return <ComboboxPrimitive.Clear className={className} data-slot="combobox-clear" {...props} />;
 }
@@ -385,7 +380,6 @@ export {
   ComboboxEmpty,
   ComboboxValue,
   ComboboxList,
-  ComboboxListVirtualized,
   ComboboxClear,
   ComboboxStatus,
   ComboboxRow,

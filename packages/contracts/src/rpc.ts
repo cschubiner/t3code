@@ -2,16 +2,21 @@ import { Schema } from "effect";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
+import {
+  CodexImportError,
+  CodexImportImportSessionsInput,
+  CodexImportImportSessionsResult,
+  CodexImportListSessionsInput,
+  CodexImportPeekSessionInput,
+  CodexImportPeekSessionResult,
+  CodexImportSessionSummary,
+} from "./codexImport";
 import { OpenError, OpenInEditorInput } from "./editor";
-import { AuthAccessStreamEvent } from "./auth";
-import { FilesystemBrowseInput, FilesystemBrowseResult, FilesystemBrowseError } from "./filesystem";
 import {
   GitActionProgressEvent,
   GitCheckoutInput,
-  GitCheckoutResult,
   GitCommandError,
   GitCreateBranchInput,
-  GitCreateBranchResult,
   GitCreateWorktreeInput,
   GitCreateWorktreeResult,
   GitInitInput,
@@ -28,16 +33,17 @@ import {
   GitRunStackedActionInput,
   GitStatusInput,
   GitStatusResult,
-  GitStatusStreamEvent,
 } from "./git";
 import { KeybindingsConfigError } from "./keybindings";
 import {
   ClientOrchestrationCommand,
+  OrchestrationEvent,
   ORCHESTRATION_WS_METHODS,
   OrchestrationDispatchCommandError,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetSnapshotError,
+  OrchestrationGetSnapshotInput,
   OrchestrationGetTurnDiffError,
   OrchestrationGetTurnDiffInput,
   OrchestrationReplayEventsError,
@@ -52,6 +58,15 @@ import {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project";
+import { SkillSearchError, SkillSearchInput, SkillSearchResult } from "./skills";
+import {
+  SnippetCreateInput,
+  SnippetCreateResult,
+  SnippetDeleteInput,
+  SnippetLibraryError,
+  SnippetLibraryUpdatedPayload,
+  SnippetListResult,
+} from "./snippets";
 import {
   TerminalClearInput,
   TerminalCloseInput,
@@ -80,16 +95,20 @@ export const WS_METHODS = {
   projectsRemove: "projects.remove",
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
+  skillsSearch: "skills.search",
+  snippetsList: "snippets.list",
+  snippetsCreate: "snippets.create",
+  snippetsDelete: "snippets.delete",
+  codexImportListSessions: "codexImport.listSessions",
+  codexImportPeekSession: "codexImport.peekSession",
+  codexImportImportSessions: "codexImport.importSessions",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
 
-  // Filesystem methods
-  filesystemBrowse: "filesystem.browse",
-
   // Git methods
   gitPull: "git.pull",
-  gitRefreshStatus: "git.refreshStatus",
+  gitStatus: "git.status",
   gitRunStackedAction: "git.runStackedAction",
   gitListBranches: "git.listBranches",
   gitCreateWorktree: "git.createWorktree",
@@ -116,11 +135,11 @@ export const WS_METHODS = {
   serverUpdateSettings: "server.updateSettings",
 
   // Streaming subscriptions
-  subscribeGitStatus: "subscribeGitStatus",
+  subscribeOrchestrationDomainEvents: "subscribeOrchestrationDomainEvents",
   subscribeTerminalEvents: "subscribeTerminalEvents",
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
-  subscribeAuthAccess: "subscribeAuthAccess",
+  subscribeSnippetsUpdated: "subscribeSnippetsUpdated",
 } as const;
 
 export const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -164,34 +183,62 @@ export const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
   error: ProjectWriteFileError,
 });
 
+export const WsSkillsSearchRpc = Rpc.make(WS_METHODS.skillsSearch, {
+  payload: SkillSearchInput,
+  success: SkillSearchResult,
+  error: SkillSearchError,
+});
+
+export const WsSnippetsListRpc = Rpc.make(WS_METHODS.snippetsList, {
+  payload: Schema.Struct({}),
+  success: SnippetListResult,
+  error: SnippetLibraryError,
+});
+
+export const WsSnippetsCreateRpc = Rpc.make(WS_METHODS.snippetsCreate, {
+  payload: SnippetCreateInput,
+  success: SnippetCreateResult,
+  error: SnippetLibraryError,
+});
+
+export const WsSnippetsDeleteRpc = Rpc.make(WS_METHODS.snippetsDelete, {
+  payload: SnippetDeleteInput,
+  error: SnippetLibraryError,
+});
+
+export const WsCodexImportListSessionsRpc = Rpc.make(WS_METHODS.codexImportListSessions, {
+  payload: CodexImportListSessionsInput,
+  success: Schema.Array(CodexImportSessionSummary),
+  error: CodexImportError,
+});
+
+export const WsCodexImportPeekSessionRpc = Rpc.make(WS_METHODS.codexImportPeekSession, {
+  payload: CodexImportPeekSessionInput,
+  success: CodexImportPeekSessionResult,
+  error: CodexImportError,
+});
+
+export const WsCodexImportImportSessionsRpc = Rpc.make(WS_METHODS.codexImportImportSessions, {
+  payload: CodexImportImportSessionsInput,
+  success: CodexImportImportSessionsResult,
+  error: CodexImportError,
+});
+
 export const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {
   payload: OpenInEditorInput,
   error: OpenError,
 });
 
-export const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
-  payload: FilesystemBrowseInput,
-  success: FilesystemBrowseResult,
-  error: FilesystemBrowseError,
-});
-
-export const WsSubscribeGitStatusRpc = Rpc.make(WS_METHODS.subscribeGitStatus, {
+export const WsGitStatusRpc = Rpc.make(WS_METHODS.gitStatus, {
   payload: GitStatusInput,
-  success: GitStatusStreamEvent,
+  success: GitStatusResult,
   error: GitManagerServiceError,
-  stream: true,
 });
 
 export const WsGitPullRpc = Rpc.make(WS_METHODS.gitPull, {
   payload: GitPullInput,
   success: GitPullResult,
   error: GitCommandError,
-});
-
-export const WsGitRefreshStatusRpc = Rpc.make(WS_METHODS.gitRefreshStatus, {
-  payload: GitStatusInput,
-  success: GitStatusResult,
-  error: GitManagerServiceError,
 });
 
 export const WsGitRunStackedActionRpc = Rpc.make(WS_METHODS.gitRunStackedAction, {
@@ -232,13 +279,11 @@ export const WsGitRemoveWorktreeRpc = Rpc.make(WS_METHODS.gitRemoveWorktree, {
 
 export const WsGitCreateBranchRpc = Rpc.make(WS_METHODS.gitCreateBranch, {
   payload: GitCreateBranchInput,
-  success: GitCreateBranchResult,
   error: GitCommandError,
 });
 
 export const WsGitCheckoutRpc = Rpc.make(WS_METHODS.gitCheckout, {
   payload: GitCheckoutInput,
-  success: GitCheckoutResult,
   error: GitCommandError,
 });
 
@@ -279,6 +324,12 @@ export const WsTerminalCloseRpc = Rpc.make(WS_METHODS.terminalClose, {
   error: TerminalError,
 });
 
+export const WsOrchestrationGetSnapshotRpc = Rpc.make(ORCHESTRATION_WS_METHODS.getSnapshot, {
+  payload: OrchestrationGetSnapshotInput,
+  success: OrchestrationRpcSchemas.getSnapshot.output,
+  error: OrchestrationGetSnapshotError,
+});
+
 export const WsOrchestrationDispatchCommandRpc = Rpc.make(
   ORCHESTRATION_WS_METHODS.dispatchCommand,
   {
@@ -309,19 +360,11 @@ export const WsOrchestrationReplayEventsRpc = Rpc.make(ORCHESTRATION_WS_METHODS.
   error: OrchestrationReplayEventsError,
 });
 
-export const WsOrchestrationSubscribeShellRpc = Rpc.make(ORCHESTRATION_WS_METHODS.subscribeShell, {
-  payload: OrchestrationRpcSchemas.subscribeShell.input,
-  success: OrchestrationRpcSchemas.subscribeShell.output,
-  error: OrchestrationGetSnapshotError,
-  stream: true,
-});
-
-export const WsOrchestrationSubscribeThreadRpc = Rpc.make(
-  ORCHESTRATION_WS_METHODS.subscribeThread,
+export const WsSubscribeOrchestrationDomainEventsRpc = Rpc.make(
+  WS_METHODS.subscribeOrchestrationDomainEvents,
   {
-    payload: OrchestrationRpcSchemas.subscribeThread.input,
-    success: OrchestrationRpcSchemas.subscribeThread.output,
-    error: OrchestrationGetSnapshotError,
+    payload: Schema.Struct({}),
+    success: OrchestrationEvent,
     stream: true,
   },
 );
@@ -345,9 +388,9 @@ export const WsSubscribeServerLifecycleRpc = Rpc.make(WS_METHODS.subscribeServer
   stream: true,
 });
 
-export const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess, {
+export const WsSubscribeSnippetsUpdatedRpc = Rpc.make(WS_METHODS.subscribeSnippetsUpdated, {
   payload: Schema.Struct({}),
-  success: AuthAccessStreamEvent,
+  success: SnippetLibraryUpdatedPayload,
   stream: true,
 });
 
@@ -359,11 +402,16 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerUpdateSettingsRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsWriteFileRpc,
+  WsSkillsSearchRpc,
+  WsSnippetsListRpc,
+  WsSnippetsCreateRpc,
+  WsSnippetsDeleteRpc,
+  WsCodexImportListSessionsRpc,
+  WsCodexImportPeekSessionRpc,
+  WsCodexImportImportSessionsRpc,
   WsShellOpenInEditorRpc,
-  WsFilesystemBrowseRpc,
-  WsSubscribeGitStatusRpc,
+  WsGitStatusRpc,
   WsGitPullRpc,
-  WsGitRefreshStatusRpc,
   WsGitRunStackedActionRpc,
   WsGitResolvePullRequestRpc,
   WsGitPreparePullRequestThreadRpc,
@@ -379,14 +427,14 @@ export const WsRpcGroup = RpcGroup.make(
   WsTerminalClearRpc,
   WsTerminalRestartRpc,
   WsTerminalCloseRpc,
+  WsSubscribeOrchestrationDomainEventsRpc,
   WsSubscribeTerminalEventsRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
-  WsSubscribeAuthAccessRpc,
+  WsSubscribeSnippetsUpdatedRpc,
+  WsOrchestrationGetSnapshotRpc,
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetTurnDiffRpc,
   WsOrchestrationGetFullThreadDiffRpc,
   WsOrchestrationReplayEventsRpc,
-  WsOrchestrationSubscribeShellRpc,
-  WsOrchestrationSubscribeThreadRpc,
 );

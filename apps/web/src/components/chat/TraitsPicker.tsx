@@ -3,8 +3,8 @@ import {
   type CodexModelOptions,
   type ProviderKind,
   type ProviderModelOptions,
-  type ScopedThreadRef,
   type ServerProviderModel,
+  type ThreadId,
 } from "@t3tools/contracts";
 import {
   applyClaudePromptEffortPrefix,
@@ -28,19 +28,18 @@ import {
   MenuSeparator as MenuDivider,
   MenuTrigger,
 } from "../ui/menu";
-import { useComposerDraftStore, DraftId } from "../../composerDraftStore";
+import { useComposerDraftStore } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
 import { cn } from "~/lib/utils";
 
 type ProviderOptions = ProviderModelOptions[ProviderKind];
 type TraitsPersistence =
   | {
-      threadRef?: ScopedThreadRef;
-      draftId?: DraftId;
+      threadId: ThreadId;
       onModelOptionsChange?: never;
     }
   | {
-      threadRef?: undefined;
+      threadId?: undefined;
       onModelOptionsChange: (nextOptions: ProviderOptions | undefined) => void;
     };
 
@@ -168,13 +167,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
         persistence.onModelOptionsChange(nextOptions);
         return;
       }
-      const threadTarget = persistence.threadRef ?? persistence.draftId;
-      if (!threadTarget) {
-        return;
-      }
-      setProviderModelOptions(threadTarget, provider, nextOptions, {
-        persistSticky: true,
-      });
+      setProviderModelOptions(persistence.threadId, provider, nextOptions, { persistSticky: true });
     },
     [persistence, provider, setProviderModelOptions],
   );

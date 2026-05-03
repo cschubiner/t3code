@@ -2,23 +2,26 @@ import {
   ArchiveIcon,
   ArchiveX,
   ChevronDownIcon,
+  CopyIcon,
+  ExternalLinkIcon,
   InfoIcon,
   LoaderIcon,
   PlusIcon,
   RefreshCwIcon,
+  ShieldIcon,
+  Undo2Icon,
   XIcon,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   PROVIDER_DISPLAY_NAMES,
-  type DesktopUpdateChannel,
-  type ScopedThreadRef,
+  type DesktopRemoteAccessStatus,
   type ProviderKind,
   type ServerProvider,
   type ServerProviderModel,
+  ThreadId,
 } from "@t3tools/contracts";
-import { scopeThreadRef } from "@t3tools/client-runtime";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 import { Equal } from "effect";
@@ -46,13 +49,8 @@ import {
   getCustomModelOptionsByProvider,
   resolveAppModelSelectionState,
 } from "../../modelSelection";
-import { ensureLocalApi, readLocalApi } from "../../localApi";
-import { useShallow } from "zustand/react/shallow";
-import {
-  selectProjectsAcrossEnvironments,
-  selectThreadShellsAcrossEnvironments,
-  useStore,
-} from "../../store";
+import { ensureNativeApi, readNativeApi } from "../../nativeApi";
+import { useStore } from "../../store";
 import { formatRelativeTime, formatRelativeTimeLabel } from "../../timestampFormat";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
@@ -61,20 +59,13 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "..
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import {
-  SettingResetButton,
-  SettingsPageContainer,
-  SettingsRow,
-  SettingsSection,
-  useRelativeTimeTick,
-} from "./settingsLayout";
 import { ProjectFavicon } from "../ProjectFavicon";
 import {
   useServerAvailableEditors,
   useServerKeybindingsConfigPath,
-  useServerObservability,
   useServerProviders,
 } from "../../rpc/serverState";
 
@@ -199,6 +190,19 @@ function getProviderVersionLabel(version: string | null | undefined) {
   return version.startsWith("v") ? version : `v${version}`;
 }
 
+function formatSkillRootsForTextarea(roots: readonly string[]) {
+  return roots.join("\n");
+}
+
+function useRelativeTimeTick(intervalMs = 1_000) {
+  const [tick, setTick] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setTick(Date.now()), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+  return tick;
+}
+
 function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }) {
   useRelativeTimeTick();
   const lastCheckedRelative = lastCheckedAt ? formatRelativeTime(lastCheckedAt) : null;
@@ -221,6 +225,104 @@ function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }
   );
 }
 
+function SettingsSection({
+  title,
+  icon,
+  headerAction,
+  children,
+}: {
+  title: string;
+  icon?: ReactNode;
+  headerAction?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h2 className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+          {icon}
+          {title}
+        </h2>
+        {headerAction}
+      </div>
+      <div className="relative overflow-hidden rounded-2xl border bg-card text-card-foreground shadow-xs/5 not-dark:bg-clip-padding before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-2xl)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)]">
+        {children}
+      </div>
+    </section>
+  );
+}
+
+function SettingsRow({
+  title,
+  description,
+  status,
+  resetAction,
+  control,
+  children,
+}: {
+  title: ReactNode;
+  description: string;
+  status?: ReactNode;
+  resetAction?: ReactNode;
+  control?: ReactNode;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="border-t border-border px-4 py-4 first:border-t-0 sm:px-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0 flex-1 space-y-1">
+          <div className="flex min-h-5 items-center gap-1.5">
+            <h3 className="text-sm font-medium text-foreground">{title}</h3>
+            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
+              {resetAction}
+            </span>
+          </div>
+          <p className="text-xs text-muted-foreground">{description}</p>
+          {status ? <div className="pt-1 text-[11px] text-muted-foreground">{status}</div> : null}
+        </div>
+        {control ? (
+          <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
+            {control}
+          </div>
+        ) : null}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function SettingResetButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label={`Reset ${label} to default`}
+            className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+            onClick={(event) => {
+              event.stopPropagation();
+              onClick();
+            }}
+          >
+            <Undo2Icon className="size-3" />
+          </Button>
+        }
+      />
+      <TooltipPopup side="top">Reset to default</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+function SettingsPageContainer({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex-1 overflow-y-auto p-6">
+      <div className="mx-auto flex w-full max-w-4xl flex-col gap-6">{children}</div>
+    </div>
+  );
+}
+
 function AboutVersionTitle() {
   return (
     <span className="inline-flex items-center gap-2">
@@ -233,42 +335,8 @@ function AboutVersionTitle() {
 function AboutVersionSection() {
   const queryClient = useQueryClient();
   const updateStateQuery = useDesktopUpdateState();
-  const [isChangingUpdateChannel, setIsChangingUpdateChannel] = useState(false);
 
   const updateState = updateStateQuery.data ?? null;
-  const hasDesktopBridge = typeof window !== "undefined" && Boolean(window.desktopBridge);
-  const selectedUpdateChannel = updateState?.channel ?? "latest";
-
-  const handleUpdateChannelChange = useCallback(
-    (channel: DesktopUpdateChannel) => {
-      const bridge = window.desktopBridge;
-      if (
-        !bridge ||
-        typeof bridge.setUpdateChannel !== "function" ||
-        channel === selectedUpdateChannel
-      ) {
-        return;
-      }
-
-      setIsChangingUpdateChannel(true);
-      void bridge
-        .setUpdateChannel(channel)
-        .then((state) => {
-          setDesktopUpdateStateQueryData(queryClient, state);
-        })
-        .catch((error: unknown) => {
-          toastManager.add({
-            type: "error",
-            title: "Could not change update track",
-            description: error instanceof Error ? error.message : "Update track change failed.",
-          });
-        })
-        .finally(() => {
-          setIsChangingUpdateChannel(false);
-        });
-    },
-    [queryClient, selectedUpdateChannel],
-  );
 
   const handleButtonClick = useCallback(() => {
     const bridge = window.desktopBridge;
@@ -358,66 +426,56 @@ function AboutVersionSection() {
       : "Current version of the application.";
 
   return (
-    <>
-      <SettingsRow
-        title={<AboutVersionTitle />}
-        description={description}
-        control={
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  size="xs"
-                  variant={action === "install" ? "default" : "outline"}
-                  disabled={buttonDisabled}
-                  onClick={handleButtonClick}
-                >
-                  {buttonLabel}
-                </Button>
-              }
-            />
-            {buttonTooltip ? <TooltipPopup>{buttonTooltip}</TooltipPopup> : null}
-          </Tooltip>
-        }
-      />
-      <SettingsRow
-        title="Update track"
-        description="Stable follows full releases. Nightly follows the nightly desktop channel and can switch back to stable immediately."
-        control={
-          <Select
-            value={selectedUpdateChannel}
-            onValueChange={(value) => {
-              handleUpdateChannelChange(value as DesktopUpdateChannel);
-            }}
-          >
-            <SelectTrigger
-              className="w-full sm:w-40"
-              aria-label="Update track"
-              disabled={!hasDesktopBridge || isChangingUpdateChannel}
-            >
-              <SelectValue>
-                {selectedUpdateChannel === "nightly" ? "Nightly" : "Stable"}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectPopup align="end" alignItemWithTrigger={false}>
-              <SelectItem hideIndicator value="latest">
-                Stable
-              </SelectItem>
-              <SelectItem hideIndicator value="nightly">
-                Nightly
-              </SelectItem>
-            </SelectPopup>
-          </Select>
-        }
-      />
-    </>
+    <SettingsRow
+      title={<AboutVersionTitle />}
+      description={description}
+      control={
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                size="xs"
+                variant={action === "install" ? "default" : "outline"}
+                disabled={buttonDisabled}
+                onClick={handleButtonClick}
+              >
+                {buttonLabel}
+              </Button>
+            }
+          />
+          {buttonTooltip ? <TooltipPopup>{buttonTooltip}</TooltipPopup> : null}
+        </Tooltip>
+      }
+    />
   );
+}
+
+function remoteAccessStateLabel(status: DesktopRemoteAccessStatus | null): string {
+  switch (status?.state) {
+    case "ready":
+      return "Ready";
+    case "starting":
+      return "Starting";
+    case "unavailable":
+      return "Unavailable";
+    case "error":
+      return "Error";
+    case "disabled":
+      return "Disabled";
+    default:
+      return "Checking";
+  }
 }
 
 export function useSettingsRestore(onRestored?: () => void) {
   const { theme, setTheme } = useTheme();
   const settings = useSettings();
   const { resetSettings } = useUpdateSettings();
+  const isSkillDiscoveryDirty =
+    settings.extraSkillRoots.length !== DEFAULT_UNIFIED_SETTINGS.extraSkillRoots.length ||
+    settings.extraSkillRoots.some(
+      (root, index) => root !== DEFAULT_UNIFIED_SETTINGS.extraSkillRoots[index],
+    );
 
   const isGitWritingModelDirty = !Equal.equals(
     settings.textGenerationModelSelection ?? null,
@@ -444,9 +502,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
         ? ["New thread mode"]
         : []),
-      ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
-        ? ["Add project base directory"]
-        : []),
       ...(settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive
         ? ["Archive confirmation"]
         : []),
@@ -454,14 +509,15 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Delete confirmation"]
         : []),
       ...(isGitWritingModelDirty ? ["Git writing model"] : []),
+      ...(isSkillDiscoveryDirty ? ["Skill discovery"] : []),
       ...(areProviderSettingsDirty ? ["Providers"] : []),
     ],
     [
       areProviderSettingsDirty,
       isGitWritingModelDirty,
+      isSkillDiscoveryDirty,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
-      settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
@@ -472,8 +528,8 @@ export function useSettingsRestore(onRestored?: () => void) {
 
   const restoreDefaults = useCallback(async () => {
     if (changedSettingLabels.length === 0) return;
-    const api = readLocalApi();
-    const confirmed = await (api ?? ensureLocalApi()).dialogs.confirm(
+    const api = readNativeApi();
+    const confirmed = await (api ?? ensureNativeApi()).dialogs.confirm(
       ["Restore default settings?", `This will reset: ${changedSettingLabels.join(", ")}.`].join(
         "\n",
       ),
@@ -495,13 +551,12 @@ export function GeneralSettingsPanel() {
   const { theme, setTheme } = useTheme();
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
-  const [openingPathByTarget, setOpeningPathByTarget] = useState({
-    keybindings: false,
-    logsDirectory: false,
-  });
-  const [openPathErrorByTarget, setOpenPathErrorByTarget] = useState<
-    Partial<Record<"keybindings" | "logsDirectory", string | null>>
-  >({});
+  const [remoteAccessStatus, setRemoteAccessStatus] = useState<DesktopRemoteAccessStatus | null>(
+    null,
+  );
+  const [isTogglingRemoteAccess, setIsTogglingRemoteAccess] = useState(false);
+  const [isOpeningKeybindings, setIsOpeningKeybindings] = useState(false);
+  const [openKeybindingsError, setOpenKeybindingsError] = useState<string | null>(null);
   const [openProviderDetails, setOpenProviderDetails] = useState<Record<ProviderKind, boolean>>({
     codex: Boolean(
       settings.providers.codex.binaryPath !== DEFAULT_UNIFIED_SETTINGS.providers.codex.binaryPath ||
@@ -511,8 +566,7 @@ export function GeneralSettingsPanel() {
     claudeAgent: Boolean(
       settings.providers.claudeAgent.binaryPath !==
         DEFAULT_UNIFIED_SETTINGS.providers.claudeAgent.binaryPath ||
-      settings.providers.claudeAgent.customModels.length > 0 ||
-      settings.providers.claudeAgent.launchArgs !== "",
+      settings.providers.claudeAgent.customModels.length > 0,
     ),
   });
   const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
@@ -531,7 +585,7 @@ export function GeneralSettingsPanel() {
     if (refreshingRef.current) return;
     refreshingRef.current = true;
     setIsRefreshingProviders(true);
-    void ensureLocalApi()
+    void ensureNativeApi()
       .server.refreshProviders()
       .catch((error: unknown) => {
         console.warn("Failed to refresh providers", error);
@@ -544,21 +598,9 @@ export function GeneralSettingsPanel() {
 
   const keybindingsConfigPath = useServerKeybindingsConfigPath();
   const availableEditors = useServerAvailableEditors();
-  const observability = useServerObservability();
   const serverProviders = useServerProviders();
   const codexHomePath = settings.providers.codex.homePath;
-  const logsDirectoryPath = observability?.logsDirectoryPath ?? null;
-  const diagnosticsDescription = (() => {
-    const exports: string[] = [];
-    if (observability?.otlpTracesEnabled && observability.otlpTracesUrl) {
-      exports.push(`traces to ${observability.otlpTracesUrl}`);
-    }
-    if (observability?.otlpMetricsEnabled && observability.otlpMetricsUrl) {
-      exports.push(`metrics to ${observability.otlpMetricsUrl}`);
-    }
-    const mode = observability?.localTracingEnabled ? "Local trace file" : "Terminal logs only";
-    return exports.length > 0 ? `${mode}. OTLP exporting ${exports.join(" and ")}.` : `${mode}.`;
-  })();
+  const extraSkillRoots = settings.extraSkillRoots;
 
   const textGenerationModelSelection = resolveAppModelSelectionState(settings, serverProviders);
   const textGenProvider = textGenerationModelSelection.provider;
@@ -575,49 +617,27 @@ export function GeneralSettingsPanel() {
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
   );
 
-  const openInPreferredEditor = useCallback(
-    (target: "keybindings" | "logsDirectory", path: string | null, failureMessage: string) => {
-      if (!path) return;
-      setOpenPathErrorByTarget((existing) => ({ ...existing, [target]: null }));
-      setOpeningPathByTarget((existing) => ({ ...existing, [target]: true }));
-
-      const editor = resolveAndPersistPreferredEditor(availableEditors ?? []);
-      if (!editor) {
-        setOpenPathErrorByTarget((existing) => ({
-          ...existing,
-          [target]: "No available editors found.",
-        }));
-        setOpeningPathByTarget((existing) => ({ ...existing, [target]: false }));
-        return;
-      }
-
-      void ensureLocalApi()
-        .shell.openInEditor(path, editor)
-        .catch((error) => {
-          setOpenPathErrorByTarget((existing) => ({
-            ...existing,
-            [target]: error instanceof Error ? error.message : failureMessage,
-          }));
-        })
-        .finally(() => {
-          setOpeningPathByTarget((existing) => ({ ...existing, [target]: false }));
-        });
-    },
-    [availableEditors],
-  );
-
   const openKeybindingsFile = useCallback(() => {
-    openInPreferredEditor("keybindings", keybindingsConfigPath, "Unable to open keybindings file.");
-  }, [keybindingsConfigPath, openInPreferredEditor]);
-
-  const openLogsDirectory = useCallback(() => {
-    openInPreferredEditor("logsDirectory", logsDirectoryPath, "Unable to open logs folder.");
-  }, [logsDirectoryPath, openInPreferredEditor]);
-
-  const openKeybindingsError = openPathErrorByTarget.keybindings ?? null;
-  const openDiagnosticsError = openPathErrorByTarget.logsDirectory ?? null;
-  const isOpeningKeybindings = openingPathByTarget.keybindings;
-  const isOpeningLogsDirectory = openingPathByTarget.logsDirectory;
+    if (!keybindingsConfigPath) return;
+    setOpenKeybindingsError(null);
+    setIsOpeningKeybindings(true);
+    const editor = resolveAndPersistPreferredEditor(availableEditors ?? []);
+    if (!editor) {
+      setOpenKeybindingsError("No available editors found.");
+      setIsOpeningKeybindings(false);
+      return;
+    }
+    void ensureNativeApi()
+      .shell.openInEditor(keybindingsConfigPath, editor)
+      .catch((error) => {
+        setOpenKeybindingsError(
+          error instanceof Error ? error.message : "Unable to open keybindings file.",
+        );
+      })
+      .finally(() => {
+        setIsOpeningKeybindings(false);
+      });
+  }, [availableEditors, keybindingsConfigPath]);
 
   const addCustomModel = useCallback(
     (provider: ProviderKind) => {
@@ -754,8 +774,186 @@ export function GeneralSettingsPanel() {
         )
       : null;
 
+  useEffect(() => {
+    if (!window.desktopBridge) {
+      return;
+    }
+
+    let disposed = false;
+    void window.desktopBridge.getRemoteAccessStatus().then((status) => {
+      if (!disposed) {
+        setRemoteAccessStatus(status);
+      }
+    });
+
+    const unsubscribe = window.desktopBridge.onRemoteAccessStatus((status) => {
+      if (!disposed) {
+        setRemoteAccessStatus(status);
+      }
+    });
+
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, []);
+
+  const copyRemoteAccessUrl = useCallback(() => {
+    if (!remoteAccessStatus?.preferredUrl) {
+      return;
+    }
+
+    if (typeof navigator === "undefined" || navigator.clipboard?.writeText === undefined) {
+      toastManager.add({
+        type: "error",
+        title: "Clipboard unavailable",
+        description: "Copy the Tailscale URL manually from the field below.",
+      });
+      return;
+    }
+
+    void navigator.clipboard
+      .writeText(remoteAccessStatus.preferredUrl)
+      .then(() => {
+        toastManager.add({
+          type: "success",
+          title: "Remote URL copied",
+          description: "Open it on a phone connected to the same tailnet.",
+        });
+      })
+      .catch((error) => {
+        toastManager.add({
+          type: "error",
+          title: "Unable to copy remote URL",
+          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+        });
+      });
+  }, [remoteAccessStatus]);
+
+  const openRemoteAccessUrl = useCallback(() => {
+    if (!remoteAccessStatus?.preferredUrl) {
+      return;
+    }
+
+    const api = ensureNativeApi();
+    void api.shell.openExternal(remoteAccessStatus.preferredUrl).catch((error) => {
+      toastManager.add({
+        type: "error",
+        title: "Unable to open remote URL",
+        description: error instanceof Error ? error.message : "An unexpected error occurred.",
+      });
+    });
+  }, [remoteAccessStatus]);
+
+  const toggleRemoteAccess = useCallback((enabled: boolean) => {
+    if (!window.desktopBridge) {
+      return;
+    }
+
+    setIsTogglingRemoteAccess(true);
+    void window.desktopBridge
+      .setRemoteAccessEnabled(enabled)
+      .then((status) => {
+        setRemoteAccessStatus(status);
+      })
+      .catch((error) => {
+        toastManager.add({
+          type: "error",
+          title: "Unable to update remote access",
+          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+        });
+      })
+      .finally(() => {
+        setIsTogglingRemoteAccess(false);
+      });
+  }, []);
+
   return (
     <SettingsPageContainer>
+      {isElectron ? (
+        <SettingsSection title="Remote Access" icon={<ShieldIcon className="size-3.5" />}>
+          <SettingsRow
+            title={
+              <span className="inline-flex items-center gap-2">
+                <ShieldIcon className="size-4 text-sky-600" />
+                <span>Private Remote Access</span>
+              </span>
+            }
+            description="Expose the live desktop app privately over Tailscale so another device on your tailnet can use the same session."
+            status={
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-full border border-border px-2 py-0.5 text-[11px] font-medium text-foreground">
+                    {remoteAccessStateLabel(remoteAccessStatus)}
+                  </span>
+                  <span>Tailscale only. Devices must be on the same tailnet.</span>
+                </div>
+                {remoteAccessStatus?.message ? (
+                  <div className="text-amber-700 dark:text-amber-400">
+                    {remoteAccessStatus.message}
+                  </div>
+                ) : remoteAccessStatus?.preferredUrl ? (
+                  <div>Open the preferred URL on a phone over Wi-Fi or cellular.</div>
+                ) : null}
+              </div>
+            }
+            control={
+              <Switch
+                checked={remoteAccessStatus?.enabled === true}
+                disabled={isTogglingRemoteAccess}
+                onCheckedChange={toggleRemoteAccess}
+                aria-label="Toggle private remote access"
+              />
+            }
+          >
+            <div className="mt-4 space-y-3 rounded-xl border bg-background px-4 py-3 text-xs text-muted-foreground">
+              <div>
+                <div className="font-medium text-foreground">Preferred URL</div>
+                <div className="mt-1 break-all">
+                  {remoteAccessStatus?.preferredUrl ?? "Enable remote access to generate a URL."}
+                </div>
+              </div>
+
+              {remoteAccessStatus && remoteAccessStatus.urls.length > 1 ? (
+                <div>
+                  <div className="font-medium text-foreground">Also available on</div>
+                  <div className="mt-1 space-y-1">
+                    {remoteAccessStatus.urls
+                      .filter((url) => url !== remoteAccessStatus.preferredUrl)
+                      .map((url) => (
+                        <div key={url} className="break-all">
+                          {url}
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="flex flex-wrap gap-2 pt-1">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={copyRemoteAccessUrl}
+                  disabled={!remoteAccessStatus?.preferredUrl}
+                >
+                  <CopyIcon className="size-4" />
+                  Copy URL
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={openRemoteAccessUrl}
+                  disabled={!remoteAccessStatus?.preferredUrl}
+                >
+                  <ExternalLinkIcon className="size-4" />
+                  Open URL
+                </Button>
+              </div>
+            </div>
+          </SettingsRow>
+        </SettingsSection>
+      ) : null}
+
       <SettingsSection title="General">
         <SettingsRow
           title="Theme"
@@ -921,34 +1119,6 @@ export function GeneralSettingsPanel() {
                 </SelectItem>
               </SelectPopup>
             </Select>
-          }
-        />
-
-        <SettingsRow
-          title="Add project starts in"
-          description='Leave empty to use "~/" when the Add Project browser opens.'
-          resetAction={
-            settings.addProjectBaseDirectory !==
-            DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory ? (
-              <SettingResetButton
-                label="add project base directory"
-                onClick={() =>
-                  updateSettings({
-                    addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Input
-              className="w-full sm:w-72"
-              value={settings.addProjectBaseDirectory}
-              onChange={(event) => updateSettings({ addProjectBaseDirectory: event.target.value })}
-              placeholder="~/"
-              spellCheck={false}
-              aria-label="Add project base directory"
-            />
           }
         />
 
@@ -1279,37 +1449,6 @@ export function GeneralSettingsPanel() {
                       </div>
                     ) : null}
 
-                    {providerCard.provider === "claudeAgent" ? (
-                      <div className="border-t border-border/60 px-4 py-3 sm:px-5">
-                        <label htmlFor="provider-install-claudeAgent-launch-args" className="block">
-                          <span className="text-xs font-medium text-foreground">
-                            Launch arguments
-                          </span>
-                          <Input
-                            id="provider-install-claudeAgent-launch-args"
-                            className="mt-1.5"
-                            value={settings.providers.claudeAgent.launchArgs}
-                            onChange={(event) =>
-                              updateSettings({
-                                providers: {
-                                  ...settings.providers,
-                                  claudeAgent: {
-                                    ...settings.providers.claudeAgent,
-                                    launchArgs: event.target.value,
-                                  },
-                                },
-                              })
-                            }
-                            placeholder="e.g. --chrome"
-                            spellCheck={false}
-                          />
-                          <span className="mt-1 block text-xs text-muted-foreground">
-                            Additional CLI arguments passed to Claude Code on session start.
-                          </span>
-                        </label>
-                      </div>
-                    ) : null}
-
                     <div className="border-t border-border/60 px-4 py-3 sm:px-5">
                       <div className="text-xs font-medium text-foreground">Models</div>
                       <div className="mt-1 text-xs text-muted-foreground">
@@ -1448,6 +1587,50 @@ export function GeneralSettingsPanel() {
         })}
       </SettingsSection>
 
+      <SettingsSection title="Skill discovery">
+        <SettingsRow
+          title="Extra skill roots"
+          description="Add extra skill roots outside your workspace and CODEX_HOME. Enter one absolute path per line."
+          status={
+            <span className="block break-all font-mono text-[11px] whitespace-pre-wrap text-foreground">
+              {extraSkillRoots.length > 0 ? formatSkillRootsForTextarea(extraSkillRoots) : "None"}
+            </span>
+          }
+          control={
+            extraSkillRoots.length > 0 ? (
+              <SettingResetButton
+                label="skill discovery"
+                onClick={() =>
+                  updateSettings({
+                    extraSkillRoots: DEFAULT_UNIFIED_SETTINGS.extraSkillRoots,
+                  })
+                }
+              />
+            ) : null
+          }
+        >
+          <label htmlFor="skill-roots" className="block">
+            <span className="block text-xs font-medium text-foreground">Extra skill roots</span>
+            <Textarea
+              id="skill-roots"
+              className="mt-1.5"
+              value={formatSkillRootsForTextarea(extraSkillRoots)}
+              onChange={(event) =>
+                updateSettings({
+                  extraSkillRoots: event.target.value.split(/\r?\n/),
+                })
+              }
+              placeholder={"/Users/you/.codex/skills\n/Users/you/dotfiles/.codex/skills"}
+              rows={4}
+              spellCheck={false}
+            />
+            <span className="mt-1 block text-xs text-muted-foreground">
+              Workspace-local skills from <code>.codex/skills</code> are discovered automatically.
+            </span>
+          </label>
+        </SettingsRow>
+      </SettingsSection>
+
       <SettingsSection title="Advanced">
         <SettingsRow
           title="Keybindings"
@@ -1486,41 +1669,18 @@ export function GeneralSettingsPanel() {
             description="Current version of the application."
           />
         )}
-        <SettingsRow
-          title="Diagnostics"
-          description={diagnosticsDescription}
-          status={
-            <>
-              <span className="block break-all font-mono text-[11px] text-foreground">
-                {logsDirectoryPath ?? "Resolving logs directory..."}
-              </span>
-              {openDiagnosticsError ? (
-                <span className="mt-1 block text-destructive">{openDiagnosticsError}</span>
-              ) : null}
-            </>
-          }
-          control={
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={!logsDirectoryPath || isOpeningLogsDirectory}
-              onClick={openLogsDirectory}
-            >
-              {isOpeningLogsDirectory ? "Opening..." : "Open logs folder"}
-            </Button>
-          }
-        />
       </SettingsSection>
     </SettingsPageContainer>
   );
 }
 
 export function ArchivedThreadsPanel() {
-  const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
-  const threads = useStore(useShallow(selectThreadShellsAcrossEnvironments));
+  const projects = useStore((store) => store.projects);
+  const threads = useStore((store) => store.threads);
   const { unarchiveThread, confirmAndDeleteThread } = useThreadActions();
   const archivedGroups = useMemo(() => {
-    return projects
+    const projectById = new Map(projects.map((project) => [project.id, project] as const));
+    return [...projectById.values()]
       .map((project) => ({
         project,
         threads: threads
@@ -1535,8 +1695,8 @@ export function ArchivedThreadsPanel() {
   }, [projects, threads]);
 
   const handleArchivedThreadContextMenu = useCallback(
-    async (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
-      const api = readLocalApi();
+    async (threadId: ThreadId, position: { x: number; y: number }) => {
+      const api = readNativeApi();
       if (!api) return;
       const clicked = await api.contextMenu.show(
         [
@@ -1548,7 +1708,7 @@ export function ArchivedThreadsPanel() {
 
       if (clicked === "unarchive") {
         try {
-          await unarchiveThread(threadRef);
+          await unarchiveThread(threadId);
         } catch (error) {
           toastManager.add({
             type: "error",
@@ -1560,7 +1720,7 @@ export function ArchivedThreadsPanel() {
       }
 
       if (clicked === "delete") {
-        await confirmAndDeleteThread(threadRef);
+        await confirmAndDeleteThread(threadId);
       }
     },
     [confirmAndDeleteThread, unarchiveThread],
@@ -1585,7 +1745,7 @@ export function ArchivedThreadsPanel() {
           <SettingsSection
             key={project.id}
             title={project.name}
-            icon={<ProjectFavicon environmentId={project.environmentId} cwd={project.cwd} />}
+            icon={<ProjectFavicon cwd={project.cwd} />}
           >
             {projectThreads.map((thread) => (
               <div
@@ -1593,13 +1753,10 @@ export function ArchivedThreadsPanel() {
                 className="flex items-center justify-between gap-3 border-t border-border px-4 py-3 first:border-t-0 sm:px-5"
                 onContextMenu={(event) => {
                   event.preventDefault();
-                  void handleArchivedThreadContextMenu(
-                    scopeThreadRef(thread.environmentId, thread.id),
-                    {
-                      x: event.clientX,
-                      y: event.clientY,
-                    },
-                  );
+                  void handleArchivedThreadContextMenu(thread.id, {
+                    x: event.clientX,
+                    y: event.clientY,
+                  });
                 }}
               >
                 <div className="min-w-0 flex-1">
@@ -1616,16 +1773,13 @@ export function ArchivedThreadsPanel() {
                   size="sm"
                   className="h-7 shrink-0 cursor-pointer gap-1.5 px-2.5"
                   onClick={() =>
-                    void unarchiveThread(scopeThreadRef(thread.environmentId, thread.id)).catch(
-                      (error) => {
-                        toastManager.add({
-                          type: "error",
-                          title: "Failed to unarchive thread",
-                          description:
-                            error instanceof Error ? error.message : "An error occurred.",
-                        });
-                      },
-                    )
+                    void unarchiveThread(thread.id).catch((error) => {
+                      toastManager.add({
+                        type: "error",
+                        title: "Failed to unarchive thread",
+                        description: error instanceof Error ? error.message : "An error occurred.",
+                      });
+                    })
                   }
                 >
                   <ArchiveX className="size-3.5" />

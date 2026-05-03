@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { buildBootstrapInput } from "./historyBootstrap";
 
-const messageId = (value: string) => MessageId.make(value);
+const messageId = (value: string) => MessageId.makeUnsafe(value);
 
 describe("buildBootstrapInput", () => {
   it("includes full transcript when under budget", () => {

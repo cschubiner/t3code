@@ -1,6 +1,4 @@
 export * from "./baseSchemas";
-export * from "./auth";
-export * from "./environment";
 export * from "./ipc";
 export * from "./terminal";
 export * from "./provider";
@@ -13,5 +11,7 @@ export * from "./git";
 export * from "./orchestration";
 export * from "./editor";
 export * from "./project";
-export * from "./filesystem";
+export * from "./skills";
+export * from "./snippets";
+export * from "./codexImport";
 export * from "./rpc";

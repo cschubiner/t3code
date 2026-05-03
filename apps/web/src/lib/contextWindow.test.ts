@@ -5,12 +5,12 @@ import { deriveLatestContextWindowSnapshot, formatContextWindowTokens } from "./
 
 function makeActivity(id: string, kind: string, payload: unknown): OrchestrationThreadActivity {
   return {
-    id: EventId.make(id),
+    id: EventId.makeUnsafe(id),
     tone: "info",
     kind,
     summary: kind,
     payload,
-    turnId: TurnId.make("turn-1"),
+    turnId: TurnId.makeUnsafe("turn-1"),
     createdAt: "2026-03-23T00:00:00.000Z",
   };
 }

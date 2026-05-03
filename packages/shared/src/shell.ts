@@ -1,4 +1,3 @@
-import * as OS from "node:os";
 import { execFileSync } from "node:child_process";
 
 const PATH_CAPTURE_START = "__T3CODE_PATH_START__";
@@ -11,38 +10,24 @@ type ExecFileSyncLike = (
   options: { encoding: "utf8"; timeout: number },
 ) => string;
 
-function trimNonEmpty(value: string | null | undefined): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed && trimmed.length > 0 ? trimmed : undefined;
-}
-
-function readUserLoginShell(): string | undefined {
-  try {
-    return trimNonEmpty(OS.userInfo().shell);
-  } catch {
-    return undefined;
-  }
-}
-
-export function listLoginShellCandidates(
+export function resolveLoginShell(
   platform: NodeJS.Platform,
   shell: string | undefined,
-  userShell = readUserLoginShell(),
-): ReadonlyArray<string> {
-  const fallbackShell =
-    platform === "darwin" ? "/bin/zsh" : platform === "linux" ? "/bin/bash" : undefined;
-  const seen = new Set<string>();
-  const candidates: string[] = [];
-
-  for (const candidate of [trimNonEmpty(shell), trimNonEmpty(userShell), fallbackShell]) {
-    if (!candidate || seen.has(candidate)) {
-      continue;
-    }
-    seen.add(candidate);
-    candidates.push(candidate);
+): string | undefined {
+  const trimmedShell = shell?.trim();
+  if (trimmedShell) {
+    return trimmedShell;
   }
 
-  return candidates;
+  if (platform === "darwin") {
+    return "/bin/zsh";
+  }
+
+  if (platform === "linux") {
+    return "/bin/bash";
+  }
+
+  return undefined;
 }
 
 export function extractPathFromShellOutput(output: string): string | null {
@@ -62,45 +47,6 @@ export function readPathFromLoginShell(
   execFile: ExecFileSyncLike = execFileSync,
 ): string | undefined {
   return readEnvironmentFromLoginShell(shell, ["PATH"], execFile).PATH;
-}
-
-export function readPathFromLaunchctl(
-  execFile: ExecFileSyncLike = execFileSync,
-): string | undefined {
-  try {
-    return trimNonEmpty(
-      execFile("/bin/launchctl", ["getenv", "PATH"], {
-        encoding: "utf8",
-        timeout: 2000,
-      }),
-    );
-  } catch {
-    return undefined;
-  }
-}
-
-export function mergePathEntries(
-  preferredPath: string | undefined,
-  inheritedPath: string | undefined,
-  platform: NodeJS.Platform,
-): string | undefined {
-  const delimiter = platform === "win32" ? ";" : ":";
-  const merged: string[] = [];
-  const seen = new Set<string>();
-
-  for (const pathValue of [preferredPath, inheritedPath]) {
-    if (!pathValue) continue;
-    for (const entry of pathValue.split(delimiter)) {
-      const trimmedEntry = entry.trim();
-      if (!trimmedEntry || seen.has(trimmedEntry)) {
-        continue;
-      }
-      seen.add(trimmedEntry);
-      merged.push(trimmedEntry);
-    }
-  }
-
-  return merged.length > 0 ? merged.join(delimiter) : undefined;
 }
 
 function envCaptureStart(name: string): string {

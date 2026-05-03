@@ -5,7 +5,6 @@ import type {
   ServerProvider,
   ServerProviderModel,
   ServerProviderAuth,
-  ServerProviderSkill,
   ServerProviderState,
 } from "@t3tools/contracts";
 import {
@@ -21,6 +20,7 @@ import {
   Stream,
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { isCodexAuthErrorMessage } from "@t3tools/shared/providerAuth";
 
 import {
   buildServerProvider,
@@ -45,23 +45,11 @@ import {
   codexAuthSubType,
   type CodexAccountSnapshot,
 } from "../codexAccount";
-import { probeCodexDiscovery } from "../codexAppServer";
+import { probeCodexAccount } from "../codexAppServer";
 import { CodexProvider } from "../Services/CodexProvider";
+import type { CodexProviderShape } from "../Services/CodexProvider";
 import { ServerSettingsService } from "../../serverSettings";
 import { ServerSettingsError } from "@t3tools/contracts";
-
-const DEFAULT_CODEX_MODEL_CAPABILITIES: ModelCapabilities = {
-  reasoningEffortLevels: [
-    { value: "xhigh", label: "Extra High" },
-    { value: "high", label: "High", isDefault: true },
-    { value: "medium", label: "Medium" },
-    { value: "low", label: "Low" },
-  ],
-  supportsFastMode: true,
-  supportsThinkingToggle: false,
-  contextWindowOptions: [],
-  promptInjectedEffortLevels: [],
-};
 
 const PROVIDER = "codex" as const;
 const OPENAI_AUTH_PROVIDERS = new Set(["openai"]);
@@ -173,8 +161,13 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
 export function getCodexModelCapabilities(model: string | null | undefined): ModelCapabilities {
   const slug = model?.trim();
   return (
-    BUILT_IN_MODELS.find((candidate) => candidate.slug === slug)?.capabilities ??
-    DEFAULT_CODEX_MODEL_CAPABILITIES
+    BUILT_IN_MODELS.find((candidate) => candidate.slug === slug)?.capabilities ?? {
+      reasoningEffortLevels: [],
+      supportsFastMode: false,
+      supportsThinkingToggle: false,
+      contextWindowOptions: [],
+      promptInjectedEffortLevels: [],
+    }
   );
 }
 
@@ -197,13 +190,7 @@ export function parseAuthStatusFromOutput(result: CommandResult): {
     };
   }
 
-  if (
-    lowerOutput.includes("not logged in") ||
-    lowerOutput.includes("login required") ||
-    lowerOutput.includes("authentication required") ||
-    lowerOutput.includes("run `codex login`") ||
-    lowerOutput.includes("run codex login")
-  ) {
+  if (isCodexAuthErrorMessage(lowerOutput)) {
     return {
       status: "error",
       auth: { status: "unauthenticated" },
@@ -305,16 +292,28 @@ const CAPABILITIES_PROBE_TIMEOUT_MS = 8_000;
 const probeCodexCapabilities = (input: {
   readonly binaryPath: string;
   readonly homePath?: string;
-  readonly cwd: string;
 }) =>
-  Effect.tryPromise((signal) => probeCodexDiscovery({ ...input, signal })).pipe(
+  Effect.tryPromise((signal) => probeCodexAccount({ ...input, signal })).pipe(
+    Effect.mapError((cause) =>
+      cause instanceof Error ? cause : new Error(`Codex account probe failed: ${String(cause)}.`),
+    ),
     Effect.timeoutOption(CAPABILITIES_PROBE_TIMEOUT_MS),
-    Effect.result,
-    Effect.map((result) => {
-      if (Result.isFailure(result)) return undefined;
-      return Option.isSome(result.success) ? result.success.value : undefined;
-    }),
+    Effect.flatMap((result) =>
+      Option.isSome(result)
+        ? Effect.succeed(result.value)
+        : Effect.fail(new Error("Codex account probe timed out.")),
+    ),
   );
+
+function codexAccountProbeCacheKey(input: {
+  readonly binaryPath: string;
+  readonly homePath?: string;
+}) {
+  return JSON.stringify([
+    input.binaryPath,
+    input.homePath && input.homePath.trim().length > 0 ? input.homePath : undefined,
+  ]);
+}
 
 const runCodexCommand = Effect.fn("runCodexCommand")(function* (args: ReadonlyArray<string>) {
   const settingsService = yield* ServerSettingsService;
@@ -335,12 +334,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   resolveAccount?: (input: {
     readonly binaryPath: string;
     readonly homePath?: string;
-  }) => Effect.Effect<CodexAccountSnapshot | undefined>,
-  resolveSkills?: (input: {
-    readonly binaryPath: string;
-    readonly homePath?: string;
-    readonly cwd: string;
-  }) => Effect.Effect<ReadonlyArray<ServerProviderSkill> | undefined>,
+  }) => Effect.Effect<CodexAccountSnapshot | undefined, Error>,
 ): Effect.fn.Return<
   ServerProvider,
   ServerSettingsError,
@@ -354,12 +348,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     Effect.map((settings) => settings.providers.codex),
   );
   const checkedAt = new Date().toISOString();
-  const models = providerModelsFromSettings(
-    BUILT_IN_MODELS,
-    PROVIDER,
-    codexSettings.customModels,
-    DEFAULT_CODEX_MODEL_CAPABILITIES,
-  );
+  const models = providerModelsFromSettings(BUILT_IN_MODELS, PROVIDER, codexSettings.customModels);
 
   if (!codexSettings.enabled) {
     return buildServerProvider({
@@ -396,7 +385,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         auth: { status: "unknown" },
         message: isCommandMissingCause(error)
           ? "Codex CLI (`codex`) is not installed or not on PATH."
-          : `Failed to execute Codex CLI health check: ${error.message}.`,
+          : `Failed to execute Codex CLI health check: ${error instanceof Error ? error.message : String(error)}.`,
       },
     });
   }
@@ -456,22 +445,12 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     });
   }
 
-  const skills =
-    (resolveSkills
-      ? yield* resolveSkills({
-          binaryPath: codexSettings.binaryPath,
-          homePath: codexSettings.homePath,
-          cwd: process.cwd(),
-        }).pipe(Effect.orElseSucceed(() => undefined))
-      : undefined) ?? [];
-
   if (yield* hasCustomModelProvider) {
     return buildServerProvider({
       provider: PROVIDER,
       enabled: codexSettings.enabled,
       checkedAt,
       models,
-      skills,
       probe: {
         installed: true,
         version: parsedVersion,
@@ -486,12 +465,23 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
     Effect.result,
   );
-  const account = resolveAccount
-    ? yield* resolveAccount({
-        binaryPath: codexSettings.binaryPath,
-        homePath: codexSettings.homePath,
-      })
-    : undefined;
+  let account: CodexAccountSnapshot | undefined;
+  let accountProbeAuthFailed = false;
+  if (resolveAccount) {
+    const accountProbe = yield* resolveAccount({
+      binaryPath: codexSettings.binaryPath,
+      homePath: codexSettings.homePath,
+    }).pipe(Effect.result);
+    if (Result.isFailure(accountProbe)) {
+      const detail =
+        accountProbe.failure instanceof Error
+          ? accountProbe.failure.message
+          : String(accountProbe.failure);
+      accountProbeAuthFailed = isCodexAuthErrorMessage(detail);
+    } else {
+      account = accountProbe.success;
+    }
+  }
   const resolvedModels = adjustCodexModelsForAccount(models, account);
 
   if (Result.isFailure(authProbe)) {
@@ -501,13 +491,15 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       enabled: codexSettings.enabled,
       checkedAt,
       models: resolvedModels,
-      skills,
       probe: {
         installed: true,
         version: parsedVersion,
         status: "warning",
         auth: { status: "unknown" },
-        message: `Could not verify Codex authentication status: ${error.message}.`,
+        message:
+          error instanceof Error
+            ? `Could not verify Codex authentication status: ${error.message}.`
+            : "Could not verify Codex authentication status.",
       },
     });
   }
@@ -518,7 +510,6 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       enabled: codexSettings.enabled,
       checkedAt,
       models: resolvedModels,
-      skills,
       probe: {
         installed: true,
         version: parsedVersion,
@@ -530,6 +521,21 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   }
 
   const parsed = parseAuthStatusFromOutput(authProbe.success.value);
+  if (parsed.auth.status !== "unauthenticated" && accountProbeAuthFailed) {
+    return buildServerProvider({
+      provider: PROVIDER,
+      enabled: codexSettings.enabled,
+      checkedAt,
+      models: resolvedModels,
+      probe: {
+        installed: true,
+        version: parsedVersion,
+        status: "error",
+        auth: { status: "unauthenticated" },
+        message: "Codex CLI is not authenticated. Run `codex login` and try again.",
+      },
+    });
+  }
   const authType = codexAuthSubType(account);
   const authLabel = codexAuthSubLabel(account);
   return buildServerProvider({
@@ -537,7 +543,6 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     enabled: codexSettings.enabled,
     checkedAt,
     models: resolvedModels,
-    skills,
     probe: {
       installed: true,
       version: parsedVersion,
@@ -552,46 +557,6 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   });
 });
 
-const makePendingCodexProvider = (codexSettings: CodexSettings): ServerProvider => {
-  const checkedAt = new Date().toISOString();
-  const models = providerModelsFromSettings(
-    BUILT_IN_MODELS,
-    PROVIDER,
-    codexSettings.customModels,
-    DEFAULT_CODEX_MODEL_CAPABILITIES,
-  );
-
-  if (!codexSettings.enabled) {
-    return buildServerProvider({
-      provider: PROVIDER,
-      enabled: false,
-      checkedAt,
-      models,
-      probe: {
-        installed: false,
-        version: null,
-        status: "warning",
-        auth: { status: "unknown" },
-        message: "Codex is disabled in T3 Code settings.",
-      },
-    });
-  }
-
-  return buildServerProvider({
-    provider: PROVIDER,
-    enabled: true,
-    checkedAt,
-    models,
-    probe: {
-      installed: false,
-      version: null,
-      status: "warning",
-      auth: { status: "unknown" },
-      message: "Codex provider status has not been checked in this session yet.",
-    },
-  });
-};
-
 export const CodexProviderLive = Layer.effect(
   CodexProvider,
   Effect.gen(function* () {
@@ -603,29 +568,16 @@ export const CodexProviderLive = Layer.effect(
       capacity: 4,
       timeToLive: Duration.minutes(5),
       lookup: (key: string) => {
-        const [binaryPath, homePath, cwd] = JSON.parse(key) as [string, string | undefined, string];
+        const [binaryPath, homePath] = JSON.parse(key) as [string, string | undefined];
         return probeCodexCapabilities({
           binaryPath,
-          cwd,
           ...(homePath ? { homePath } : {}),
         });
       },
     });
 
-    const getDiscovery = (input: {
-      readonly binaryPath: string;
-      readonly homePath?: string;
-      readonly cwd: string;
-    }) =>
-      Cache.get(accountProbeCache, JSON.stringify([input.binaryPath, input.homePath, input.cwd]));
-
-    const checkProvider = checkCodexProviderStatus(
-      (input) =>
-        getDiscovery({
-          ...input,
-          cwd: process.cwd(),
-        }).pipe(Effect.map((discovery) => discovery?.account)),
-      (input) => getDiscovery(input).pipe(Effect.map((discovery) => discovery?.skills)),
+    const checkProvider = checkCodexProviderStatus((input) =>
+      Cache.get(accountProbeCache, codexAccountProbeCacheKey(input)),
     ).pipe(
       Effect.provideService(ServerSettingsService, serverSettings),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -633,7 +585,7 @@ export const CodexProviderLive = Layer.effect(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
 
-    return yield* makeManagedServerProvider<CodexSettings>({
+    const managedProvider = yield* makeManagedServerProvider<CodexSettings>({
       getSettings: serverSettings.getSettings.pipe(
         Effect.map((settings) => settings.providers.codex),
         Effect.orDie,
@@ -642,8 +594,27 @@ export const CodexProviderLive = Layer.effect(
         Stream.map((settings) => settings.providers.codex),
       ),
       haveSettingsChanged: (previous, next) => !Equal.equals(previous, next),
-      initialSnapshot: makePendingCodexProvider,
       checkProvider,
     });
+
+    const refresh = Effect.gen(function* () {
+      const settings = yield* serverSettings.getSettings.pipe(
+        Effect.map((nextSettings) => nextSettings.providers.codex),
+        Effect.orDie,
+      );
+      yield* Cache.invalidate(
+        accountProbeCache,
+        codexAccountProbeCacheKey({
+          binaryPath: settings.binaryPath,
+          ...(settings.homePath ? { homePath: settings.homePath } : {}),
+        }),
+      );
+      return yield* managedProvider.refresh;
+    });
+
+    return {
+      ...managedProvider,
+      refresh,
+    } satisfies CodexProviderShape;
   }),
 );

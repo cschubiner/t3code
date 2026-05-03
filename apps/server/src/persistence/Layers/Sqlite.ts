@@ -6,7 +6,6 @@ import { ServerConfig } from "../../config.ts";
 
 type RuntimeSqliteLayerConfig = {
   readonly filename: string;
-  readonly spanAttributes?: Record<string, unknown>;
 };
 
 type Loader = {
@@ -42,16 +41,7 @@ export const makeSqlitePersistenceLive = Effect.fn("makeSqlitePersistenceLive")(
   const path = yield* Path.Path;
   yield* fs.makeDirectory(path.dirname(dbPath), { recursive: true });
 
-  return Layer.provideMerge(
-    setup,
-    makeRuntimeSqliteLayer({
-      filename: dbPath,
-      spanAttributes: {
-        "db.name": path.basename(dbPath),
-        "service.name": "t3-server",
-      },
-    }),
-  );
+  return Layer.provideMerge(setup, makeRuntimeSqliteLayer({ filename: dbPath }));
 }, Layer.unwrap);
 
 export const SqlitePersistenceMemory = Layer.provideMerge(

@@ -1,5 +1,4 @@
 import { memo, useState, useId } from "react";
-import type { EnvironmentId } from "@t3tools/contracts";
 import {
   buildCollapsedProposedPlanPreviewMarkdown,
   buildProposedPlanMarkdownFilename,
@@ -25,17 +24,15 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { toastManager } from "../ui/toast";
-import { readEnvironmentApi } from "~/environmentApi";
+import { readNativeApi } from "~/nativeApi";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 
 export const ProposedPlanCard = memo(function ProposedPlanCard({
   planMarkdown,
-  environmentId,
   cwd,
   workspaceRoot,
 }: {
   planMarkdown: string;
-  environmentId: EnvironmentId;
   cwd: string | undefined;
   workspaceRoot: string | undefined;
 }) {
@@ -85,7 +82,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   };
 
   const handleSaveToWorkspace = () => {
-    const api = readEnvironmentApi(environmentId);
+    const api = readNativeApi();
     const relativePath = savePath.trim();
     if (!api || !workspaceRoot) {
       return;

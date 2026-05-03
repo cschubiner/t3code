@@ -1,26 +1,27 @@
 import * as React from "react";
+import type { ThreadId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
-import {
-  getThreadSortTimestamp,
-  sortThreads,
-  toSortableTimestamp,
-  type ThreadSortInput,
-} from "../lib/threadSort";
+import { buildGitHubPullRequestUrl } from "@t3tools/shared/githubPullRequest";
 import type { SidebarThreadSummary, Thread } from "../types";
+import { sortThreadsForRecentSidebar } from "../lib/threadRecency";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
 
+export { sortThreadsForRecentSidebar } from "../lib/threadRecency";
+
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
-// Visible sidebar rows are prewarmed into the thread-detail cache so opening a
-// nearby thread usually reuses an already-hot subscription.
-export const SIDEBAR_THREAD_PREWARM_LIMIT = 10;
 export type SidebarNewThreadEnvMode = "local" | "worktree";
+export type SidebarThreadListMode = "grouped" | "recent";
 type SidebarProject = {
   id: string;
   name: string;
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
+};
+type SidebarThreadSortInput = Pick<Thread, "createdAt" | "updatedAt"> & {
+  latestUserMessageAt?: string | null;
+  messages?: Pick<Thread["messages"][number], "createdAt" | "role">[];
 };
 
 export type ThreadTraversalDirection = "previous" | "next";
@@ -36,6 +37,25 @@ export interface ThreadStatusPill {
   colorClass: string;
   dotClass: string;
   pulse: boolean;
+}
+
+export interface SidebarPullRequestReference {
+  url: string;
+  owner: string;
+  repo: string;
+  number: string;
+}
+
+export function resolveThreadSidebarRepositoryCwds(input: {
+  worktreePath?: string | null;
+  projectCwd?: string | null;
+}): string[] {
+  const candidates = [input.worktreePath, input.projectCwd];
+  return [
+    ...new Set(
+      candidates.filter((cwd): cwd is string => typeof cwd === "string" && cwd.length > 0),
+    ),
+  ];
 }
 
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
@@ -56,8 +76,14 @@ type ThreadStatusInput = Pick<
   | "latestTurn"
   | "session"
 > & {
+  hasTransientWork?: boolean;
   lastVisitedAt?: string | undefined;
 };
+
+type ThreadPullRequestReferenceInput = Pick<Thread, "messages" | "worktreePath">;
+
+const GITHUB_PULL_REQUEST_URL_GLOBAL_PATTERN =
+  /https:\/\/github\.com\/(?<owner>[^/\s]+)\/(?<repo>[^/\s]+)\/pull\/(?<number>\d+)(?:[/?#][^\s)\]}>]*)?/gi;
 
 export interface ThreadJumpHintVisibilityController {
   sync: (shouldShow: boolean) => void;
@@ -167,6 +193,16 @@ export function resolveSidebarNewThreadEnvMode(input: {
   return input.requestedEnvMode ?? input.defaultEnvMode;
 }
 
+export function visibleRecentThreadsForSidebar<
+  T extends Pick<SidebarThreadSummary, "id" | "projectId" | "createdAt" | "updatedAt">,
+>(input: { threads: readonly T[]; isExpanded: boolean; threadPreviewLimit: number }): T[] {
+  const orderedThreads = sortThreadsForRecentSidebar(input.threads);
+  if (orderedThreads.length <= input.threadPreviewLimit || input.isExpanded) {
+    return orderedThreads;
+  }
+  return orderedThreads.slice(0, input.threadPreviewLimit);
+}
+
 export function resolveSidebarNewThreadSeedContext(input: {
   projectId: string;
   defaultEnvMode: SidebarNewThreadEnvMode;
@@ -186,12 +222,6 @@ export function resolveSidebarNewThreadSeedContext(input: {
   worktreePath?: string | null;
   envMode: SidebarNewThreadEnvMode;
 } {
-  if (input.defaultEnvMode === "worktree") {
-    return {
-      envMode: "worktree",
-    };
-  }
-
   if (input.activeDraftThread?.projectId === input.projectId) {
     return {
       branch: input.activeDraftThread.branch,
@@ -252,11 +282,10 @@ export function getVisibleSidebarThreadIds<TThreadId>(
   );
 }
 
-export function getSidebarThreadIdsToPrewarm<TThreadId>(
-  visibleThreadIds: readonly TThreadId[],
-  limit = SIDEBAR_THREAD_PREWARM_LIMIT,
-): TThreadId[] {
-  return visibleThreadIds.slice(0, Math.max(0, limit));
+export function visibleThreadIdsForRecentSidebar<
+  T extends Pick<SidebarThreadSummary, "id" | "projectId" | "createdAt" | "updatedAt">,
+>(input: { threads: readonly T[]; isExpanded: boolean; threadPreviewLimit: number }): ThreadId[] {
+  return visibleRecentThreadsForSidebar(input).map((thread) => thread.id);
 }
 
 export function resolveAdjacentThreadId<T>(input: {
@@ -286,6 +315,13 @@ export function resolveAdjacentThreadId<T>(input: {
   return currentIndex < threadIds.length - 1 ? (threadIds[currentIndex + 1] ?? null) : null;
 }
 
+export function deriveSidebarThreadProjectName(input: {
+  thread: Pick<SidebarThreadSummary, "projectId">;
+  projects: readonly Pick<SidebarProject, "id" | "name">[];
+}): string {
+  return input.projects.find((project) => project.id === input.thread.projectId)?.name ?? "Unknown";
+}
+
 export function isContextMenuPointerDown(input: {
   button: number;
   ctrlKey: boolean;
@@ -295,12 +331,34 @@ export function isContextMenuPointerDown(input: {
   return input.isMac && input.button === 0 && input.ctrlKey;
 }
 
+export function isTypingInSidebarTextEntry(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+
+  const editableTarget =
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    target.isContentEditable
+      ? target
+      : target.closest<HTMLElement>("input, textarea, select, [contenteditable]");
+
+  if (!editableTarget) return false;
+
+  return (
+    editableTarget.closest("[data-sidebar='sidebar']") !== null ||
+    editableTarget.closest("[data-slot='sidebar']") !== null
+  );
+}
+
 export function resolveThreadRowClassName(input: {
   isActive: boolean;
   isSelected: boolean;
+  hasSecondaryContent?: boolean;
 }): string {
-  const baseClassName =
-    "h-7 w-full translate-x-0 cursor-pointer justify-start px-2 text-left select-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
+  const baseClassName = cn(
+    "w-full translate-x-0 cursor-pointer justify-start px-2 text-left select-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
+    input.hasSecondaryContent ? "min-h-9 py-1" : "h-7",
+  );
 
   if (input.isSelected && input.isActive) {
     return cn(
@@ -326,6 +384,69 @@ export function resolveThreadRowClassName(input: {
   return cn(baseClassName, "text-muted-foreground hover:bg-accent hover:text-foreground");
 }
 
+function sidebarPullRequestReferenceKey(
+  reference: Pick<SidebarPullRequestReference, "owner" | "repo" | "number">,
+): string {
+  return `${reference.owner.toLowerCase()}/${reference.repo.toLowerCase()}#${reference.number}`;
+}
+
+export function extractSidebarPullRequestReferences(text: string): SidebarPullRequestReference[] {
+  const matches = text.matchAll(GITHUB_PULL_REQUEST_URL_GLOBAL_PATTERN);
+  const references: SidebarPullRequestReference[] = [];
+  const seenReferences = new Set<string>();
+
+  for (const match of matches) {
+    const url = match[0];
+    const owner = match.groups?.owner;
+    const repo = match.groups?.repo;
+    const number = match.groups?.number;
+    if (!url || !owner || !repo || !number) {
+      continue;
+    }
+
+    const reference = {
+      url: buildGitHubPullRequestUrl({ owner, repo, number }),
+      owner,
+      repo,
+      number,
+    };
+    const referenceKey = sidebarPullRequestReferenceKey(reference);
+    if (seenReferences.has(referenceKey)) {
+      continue;
+    }
+
+    seenReferences.add(referenceKey);
+    references.push(reference);
+  }
+
+  return references;
+}
+
+export function deriveThreadSidebarPullRequestReferences(
+  thread: ThreadPullRequestReferenceInput,
+): SidebarPullRequestReference[] {
+  if (thread.worktreePath === null) {
+    return [];
+  }
+
+  const references: SidebarPullRequestReference[] = [];
+  const seenReferences = new Set<string>();
+
+  for (const message of thread.messages) {
+    for (const reference of extractSidebarPullRequestReferences(message.text)) {
+      const referenceKey = sidebarPullRequestReferenceKey(reference);
+      if (seenReferences.has(referenceKey)) {
+        continue;
+      }
+
+      seenReferences.add(referenceKey);
+      references.push(reference);
+    }
+  }
+
+  return references;
+}
+
 export function resolveThreadStatusPill(input: {
   thread: ThreadStatusInput;
 }): ThreadStatusPill | null {
@@ -349,7 +470,19 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (thread.session?.status === "running") {
+  const hasStaleRunningLatestTurn =
+    thread.latestTurn?.state === "running" &&
+    thread.session?.status !== "error" &&
+    thread.session?.status !== "closed" &&
+    thread.session?.orchestrationStatus !== "stopped";
+
+  const hasActiveRunningTurn =
+    thread.hasTransientWork === true ||
+    thread.session?.status === "running" ||
+    thread.session?.orchestrationStatus === "running" ||
+    hasStaleRunningLatestTurn;
+
+  if (hasActiveRunningTurn) {
     return {
       label: "Working",
       colorClass: "text-sky-600 dark:text-sky-300/80",
@@ -459,8 +592,61 @@ export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input:
   };
 }
 
+function toSortableTimestamp(iso: string | undefined): number | null {
+  if (!iso) return null;
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function getLatestUserMessageTimestamp(thread: SidebarThreadSortInput): number {
+  if (thread.latestUserMessageAt) {
+    return toSortableTimestamp(thread.latestUserMessageAt) ?? Number.NEGATIVE_INFINITY;
+  }
+
+  let latestUserMessageTimestamp: number | null = null;
+
+  for (const message of thread.messages ?? []) {
+    if (message.role !== "user") continue;
+    const messageTimestamp = toSortableTimestamp(message.createdAt);
+    if (messageTimestamp === null) continue;
+    latestUserMessageTimestamp =
+      latestUserMessageTimestamp === null
+        ? messageTimestamp
+        : Math.max(latestUserMessageTimestamp, messageTimestamp);
+  }
+
+  if (latestUserMessageTimestamp !== null) {
+    return latestUserMessageTimestamp;
+  }
+
+  return toSortableTimestamp(thread.updatedAt ?? thread.createdAt) ?? Number.NEGATIVE_INFINITY;
+}
+
+function getThreadSortTimestamp(
+  thread: SidebarThreadSortInput,
+  sortOrder: SidebarThreadSortOrder | Exclude<SidebarProjectSortOrder, "manual">,
+): number {
+  if (sortOrder === "created_at") {
+    return toSortableTimestamp(thread.createdAt) ?? Number.NEGATIVE_INFINITY;
+  }
+  return getLatestUserMessageTimestamp(thread);
+}
+
+export function sortThreadsForSidebar<
+  T extends Pick<Thread, "id" | "createdAt" | "updatedAt"> & SidebarThreadSortInput,
+>(threads: readonly T[], sortOrder: SidebarThreadSortOrder): T[] {
+  return threads.toSorted((left, right) => {
+    const rightTimestamp = getThreadSortTimestamp(right, sortOrder);
+    const leftTimestamp = getThreadSortTimestamp(left, sortOrder);
+    const byTimestamp =
+      rightTimestamp === leftTimestamp ? 0 : rightTimestamp > leftTimestamp ? 1 : -1;
+    if (byTimestamp !== 0) return byTimestamp;
+    return right.id.localeCompare(left.id);
+  });
+}
+
 export function getFallbackThreadIdAfterDelete<
-  T extends Pick<Thread, "id" | "projectId" | "createdAt" | "updatedAt"> & ThreadSortInput,
+  T extends Pick<Thread, "id" | "projectId" | "createdAt" | "updatedAt"> & SidebarThreadSortInput,
 >(input: {
   threads: readonly T[];
   deletedThreadId: T["id"];
@@ -474,7 +660,7 @@ export function getFallbackThreadIdAfterDelete<
   }
 
   return (
-    sortThreads(
+    sortThreadsForSidebar(
       threads.filter(
         (thread) =>
           thread.projectId === deletedThread.projectId &&
@@ -485,9 +671,10 @@ export function getFallbackThreadIdAfterDelete<
     )[0]?.id ?? null
   );
 }
+
 export function getProjectSortTimestamp(
   project: SidebarProject,
-  projectThreads: readonly ThreadSortInput[],
+  projectThreads: readonly SidebarThreadSortInput[],
   sortOrder: Exclude<SidebarProjectSortOrder, "manual">,
 ): number {
   if (projectThreads.length > 0) {
@@ -505,7 +692,7 @@ export function getProjectSortTimestamp(
 
 export function sortProjectsForSidebar<
   TProject extends SidebarProject,
-  TThread extends Pick<Thread, "projectId" | "createdAt" | "updatedAt"> & ThreadSortInput,
+  TThread extends Pick<Thread, "projectId" | "createdAt" | "updatedAt"> & SidebarThreadSortInput,
 >(
   projects: readonly TProject[],
   threads: readonly TThread[],

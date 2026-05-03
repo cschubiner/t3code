@@ -6,7 +6,7 @@
  *
  * @module WorkspaceFileSystem
  */
-import { Schema, Context } from "effect";
+import { Schema, ServiceMap } from "effect";
 import type { Effect } from "effect";
 
 import type { ProjectWriteFileInput, ProjectWriteFileResult } from "@t3tools/contracts";
@@ -44,7 +44,7 @@ export interface WorkspaceFileSystemShape {
 /**
  * WorkspaceFileSystem - Service tag for workspace file operations.
  */
-export class WorkspaceFileSystem extends Context.Service<
+export class WorkspaceFileSystem extends ServiceMap.Service<
   WorkspaceFileSystem,
   WorkspaceFileSystemShape
 >()("t3/workspace/Services/WorkspaceFileSystem") {}

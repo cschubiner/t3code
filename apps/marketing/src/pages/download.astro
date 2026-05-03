@@ -1,6 +1,5 @@
 ---
 import Layout from "../layouts/Layout.astro";
-import { RELEASES_URL } from "../lib/releases";
 ---
 
 <Layout title="Download — T3 Code" description="Download T3 Code for macOS, Windows, or Linux.">
@@ -18,11 +17,11 @@ import { RELEASES_URL } from "../lib/releases";
         <h2 class="platform-name">macOS</h2>
       </div>
       <div class="download-cards">
-        <a class="download-card" data-asset="arm64.dmg" href={RELEASES_URL}>
+        <a class="download-card" data-asset="arm64.dmg" href="#">
           <span class="card-arch">Apple Silicon (arm64)</span>
           <span class="card-format">.dmg</span>
         </a>
-        <a class="download-card" data-asset="x64.dmg" href={RELEASES_URL}>
+        <a class="download-card" data-asset="x64.dmg" href="#">
           <span class="card-arch">Intel (x64)</span>
           <span class="card-format">.dmg</span>
         </a>
@@ -36,7 +35,7 @@ import { RELEASES_URL } from "../lib/releases";
         <h2 class="platform-name">Windows</h2>
       </div>
       <div class="download-cards">
-        <a class="download-card" data-asset="x64.exe" href={RELEASES_URL}>
+        <a class="download-card" data-asset="x64.exe" href="#">
           <span class="card-arch">Windows 10, 11</span>
           <span class="card-format">.exe</span>
         </a>
@@ -50,7 +49,7 @@ import { RELEASES_URL } from "../lib/releases";
         <h2 class="platform-name">Linux</h2>
       </div>
       <div class="download-cards">
-        <a class="download-card" data-asset="x86_64.AppImage" href={RELEASES_URL}>
+        <a class="download-card" data-asset="x86_64.AppImage" href="#">
           <span class="card-arch">x86_64</span>
           <span class="card-format">AppImage</span>
         </a>

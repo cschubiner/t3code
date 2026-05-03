@@ -1,19 +1,14 @@
-import type { EnvironmentId } from "@t3tools/contracts";
 import { FolderIcon } from "lucide-react";
 import { useState } from "react";
-import { resolveEnvironmentHttpUrl } from "../environments/runtime";
+import { resolveServerUrl } from "~/lib/utils";
 
 const loadedProjectFaviconSrcs = new Set<string>();
 
-export function ProjectFavicon(input: {
-  environmentId: EnvironmentId;
-  cwd: string;
-  className?: string;
-}) {
-  const src = resolveEnvironmentHttpUrl({
-    environmentId: input.environmentId,
+export function ProjectFavicon({ cwd, className }: { cwd: string; className?: string }) {
+  const src = resolveServerUrl({
+    protocol: "http",
     pathname: "/api/project-favicon",
-    searchParams: { cwd: input.cwd },
+    searchParams: { cwd },
   });
   const [status, setStatus] = useState<"loading" | "loaded" | "error">(() =>
     loadedProjectFaviconSrcs.has(src) ? "loaded" : "loading",
@@ -22,14 +17,12 @@ export function ProjectFavicon(input: {
   return (
     <>
       {status !== "loaded" ? (
-        <FolderIcon
-          className={`size-3.5 shrink-0 text-muted-foreground/50 ${input.className ?? ""}`}
-        />
+        <FolderIcon className={`size-3.5 shrink-0 text-muted-foreground/50 ${className ?? ""}`} />
       ) : null}
       <img
         src={src}
         alt=""
-        className={`size-3.5 shrink-0 rounded-sm object-contain ${status === "loaded" ? "" : "hidden"} ${input.className ?? ""}`}
+        className={`size-3.5 shrink-0 rounded-sm object-contain ${status === "loaded" ? "" : "hidden"} ${className ?? ""}`}
         onLoad={() => {
           loadedProjectFaviconSrcs.add(src);
           setStatus("loaded");

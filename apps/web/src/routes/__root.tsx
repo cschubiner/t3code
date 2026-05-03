@@ -1,62 +1,54 @@
-import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
-import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime";
+import {
+  OrchestrationEvent,
+  ThreadId,
+  type ServerLifecycleWelcomePayload,
+} from "@t3tools/contracts";
+import { isCodexAuthErrorMessage } from "@t3tools/shared/providerAuth";
 import {
   Outlet,
   createRootRouteWithContext,
   type ErrorComponentProps,
-  useLocation,
   useNavigate,
+  useLocation,
 } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef } from "react";
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
+import { Throttler } from "@tanstack/react-pacer";
 
 import { APP_DISPLAY_NAME } from "../branding";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
-import { CommandPalette } from "../components/CommandPalette";
-import {
-  SlowRpcAckToastCoordinator,
-  WebSocketConnectionCoordinator,
-  WebSocketConnectionSurface,
-} from "../components/WebSocketConnectionSurface";
 import { Button } from "../components/ui/button";
 import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
-import { readLocalApi } from "../localApi";
+import { readNativeApi } from "../nativeApi";
 import {
   getServerConfigUpdatedNotification,
-  ServerConfigUpdatedNotification,
-  startServerStateSync,
+  type ServerConfigUpdateSource,
   useServerConfig,
   useServerConfigUpdatedSubscription,
   useServerWelcomeSubscription,
 } from "../rpc/serverState";
+import { ServerStateBootstrap } from "../rpc/serverStateBootstrap";
+import {
+  clearPromotedDraftThread,
+  clearPromotedDraftThreads,
+  useComposerDraftStore,
+} from "../composerDraftStore";
+import { synthesizeDraftThreadCreatedEvents } from "../draftThreadMaterialization";
 import { useStore } from "../store";
 import { useUiStateStore } from "../uiStateStore";
-import { syncBrowserChromeTheme } from "../hooks/useTheme";
-import {
-  ensureEnvironmentConnectionBootstrapped,
-  getPrimaryEnvironmentConnection,
-  startEnvironmentConnectionService,
-} from "../environments/runtime";
-import { configureClientTracing } from "../observability/clientTracing";
-import {
-  ensurePrimaryEnvironmentReady,
-  resolveInitialServerAuthGateState,
-  updatePrimaryEnvironmentDescriptor,
-} from "../environments/primary";
+import { useTerminalStateStore } from "../terminalStateStore";
+import { terminalRunningSubprocessFromEvent } from "../terminalActivity";
+import { migrateLocalSettingsToServer } from "../hooks/useSettings";
+import { providerQueryKeys } from "../lib/providerReactQuery";
+import { projectQueryKeys } from "../lib/projectReactQuery";
+import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
+import { deriveOrchestrationBatchEffects } from "../orchestrationEventEffects";
+import { createOrchestrationRecoveryCoordinator } from "../orchestrationRecovery";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
 }>()({
-  beforeLoad: async () => {
-    const [, authGateState] = await Promise.all([
-      ensurePrimaryEnvironmentReady(),
-      resolveInitialServerAuthGateState(),
-    ]);
-    return {
-      authGateState,
-    };
-  },
   component: RootRouteView,
   errorComponent: RootRouteErrorView,
   head: () => ({
@@ -65,43 +57,31 @@ export const Route = createRootRouteWithContext<{
 });
 
 function RootRouteView() {
-  const pathname = useLocation({ select: (location) => location.pathname });
-  const { authGateState } = Route.useRouteContext();
-
-  useEffect(() => {
-    const frame = window.requestAnimationFrame(() => {
-      syncBrowserChromeTheme();
-    });
-    return () => {
-      window.cancelAnimationFrame(frame);
-    };
-  }, [pathname]);
-
-  if (pathname === "/pair") {
-    return <Outlet />;
+  if (!readNativeApi()) {
+    return (
+      <div className="flex h-screen flex-col bg-background text-foreground">
+        <div className="flex flex-1 items-center justify-center">
+          <p className="text-sm text-muted-foreground">
+            Connecting to {APP_DISPLAY_NAME} server...
+          </p>
+        </div>
+      </div>
+    );
   }
 
-  if (authGateState.status !== "authenticated") {
-    return <Outlet />;
-  }
   return (
-    <ToastProvider>
-      <AnchoredToastProvider>
-        <AuthenticatedTracingBootstrap />
-        <ServerStateBootstrap />
-        <EnvironmentConnectionManagerBootstrap />
-        <EventRouter />
-        <WebSocketConnectionCoordinator />
-        <SlowRpcAckToastCoordinator />
-        <WebSocketConnectionSurface>
-          <CommandPalette>
-            <AppSidebarLayout>
-              <Outlet />
-            </AppSidebarLayout>
-          </CommandPalette>
-        </WebSocketConnectionSurface>
-      </AnchoredToastProvider>
-    </ToastProvider>
+    <>
+      <ServerStateBootstrap />
+      <ToastProvider>
+        <AnchoredToastProvider>
+          <EventRouter />
+          <DesktopProjectBootstrap />
+          <AppSidebarLayout>
+            <Outlet />
+          </AppSidebarLayout>
+        </AnchoredToastProvider>
+      </ToastProvider>
+    </>
   );
 }
 
@@ -176,47 +156,70 @@ function errorDetails(error: unknown): string {
   }
 }
 
-function ServerStateBootstrap() {
-  useEffect(() => startServerStateSync(getPrimaryEnvironmentConnection().client.server), []);
+function coalesceOrchestrationUiEvents(
+  events: ReadonlyArray<OrchestrationEvent>,
+): OrchestrationEvent[] {
+  if (events.length < 2) {
+    return [...events];
+  }
 
-  return null;
-}
+  const coalesced: OrchestrationEvent[] = [];
+  for (const event of events) {
+    const previous = coalesced.at(-1);
+    if (
+      previous?.type === "thread.message-sent" &&
+      event.type === "thread.message-sent" &&
+      previous.payload.threadId === event.payload.threadId &&
+      previous.payload.messageId === event.payload.messageId
+    ) {
+      coalesced[coalesced.length - 1] = {
+        ...event,
+        payload: {
+          ...event.payload,
+          attachments: event.payload.attachments ?? previous.payload.attachments,
+          createdAt: previous.payload.createdAt,
+          text:
+            !event.payload.streaming && event.payload.text.length > 0
+              ? event.payload.text
+              : previous.payload.text + event.payload.text,
+        },
+      };
+      continue;
+    }
 
-function AuthenticatedTracingBootstrap() {
-  useEffect(() => {
-    void configureClientTracing();
-  }, []);
+    coalesced.push(event);
+  }
 
-  return null;
-}
-
-function EnvironmentConnectionManagerBootstrap() {
-  const queryClient = useQueryClient();
-
-  useEffect(() => {
-    return startEnvironmentConnectionService(queryClient);
-  }, [queryClient]);
-
-  return null;
+  return coalesced;
 }
 
 function EventRouter() {
-  const setActiveEnvironmentId = useStore((store) => store.setActiveEnvironmentId);
+  const applyOrchestrationEvents = useStore((store) => store.applyOrchestrationEvents);
+  const syncServerReadModel = useStore((store) => store.syncServerReadModel);
+  const setProjectExpanded = useUiStateStore((store) => store.setProjectExpanded);
+  const syncProjects = useUiStateStore((store) => store.syncProjects);
+  const syncThreads = useUiStateStore((store) => store.syncThreads);
+  const clearThreadUi = useUiStateStore((store) => store.clearThreadUi);
+  const removeTerminalState = useTerminalStateStore((store) => store.removeTerminalState);
+  const removeOrphanedTerminalStates = useTerminalStateStore(
+    (store) => store.removeOrphanedTerminalStates,
+  );
+  const queryClient = useQueryClient();
   const navigate = useNavigate();
   const pathname = useLocation({ select: (loc) => loc.pathname });
-  const readPathname = useEffectEvent(() => pathname);
+  const pathnameRef = useRef(pathname);
   const handledBootstrapThreadIdRef = useRef<string | null>(null);
   const seenServerConfigUpdateIdRef = useRef(getServerConfigUpdatedNotification()?.id ?? 0);
   const disposedRef = useRef(false);
+  const bootstrapFromSnapshotRef = useRef<() => Promise<void>>(async () => undefined);
   const serverConfig = useServerConfig();
 
-  const handleWelcome = useEffectEvent((payload: ServerLifecycleWelcomePayload | null) => {
-    if (!payload) return;
+  pathnameRef.current = pathname;
 
-    updatePrimaryEnvironmentDescriptor(payload.environment);
-    setActiveEnvironmentId(payload.environment.environmentId);
+  const handleWelcome = useEffectEvent((payload: ServerLifecycleWelcomePayload) => {
+    migrateLocalSettingsToServer();
     void (async () => {
-      await ensureEnvironmentConnectionBootstrapped(payload.environment.environmentId);
+      await bootstrapFromSnapshotRef.current();
       if (disposedRef.current) {
         return;
       }
@@ -224,27 +227,17 @@ function EventRouter() {
       if (!payload.bootstrapProjectId || !payload.bootstrapThreadId) {
         return;
       }
-      useUiStateStore
-        .getState()
-        .setProjectExpanded(
-          scopedProjectKey(
-            scopeProjectRef(payload.environment.environmentId, payload.bootstrapProjectId),
-          ),
-          true,
-        );
+      setProjectExpanded(payload.bootstrapProjectId, true);
 
-      if (readPathname() !== "/") {
+      if (pathnameRef.current !== "/") {
         return;
       }
       if (handledBootstrapThreadIdRef.current === payload.bootstrapThreadId) {
         return;
       }
       await navigate({
-        to: "/$environmentId/$threadId",
-        params: {
-          environmentId: payload.environment.environmentId,
-          threadId: payload.bootstrapThreadId,
-        },
+        to: "/$threadId",
+        params: { threadId: payload.bootstrapThreadId },
         replace: true,
       });
       handledBootstrapThreadIdRef.current = payload.bootstrapThreadId;
@@ -252,10 +245,15 @@ function EventRouter() {
   });
 
   const handleServerConfigUpdated = useEffectEvent(
-    (notification: ServerConfigUpdatedNotification | null) => {
-      if (!notification) return;
-
-      const { id, payload, source } = notification;
+    ({
+      id,
+      payload,
+      source,
+    }: {
+      readonly id: number;
+      readonly payload: import("@t3tools/contracts").ServerConfigUpdatedPayload;
+      readonly source: ServerConfigUpdateSource;
+    }) => {
       if (id <= seenServerConfigUpdateIdRef.current) {
         return;
       }
@@ -281,7 +279,7 @@ function EventRouter() {
         actionProps: {
           children: "Open keybindings.json",
           onClick: () => {
-            const api = readLocalApi();
+            const api = readNativeApi();
             if (!api) {
               return;
             }
@@ -309,23 +307,247 @@ function EventRouter() {
   );
 
   useEffect(() => {
-    if (!serverConfig) {
-      return;
-    }
-
-    updatePrimaryEnvironmentDescriptor(serverConfig.environment);
-    setActiveEnvironmentId(serverConfig.environment.environmentId);
-  }, [serverConfig, setActiveEnvironmentId]);
-
-  useEffect(() => {
+    const api = readNativeApi();
+    if (!api) return;
+    let disposed = false;
     disposedRef.current = false;
-    return () => {
-      disposedRef.current = true;
+    const recovery = createOrchestrationRecoveryCoordinator();
+    let needsProviderInvalidation = false;
+    let lastProviderAuthRefreshAt = 0;
+    const pendingDomainEvents: OrchestrationEvent[] = [];
+    let flushPendingDomainEventsScheduled = false;
+
+    const reconcileSnapshotDerivedState = () => {
+      const threads = useStore.getState().threads;
+      const projects = useStore.getState().projects;
+      syncProjects(projects.map((project) => ({ id: project.id, cwd: project.cwd })));
+      syncThreads(
+        threads.map((thread) => ({
+          id: thread.id,
+          seedVisitedAt: thread.updatedAt ?? thread.createdAt,
+        })),
+      );
+      clearPromotedDraftThreads(threads.map((thread) => thread.id));
+      const draftThreadIds = Object.keys(
+        useComposerDraftStore.getState().draftThreadsByThreadId,
+      ) as ThreadId[];
+      const activeThreadIds = collectActiveTerminalThreadIds({
+        snapshotThreads: threads.map((thread) => ({ id: thread.id, deletedAt: null })),
+        draftThreadIds,
+      });
+      removeOrphanedTerminalStates(activeThreadIds);
     };
-  }, []);
+
+    const queryInvalidationThrottler = new Throttler(
+      () => {
+        if (!needsProviderInvalidation) {
+          return;
+        }
+        needsProviderInvalidation = false;
+        void queryClient.invalidateQueries({ queryKey: providerQueryKeys.all });
+        // Invalidate workspace entry queries so the @-mention file picker
+        // reflects files created, deleted, or restored during this turn.
+        void queryClient.invalidateQueries({ queryKey: projectQueryKeys.all });
+      },
+      {
+        wait: 100,
+        leading: false,
+        trailing: true,
+      },
+    );
+
+    const applyEventBatch = (events: ReadonlyArray<OrchestrationEvent>) => {
+      const nextEvents = recovery.markEventBatchApplied(events);
+      if (nextEvents.length === 0) {
+        return;
+      }
+
+      const batchEffects = deriveOrchestrationBatchEffects(nextEvents);
+      const syntheticThreadCreatedEvents = synthesizeDraftThreadCreatedEvents({
+        events: nextEvents,
+        existingThreadIds: new Set(useStore.getState().threads.map((thread) => thread.id)),
+        projects: useStore.getState().projects,
+        draftThreadsByThreadId: useComposerDraftStore.getState().draftThreadsByThreadId,
+      });
+      const uiEvents = [
+        ...syntheticThreadCreatedEvents,
+        ...coalesceOrchestrationUiEvents(nextEvents),
+      ];
+      const needsProjectUiSync = nextEvents.some(
+        (event) =>
+          event.type === "project.created" ||
+          event.type === "project.meta-updated" ||
+          event.type === "project.deleted",
+      );
+
+      if (batchEffects.needsProviderInvalidation) {
+        needsProviderInvalidation = true;
+        void queryInvalidationThrottler.maybeExecute();
+      }
+
+      applyOrchestrationEvents(uiEvents);
+      if (needsProjectUiSync) {
+        const projects = useStore.getState().projects;
+        syncProjects(projects.map((project) => ({ id: project.id, cwd: project.cwd })));
+      }
+      const needsThreadUiSync = nextEvents.some(
+        (event) => event.type === "thread.created" || event.type === "thread.deleted",
+      );
+      if (needsThreadUiSync || syntheticThreadCreatedEvents.length > 0) {
+        const threads = useStore.getState().threads;
+        syncThreads(
+          threads.map((thread) => ({
+            id: thread.id,
+            seedVisitedAt: thread.updatedAt ?? thread.createdAt,
+          })),
+        );
+      }
+      const draftStore = useComposerDraftStore.getState();
+      for (const threadId of batchEffects.clearPromotedDraftThreadIds) {
+        clearPromotedDraftThread(threadId);
+      }
+      for (const threadId of batchEffects.clearDeletedThreadIds) {
+        draftStore.clearDraftThread(threadId);
+        clearThreadUi(threadId);
+      }
+      for (const threadId of batchEffects.removeTerminalStateThreadIds) {
+        removeTerminalState(threadId);
+      }
+    };
+    const flushPendingDomainEvents = () => {
+      flushPendingDomainEventsScheduled = false;
+      if (disposed || pendingDomainEvents.length === 0) {
+        return;
+      }
+
+      const events = pendingDomainEvents.splice(0, pendingDomainEvents.length);
+      applyEventBatch(events);
+    };
+    const schedulePendingDomainEventFlush = () => {
+      if (flushPendingDomainEventsScheduled) {
+        return;
+      }
+
+      flushPendingDomainEventsScheduled = true;
+      queueMicrotask(flushPendingDomainEvents);
+    };
+
+    const recoverFromSequenceGap = async (): Promise<void> => {
+      if (!recovery.beginReplayRecovery("sequence-gap")) {
+        return;
+      }
+
+      try {
+        const events = await api.orchestration.replayEvents(recovery.getState().latestSequence);
+        if (!disposed) {
+          applyEventBatch(events);
+        }
+      } catch {
+        recovery.failReplayRecovery();
+        void fallbackToSnapshotRecovery();
+        return;
+      }
+
+      if (!disposed && recovery.completeReplayRecovery()) {
+        void recoverFromSequenceGap();
+      }
+    };
+
+    const runSnapshotRecovery = async (reason: "bootstrap" | "replay-failed"): Promise<void> => {
+      if (!recovery.beginSnapshotRecovery(reason)) {
+        return;
+      }
+
+      try {
+        const snapshot = await api.orchestration.getSnapshot();
+        if (!disposed) {
+          syncServerReadModel(snapshot);
+          reconcileSnapshotDerivedState();
+          if (recovery.completeSnapshotRecovery(snapshot.snapshotSequence)) {
+            void recoverFromSequenceGap();
+          }
+        }
+      } catch {
+        // Keep prior state and wait for welcome or a later replay attempt.
+        recovery.failSnapshotRecovery();
+      }
+    };
+
+    const bootstrapFromSnapshot = async (): Promise<void> => {
+      await runSnapshotRecovery("bootstrap");
+    };
+    bootstrapFromSnapshotRef.current = bootstrapFromSnapshot;
+
+    const fallbackToSnapshotRecovery = async (): Promise<void> => {
+      await runSnapshotRecovery("replay-failed");
+    };
+    const unsubDomainEvent = api.orchestration.onDomainEvent((event) => {
+      if (
+        event.type === "thread.session-set" &&
+        event.payload.session.providerName === "codex" &&
+        isCodexAuthErrorMessage(event.payload.session.lastError ?? null)
+      ) {
+        const now = Date.now();
+        if (now - lastProviderAuthRefreshAt >= 3_000) {
+          lastProviderAuthRefreshAt = now;
+          void api.server.refreshProviders().catch(() => undefined);
+        }
+      }
+
+      const action = recovery.classifyDomainEvent(event.sequence);
+      if (action === "apply") {
+        pendingDomainEvents.push(event);
+        schedulePendingDomainEventFlush();
+        return;
+      }
+      if (action === "recover") {
+        flushPendingDomainEvents();
+        void recoverFromSequenceGap();
+      }
+    });
+    const unsubTerminalEvent = api.terminal.onEvent((event) => {
+      const hasRunningSubprocess = terminalRunningSubprocessFromEvent(event);
+      if (hasRunningSubprocess === null) {
+        return;
+      }
+      useTerminalStateStore
+        .getState()
+        .setTerminalActivity(
+          ThreadId.makeUnsafe(event.threadId),
+          event.terminalId,
+          hasRunningSubprocess,
+        );
+    });
+    return () => {
+      disposed = true;
+      disposedRef.current = true;
+      needsProviderInvalidation = false;
+      flushPendingDomainEventsScheduled = false;
+      pendingDomainEvents.length = 0;
+      queryInvalidationThrottler.cancel();
+      unsubDomainEvent();
+      unsubTerminalEvent();
+    };
+  }, [
+    applyOrchestrationEvents,
+    navigate,
+    queryClient,
+    removeTerminalState,
+    removeOrphanedTerminalStates,
+    clearThreadUi,
+    setProjectExpanded,
+    syncProjects,
+    syncServerReadModel,
+    syncThreads,
+  ]);
 
   useServerWelcomeSubscription(handleWelcome);
   useServerConfigUpdatedSubscription(handleServerConfigUpdated);
 
+  return null;
+}
+
+function DesktopProjectBootstrap() {
+  // Desktop hydration runs through EventRouter project + orchestration sync.
   return null;
 }
