@@ -24,6 +24,8 @@ interface ComposerPrimaryActionsProps {
   hasSendableContent: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
+  onQueueFollowUp: () => void;
+  onSteerTurn: () => void;
   onImplementPlanInNewThread: () => void;
 }
 
@@ -57,6 +59,8 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   hasSendableContent,
   onPreviousPendingQuestion,
   onInterrupt,
+  onQueueFollowUp,
+  onSteerTurn,
   onImplementPlanInNewThread,
 }: ComposerPrimaryActionsProps) {
   if (pendingAction) {
@@ -108,16 +112,44 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
 
   if (isRunning) {
     return (
-      <button
-        type="button"
-        className="flex size-8 cursor-pointer items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105 sm:h-8 sm:w-8"
-        onClick={onInterrupt}
-        aria-label="Stop generation"
-      >
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
-          <rect x="2" y="2" width="8" height="8" rx="1.5" />
-        </svg>
-      </button>
+      <div className={cn("flex items-center justify-end", compact ? "gap-1" : "gap-1.5")}>
+        {promptHasText ? (
+          <>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className={cn("h-8 rounded-full", compact ? "px-2" : "px-3")}
+              onClick={onQueueFollowUp}
+              aria-label="Queue follow-up"
+              title="Queue follow-up"
+            >
+              Queue
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className={cn("h-8 rounded-full", compact ? "px-2" : "px-3")}
+              onClick={onSteerTurn}
+              disabled={!hasSendableContent}
+              aria-label="Steer running turn"
+              title="Steer running turn"
+            >
+              Steer
+            </Button>
+          </>
+        ) : null}
+        <button
+          type="button"
+          className="flex size-8 cursor-pointer items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105 sm:h-8 sm:w-8"
+          onClick={onInterrupt}
+          aria-label="Stop generation"
+        >
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
+            <rect x="2" y="2" width="8" height="8" rx="1.5" />
+          </svg>
+        </button>
+      </div>
     );
   }
 

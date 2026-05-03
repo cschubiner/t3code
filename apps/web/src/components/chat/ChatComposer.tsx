@@ -292,6 +292,8 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   hasSendableContent: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
+  onQueueFollowUp: () => void;
+  onSteerTurn: () => void;
   onImplementPlanInNewThread: () => void;
 }) {
   return (
@@ -312,6 +314,8 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         hasSendableContent={props.hasSendableContent}
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
         onInterrupt={props.onInterrupt}
+        onQueueFollowUp={props.onQueueFollowUp}
+        onSteerTurn={props.onSteerTurn}
         onImplementPlanInNewThread={props.onImplementPlanInNewThread}
       />
     </>
@@ -435,7 +439,10 @@ export interface ChatComposerProps {
   scheduleStickToBottom: () => void;
 
   // Callbacks
-  onSend: (e?: { preventDefault: () => void }) => void;
+  onSend: (
+    e?: { preventDefault: () => void },
+    disposition?: "default" | "steer" | "queue-front",
+  ) => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
   onRespondToApproval: (
@@ -939,7 +946,8 @@ export const ChatComposer = memo(
       pendingUserInputs.length > 0 ||
       (showPlanFollowUpPrompt && activeProposedPlan !== null);
 
-    const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
+    const composerFooterHasWideActions =
+      showPlanFollowUpPrompt || activePendingProgress !== null || phase === "running";
     const showPlanSidebarToggle = Boolean(activePlan || sidebarProposedPlan || planSidebarOpen);
     const composerFooterActionLayoutKey = useMemo(() => {
       if (activePendingProgress) {
@@ -1715,6 +1723,12 @@ export const ChatComposer = memo(
     const handleImplementPlanInNewThreadPrimaryAction = useCallback(() => {
       void onImplementPlanInNewThread();
     }, [onImplementPlanInNewThread]);
+    const handleQueueFollowUpPrimaryAction = useCallback(() => {
+      onSend(undefined, "default");
+    }, [onSend]);
+    const handleSteerTurnPrimaryAction = useCallback(() => {
+      onSend(undefined, "steer");
+    }, [onSend]);
 
     // ------------------------------------------------------------------
     // Imperative handle
@@ -2109,6 +2123,8 @@ export const ChatComposer = memo(
                     hasSendableContent={composerSendState.hasSendableContent}
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                     onInterrupt={handleInterruptPrimaryAction}
+                    onQueueFollowUp={handleQueueFollowUpPrimaryAction}
+                    onSteerTurn={handleSteerTurnPrimaryAction}
                     onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
                   />
                 </div>
