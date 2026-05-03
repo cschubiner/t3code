@@ -324,6 +324,13 @@ function formatOutgoingPrompt(params: {
   const promptEffort = resolvePromptInjectedEffort(caps, params.effort);
   return applyClaudePromptEffortPrefix(params.text, promptEffort);
 }
+
+function isComposerFormTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement && target.closest('[data-chat-composer-form="true"]') !== null
+  );
+}
+
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
 
@@ -2866,14 +2873,18 @@ export default function ChatView(props: ChatViewProps) {
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, []);
 
-  // ---- Global shortcut: open Skills picker with cmd/ctrl + shift + k ----
+  // ---- Global shortcut: open Skills picker ----
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.repeat) return;
-      const usesMod = event.metaKey || event.ctrlKey;
-      if (!usesMod || !event.shiftKey || event.altKey) return;
-      const key = event.key.toLowerCase();
-      if (key !== "k") return;
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: {
+          terminalFocus: isTerminalFocused(),
+          terminalOpen: Boolean(terminalState.terminalOpen),
+          modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,
+        },
+      });
+      if (command !== "skills.open") return;
       event.preventDefault();
       event.stopPropagation();
       setSkillPickerFocusRequest((previous) => previous + 1);
@@ -2881,7 +2892,7 @@ export default function ChatView(props: ChatViewProps) {
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, []);
+  }, [composerRef, keybindings, terminalState.terminalOpen]);
 
   // ---- Global shortcut: open snippet picker with cmd/ctrl + ; ----
   useEffect(() => {
@@ -3536,6 +3547,55 @@ export default function ChatView(props: ChatViewProps) {
       setDraftThreadContext,
     ],
   );
+  const canToggleComposerEnvMode =
+    (isLocalDraftThread || canOverrideServerThreadEnvMode) &&
+    !envLocked &&
+    activeWorktreePath === null &&
+    activePendingApproval === null &&
+    pendingUserInputs.length === 0 &&
+    activePendingProgress === null;
+
+  useEffect(() => {
+    const handleComposerEnvModeShortcut = (event: globalThis.KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.repeat ||
+        !canToggleComposerEnvMode ||
+        useCommandPaletteStore.getState().open
+      ) {
+        return;
+      }
+      if (!isComposerFormTarget(event.target)) {
+        return;
+      }
+
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: {
+          terminalFocus: isTerminalFocused(),
+          terminalOpen: Boolean(terminalState.terminalOpen),
+          modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,
+        },
+      });
+      if (command !== "chat.envMode.toggle") {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      onEnvModeChange(envMode === "local" ? "worktree" : "local");
+    };
+
+    window.addEventListener("keydown", handleComposerEnvModeShortcut, true);
+    return () => window.removeEventListener("keydown", handleComposerEnvModeShortcut, true);
+  }, [
+    activePendingProgress,
+    canToggleComposerEnvMode,
+    composerRef,
+    envMode,
+    keybindings,
+    onEnvModeChange,
+    terminalState.terminalOpen,
+  ]);
 
   const onExpandTimelineImage = useCallback((preview: ExpandedImagePreview) => {
     setExpandedImage(preview);
