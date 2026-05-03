@@ -819,6 +819,7 @@ export default function ChatView(props: ChatViewProps) {
       : EMPTY_QUEUED_ITEMS,
   );
   const enqueueQueuedTurn = useQueuedTurnStore((store) => store.enqueue);
+  const enqueueQueuedTurnFront = useQueuedTurnStore((store) => store.enqueueFront);
   const removeQueuedTurnById = useQueuedTurnStore((store) => store.removeById);
   const replaceQueuedTurnText = useQueuedTurnStore((store) => store.replaceText);
   const clearQueuedTurnsForThread = useQueuedTurnStore((store) => store.clearThread);
@@ -843,6 +844,7 @@ export default function ChatView(props: ChatViewProps) {
   // ---- Skill picker (cmd+shift+K / ctrl+shift+K) ----
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
   const [skillPickerFocusRequest, setSkillPickerFocusRequest] = useState(0);
+  const [branchSelectorFocusRequest, setBranchSelectorFocusRequest] = useState(0);
   const snippetQueryClient = useQueryClient();
   const snippetListQuery = useQuery(snippetListQueryOptions());
   const snippets = snippetListQuery.data?.snippets ?? [];
@@ -2385,6 +2387,13 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
+      if (command === "chat.branchSelector.focus") {
+        event.preventDefault();
+        event.stopPropagation();
+        setBranchSelectorFocusRequest((value) => value + 1);
+        return;
+      }
+
       const scriptId = projectScriptIdFromCommand(command);
       if (!scriptId || !activeProject) return;
       const script = activeProject.scripts.find((entry) => entry.id === scriptId);
@@ -2460,7 +2469,7 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
 
-  type ComposerSubmissionDisposition = "default" | "steer";
+  type ComposerSubmissionDisposition = "default" | "steer" | "queue-front";
   const onSend = async (
     e?: { preventDefault: () => void },
     disposition: ComposerSubmissionDisposition = "default",
@@ -2482,7 +2491,10 @@ export default function ChatView(props: ChatViewProps) {
         const hasAttachmentsOrContext =
           (ctx?.images?.length ?? 0) > 0 || (ctx?.terminalContexts?.length ?? 0) > 0;
         if (pending.length > 0 && !hasAttachmentsOrContext) {
-          const enqueued = enqueueQueuedTurn(activeThreadRef, pending);
+          const enqueued =
+            disposition === "queue-front"
+              ? enqueueQueuedTurnFront(activeThreadRef, pending)
+              : enqueueQueuedTurn(activeThreadRef, pending);
           if (enqueued) {
             promptRef.current = "";
             clearComposerDraftContent(composerDraftTarget);
@@ -2788,16 +2800,15 @@ export default function ChatView(props: ChatViewProps) {
   //
   // Plain Enter in the composer submits via the form, which routes through
   // onSend() with disposition="default" → that path enqueues when busy.
-  // cmd+Enter (or ctrl+Enter off-mac) wants the OPPOSITE: send NOW to
-  // course-correct the running turn. We listen on the window in capture
-  // phase so the composer editor's own Enter handling doesn't swallow the
-  // modifier+enter combo.
+  // cmd+Enter (or ctrl+Enter off-mac) sends NOW to course-correct the running
+  // turn. cmd+shift+Enter keeps queue behavior but promotes the item to the
+  // front so it runs next.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.repeat) return;
       if (event.key !== "Enter") return;
       const modifierPressed = event.metaKey || event.ctrlKey;
-      if (!modifierPressed || event.shiftKey || event.altKey) return;
+      if (!modifierPressed || event.altKey) return;
       // Only fire when focus is inside the composer form so other Enter
       // interactions (dialogs, buttons, etc.) aren't hijacked.
       const target = event.target;
@@ -2810,7 +2821,7 @@ export default function ChatView(props: ChatViewProps) {
       if (!isSendBusy && !isConnecting) return;
       event.preventDefault();
       event.stopPropagation();
-      void onSend(undefined, "steer");
+      void onSend(undefined, event.shiftKey ? "queue-front" : "steer");
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
@@ -3811,6 +3822,7 @@ export default function ChatView(props: ChatViewProps) {
                   : {})}
                 envLocked={envLocked}
                 onComposerFocusRequest={scheduleComposerFocus}
+                branchSelectorFocusRequestId={branchSelectorFocusRequest}
                 {...(canCheckoutPullRequestIntoThread
                   ? { onCheckoutPullRequestRequest: openPullRequestDialog }
                   : {})}

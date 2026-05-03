@@ -204,11 +204,19 @@ const SIDEBAR_LIST_ANIMATION_OPTIONS = {
   easing: "ease-out",
 } as const;
 const EMPTY_THREAD_JUMP_LABELS = new Map<string, string>();
+const SIDEBAR_RENAME_THREAD_EVENT = "t3code:sidebar-rename-thread";
 const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
   repository_path: "Group by repository path",
   separate: "Keep separate",
 };
+
+function isTextEntryTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return true;
+  if (target.isContentEditable) return true;
+  return target.closest("input, textarea, [contenteditable='true']") !== null;
+}
 
 function formatProjectMemberActionLabel(
   member: SidebarProjectGroupMember,
@@ -1065,6 +1073,26 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const renamingCommittedRef = useRef(false);
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
   const confirmArchiveButtonRefs = useRef(new Map<string, HTMLButtonElement>());
+
+  useEffect(() => {
+    const onRenameRequest = (event: Event) => {
+      const threadKey =
+        event instanceof CustomEvent && typeof event.detail?.threadKey === "string"
+          ? event.detail.threadKey
+          : null;
+      if (!threadKey) return;
+      const thread = sidebarThreadByKeyRef.current.get(threadKey);
+      if (!thread) return;
+      setRenamingThreadKey(threadKey);
+      setRenamingTitle(thread.title);
+      renamingCommittedRef.current = false;
+    };
+
+    window.addEventListener(SIDEBAR_RENAME_THREAD_EVENT, onRenameRequest);
+    return () => {
+      window.removeEventListener(SIDEBAR_RENAME_THREAD_EVENT, onRenameRequest);
+    };
+  }, []);
   const memberProjectByScopedKey = useMemo(
     () =>
       new Map(
@@ -3212,6 +3240,15 @@ export default function Sidebar() {
         platform,
         context: shortcutContext,
       });
+      const isSidebarNavigationCommand =
+        command === "sidebar.thread.previous" ||
+        command === "sidebar.thread.next" ||
+        command === "sidebar.project.previous" ||
+        command === "sidebar.project.next" ||
+        command === "sidebar.rename";
+      if (isSidebarNavigationCommand && isTextEntryTarget(event.target)) {
+        return;
+      }
       if (command === "sidebar.history.previous") {
         event.preventDefault();
         event.stopPropagation();
@@ -3226,6 +3263,77 @@ export default function Sidebar() {
         if (typeof window !== "undefined") {
           window.history.forward();
         }
+        return;
+      }
+      if (command === "sidebar.thread.previous" || command === "sidebar.thread.next") {
+        const targetThreadKey = resolveAdjacentThreadId({
+          threadIds: orderedSidebarThreadKeys,
+          currentThreadId: routeThreadKey,
+          direction: command === "sidebar.thread.previous" ? "previous" : "next",
+        });
+        if (!targetThreadKey) {
+          return;
+        }
+        const targetThread = sidebarThreadByKey.get(targetThreadKey);
+        if (!targetThread) {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        navigateToThread(scopeThreadRef(targetThread.environmentId, targetThread.id));
+        return;
+      }
+      if (command === "sidebar.project.previous" || command === "sidebar.project.next") {
+        const visibleProjectKeys = sortedProjects
+          .map((project) => project.projectKey)
+          .filter((projectKey) =>
+            (threadsByProjectKey.get(projectKey) ?? []).some(
+              (thread) => thread.archivedAt === null,
+            ),
+          );
+        if (visibleProjectKeys.length === 0) {
+          return;
+        }
+        const currentIndex = activeRouteProjectKey
+          ? visibleProjectKeys.indexOf(activeRouteProjectKey)
+          : -1;
+        const nextIndex =
+          command === "sidebar.project.previous"
+            ? currentIndex <= 0
+              ? visibleProjectKeys.length - 1
+              : currentIndex - 1
+            : currentIndex < 0 || currentIndex >= visibleProjectKeys.length - 1
+              ? 0
+              : currentIndex + 1;
+        const targetProjectKey = visibleProjectKeys[nextIndex];
+        if (!targetProjectKey) {
+          return;
+        }
+        const targetThread = sortThreads(
+          (threadsByProjectKey.get(targetProjectKey) ?? []).filter(
+            (thread) => thread.archivedAt === null,
+          ),
+          sidebarThreadSortOrder,
+        )[0];
+        if (!targetThread) {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        navigateToThread(scopeThreadRef(targetThread.environmentId, targetThread.id));
+        return;
+      }
+      if (command === "sidebar.rename") {
+        if (!routeThreadKey || !sidebarThreadByKey.has(routeThreadKey)) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        window.dispatchEvent(
+          new CustomEvent(SIDEBAR_RENAME_THREAD_EVENT, { detail: { threadKey: routeThreadKey } }),
+        );
         return;
       }
       const traversalDirection = threadTraversalDirectionFromCommand(command);
@@ -3274,13 +3382,17 @@ export default function Sidebar() {
       window.removeEventListener("keydown", onWindowKeyDown);
     };
   }, [
+    activeRouteProjectKey,
     getCurrentSidebarShortcutContext,
     keybindings,
     navigateToThread,
     orderedSidebarThreadKeys,
     platform,
     routeThreadKey,
+    sidebarThreadSortOrder,
     sidebarThreadByKey,
+    sortedProjects,
+    threadsByProjectKey,
     threadJumpThreadKeys,
   ]);
 

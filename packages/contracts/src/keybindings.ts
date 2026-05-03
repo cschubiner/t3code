@@ -56,10 +56,16 @@ const STATIC_KEYBINDING_COMMANDS = [
   "commandPalette.toggle",
   "chat.new",
   "chat.newLocal",
+  "chat.branchSelector.focus",
   "editor.openFavorite",
   ...MODEL_PICKER_KEYBINDING_COMMANDS,
   "sidebar.history.previous",
   "sidebar.history.next",
+  "sidebar.thread.previous",
+  "sidebar.thread.next",
+  "sidebar.project.previous",
+  "sidebar.project.next",
+  "sidebar.rename",
   ...THREAD_KEYBINDING_COMMANDS,
 ] as const;
 

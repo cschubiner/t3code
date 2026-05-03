@@ -62,6 +62,7 @@ export interface QueuedTurnStoreState {
 export interface QueuedTurnStore extends QueuedTurnStoreState {
   getQueue: (threadRef: ScopedThreadRef) => readonly QueuedTurnDraft[];
   enqueue: (threadRef: ScopedThreadRef, text: string) => QueuedTurnDraft | null;
+  enqueueFront: (threadRef: ScopedThreadRef, text: string) => QueuedTurnDraft | null;
   removeById: (threadRef: ScopedThreadRef, id: string) => void;
   popNext: (threadRef: ScopedThreadRef) => QueuedTurnDraft | null;
   replaceText: (threadRef: ScopedThreadRef, id: string, text: string) => void;
@@ -120,6 +121,24 @@ export const useQueuedTurnStore = create<QueuedTurnStore>()(
         set((state) =>
           updateQueue(state, key, (current) => ({
             items: [...(current?.items ?? []), draft],
+            updatedAt: draft.createdAt,
+          })),
+        );
+        return draft;
+      },
+
+      enqueueFront: (ref, text) => {
+        const trimmed = text.trim();
+        if (trimmed.length === 0) return null;
+        const draft: QueuedTurnDraft = {
+          id: nextQueueId(),
+          text: trimmed,
+          createdAt: new Date().toISOString(),
+        };
+        const key = scopedThreadKey(ref);
+        set((state) =>
+          updateQueue(state, key, (current) => ({
+            items: [draft, ...(current?.items ?? [])],
             updatedAt: draft.createdAt,
           })),
         );
