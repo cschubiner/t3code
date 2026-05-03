@@ -153,6 +153,7 @@ import {
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import {
+  getRecentSidebarThreads,
   getSidebarThreadIdsToPrewarm,
   getVisibleThreadsForProject,
   resolveAdjacentThreadId,
@@ -3217,6 +3218,14 @@ export default function Sidebar() {
       ),
     [sidebarThreadSortOrder, sortedProjects, threadsByProjectKey],
   );
+  const recentSidebarThreadKeys = useMemo(
+    () =>
+      getRecentSidebarThreads({
+        sortOrder: sidebarThreadSortOrder,
+        threads: sidebarThreads,
+      }).map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
+    [sidebarThreadSortOrder, sidebarThreads],
+  );
   const threadJumpCommandByKey = useMemo(() => {
     const mapping = new Map<string, NonNullable<ReturnType<typeof threadJumpCommandForIndex>>>();
     for (const [visibleThreadIndex, threadKey] of visibleSidebarThreadKeys.entries()) {
@@ -3267,7 +3276,8 @@ export default function Sidebar() {
   const visibleThreadJumpLabelByKey = showThreadJumpHints
     ? threadJumpLabelByKey
     : EMPTY_THREAD_JUMP_LABELS;
-  const orderedSidebarThreadKeys = traversalSidebarThreadKeys;
+  const orderedSidebarThreadKeys =
+    sidebarViewMode === "recent" ? recentSidebarThreadKeys : traversalSidebarThreadKeys;
   const prewarmedSidebarThreadKeys = useMemo(
     () => getSidebarThreadIdsToPrewarm(visibleSidebarThreadKeys),
     [visibleSidebarThreadKeys],

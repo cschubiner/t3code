@@ -3,6 +3,7 @@ import { ProviderDriverKind } from "@t3tools/contracts";
 
 import {
   createThreadJumpHintVisibilityController,
+  getRecentSidebarThreads,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
@@ -694,6 +695,42 @@ describe("getVisibleThreadsForProject", () => {
       threads.map((thread) => thread.id),
     );
     expect(result.hiddenThreads).toEqual([]);
+  });
+});
+
+describe("getRecentSidebarThreads", () => {
+  it("matches the recent sidebar order and skips archived threads", () => {
+    const threads = [
+      makeThread({
+        id: ThreadId.make("thread-old"),
+        createdAt: "2026-03-09T10:00:00.000Z",
+        updatedAt: "2026-03-09T10:00:00.000Z",
+      }),
+      makeThread({
+        id: ThreadId.make("thread-archived"),
+        createdAt: "2026-03-09T10:40:00.000Z",
+        updatedAt: "2026-03-09T10:40:00.000Z",
+        archivedAt: "2026-03-09T10:41:00.000Z",
+      }),
+      makeThread({
+        id: ThreadId.make("thread-newest"),
+        createdAt: "2026-03-09T10:20:00.000Z",
+        updatedAt: "2026-03-09T10:20:00.000Z",
+      }),
+      makeThread({
+        id: ThreadId.make("thread-middle"),
+        createdAt: "2026-03-09T10:10:00.000Z",
+        updatedAt: "2026-03-09T10:10:00.000Z",
+      }),
+    ];
+
+    expect(
+      getRecentSidebarThreads({
+        threads,
+        sortOrder: "updated_at",
+        limit: 2,
+      }).map((thread) => thread.id),
+    ).toEqual([ThreadId.make("thread-newest"), ThreadId.make("thread-middle")]);
   });
 });
 

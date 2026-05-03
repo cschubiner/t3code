@@ -12,7 +12,6 @@ import {
   type AppState,
 } from "../store";
 import type { Project, SidebarThreadSummary } from "../types";
-import { sortThreads } from "../lib/threadSort";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useSettings } from "~/hooks/useSettings";
@@ -23,13 +22,13 @@ import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import {
   resolveThreadRowClassName,
   resolveThreadStatusPill,
+  getRecentSidebarThreads,
+  RECENT_THREAD_LIMIT,
   type ThreadStatusPill,
 } from "./Sidebar.logic";
 import { SidebarContent, SidebarGroup, SidebarMenu } from "./ui/sidebar";
 import { toastManager } from "./ui/toast";
 import { formatRelativeTimeLabel } from "../timestampFormat";
-
-const RECENT_THREAD_LIMIT = 200;
 
 type DateBucketId = "today" | "yesterday" | "week" | "earlier";
 
@@ -82,10 +81,15 @@ export function SidebarRecentContent() {
     useShallow((state: AppState) => selectSidebarThreadsAcrossEnvironments(state)),
   );
 
-  const visibleThreads = useMemo(() => {
-    const visible = allThreads.filter((t) => t.archivedAt == null);
-    return sortThreads(visible, sidebarThreadSortOrder).slice(0, RECENT_THREAD_LIMIT);
-  }, [allThreads, sidebarThreadSortOrder]);
+  const visibleThreads = useMemo(
+    () =>
+      getRecentSidebarThreads({
+        limit: RECENT_THREAD_LIMIT,
+        sortOrder: sidebarThreadSortOrder,
+        threads: allThreads,
+      }),
+    [allThreads, sidebarThreadSortOrder],
+  );
 
   const buckets = useMemo<DateBucket[]>(() => {
     const now = Date.now();

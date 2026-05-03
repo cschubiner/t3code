@@ -15,6 +15,7 @@ export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
 // Visible sidebar rows are prewarmed into the thread-detail cache so opening a
 // nearby thread usually reuses an already-hot subscription.
 export const SIDEBAR_THREAD_PREWARM_LIMIT = 10;
+export const RECENT_THREAD_LIMIT = 200;
 export type SidebarNewThreadEnvMode = "local" | "worktree";
 type SidebarProject = {
   id: string;
@@ -457,6 +458,20 @@ export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input:
     hiddenThreads: threads.filter((thread) => !visibleThreadIds.has(thread.id)),
     visibleThreads: threads.filter((thread) => visibleThreadIds.has(thread.id)),
   };
+}
+
+export function getRecentSidebarThreads<
+  T extends Pick<Thread, "id" | "archivedAt" | "createdAt" | "updatedAt"> & ThreadSortInput,
+>(input: { threads: readonly T[]; sortOrder: SidebarThreadSortOrder; limit?: number }): T[] {
+  const limit = input.limit ?? RECENT_THREAD_LIMIT;
+  if (limit <= 0) {
+    return [];
+  }
+
+  return sortThreads(
+    input.threads.filter((thread) => thread.archivedAt === null),
+    input.sortOrder,
+  ).slice(0, limit);
 }
 
 export function getFallbackThreadIdAfterDelete<
