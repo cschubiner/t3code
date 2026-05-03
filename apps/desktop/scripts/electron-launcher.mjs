@@ -170,9 +170,10 @@ export function resolveElectronPath() {
     return electronBinaryPath;
   }
 
-  // Dev launches do not need a renamed app bundle badly enough to risk breaking
-  // Electron helper resource lookup on macOS.
-  if (isDevelopment) {
+  // Local launches do not need a renamed app bundle badly enough to risk
+  // breaking Electron helper resource lookup on macOS. Packaged app artifacts
+  // still get their user-visible names from electron-builder product metadata.
+  if (process.env.T3CODE_USE_RENAMED_ELECTRON_LAUNCHER !== "1") {
     return electronBinaryPath;
   }
 
