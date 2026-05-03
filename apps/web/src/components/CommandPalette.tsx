@@ -171,7 +171,8 @@ export function CommandPalette({ children }: { children: ReactNode }) {
         command !== "commandPalette.toggle" &&
         command !== "projects.search" &&
         command !== "thread.search" &&
-        command !== "threads.search"
+        command !== "threads.search" &&
+        command !== "threads.searchAll"
       ) {
         return;
       }
@@ -181,7 +182,11 @@ export function CommandPalette({ children }: { children: ReactNode }) {
         openProjectSearch();
         return;
       }
-      if (command === "thread.search" || command === "threads.search") {
+      if (
+        command === "thread.search" ||
+        command === "threads.search" ||
+        command === "threads.searchAll"
+      ) {
         openThreadSearch();
         return;
       }

@@ -123,6 +123,11 @@ const DEFAULT_BINDINGS = compile([
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
   {
+    shortcut: modShortcut("a", { shiftKey: true }),
+    command: "threads.searchAll",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
     shortcut: modShortcut("k", { shiftKey: true }),
     command: "projects.search",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
@@ -593,6 +598,13 @@ describe("chat/editor shortcuts", () => {
         context: { terminalFocus: false },
       }),
       "threads.search",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "a", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "threads.searchAll",
     );
     assert.strictEqual(
       resolveShortcutCommand(event({ key: "k", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {

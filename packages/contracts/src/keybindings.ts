@@ -56,6 +56,7 @@ const STATIC_KEYBINDING_COMMANDS = [
   "commandPalette.toggle",
   "thread.search",
   "threads.search",
+  "threads.searchAll",
   "projects.search",
   "chat.new",
   "chat.newLocal",
