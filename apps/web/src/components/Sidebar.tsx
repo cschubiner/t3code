@@ -4,6 +4,7 @@ import {
   ChevronRightIcon,
   CloudIcon,
   ClockIcon,
+  FolderGit2Icon,
   FolderIcon,
   FolderPlusIcon,
   SearchIcon,
@@ -153,6 +154,7 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import {
   getSidebarThreadIdsToPrewarm,
+  getVisibleThreadsForProject,
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
   resolveProjectStatusIndicator,
@@ -2344,6 +2346,49 @@ function SidebarViewModeToggle({
   );
 }
 
+function ProjectGroupingModeToggle({
+  projectGroupingMode,
+  onChange,
+}: {
+  projectGroupingMode: SidebarProjectGroupingMode;
+  onChange: (mode: SidebarProjectGroupingMode) => void;
+}) {
+  const groupingByFolder = projectGroupingMode === "repository_path";
+  const nextMode: SidebarProjectGroupingMode = groupingByFolder ? "repository" : "repository_path";
+  const label = groupingByFolder ? "Group by repository" : "Group by folder";
+  const tooltip = groupingByFolder
+    ? "Currently grouping by folder path. Switch to one row per repository."
+    : "Currently grouping by repository. Switch to grouping matching folder paths.";
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label={label}
+            aria-pressed={groupingByFolder}
+            data-testid="sidebar-project-grouping-toggle"
+            className={`inline-flex size-5 cursor-pointer items-center justify-center rounded-md transition-colors hover:bg-accent hover:text-foreground ${
+              groupingByFolder ? "bg-accent text-foreground" : "text-muted-foreground/60"
+            }`}
+            onClick={() => {
+              onChange(nextMode);
+            }}
+          />
+        }
+      >
+        {groupingByFolder ? (
+          <FolderIcon className="size-3.5" />
+        ) : (
+          <FolderGit2Icon className="size-3.5" />
+        )}
+      </TooltipTrigger>
+      <TooltipPopup side="right">{tooltip}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
 function ProjectSortMenu({
   projectSortOrder,
   threadSortOrder,
@@ -2701,6 +2746,10 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
           </span>
           <div className="flex items-center gap-1">
             <SidebarViewModeToggle viewMode={viewMode} onChange={onViewModeChange} />
+            <ProjectGroupingModeToggle
+              projectGroupingMode={projectGroupingMode}
+              onChange={handleProjectGroupingModeChange}
+            />
             <ProjectSortMenu
               projectSortOrder={projectSortOrder}
               threadSortOrder={threadSortOrder}
@@ -3129,12 +3178,20 @@ export default function Sidebar() {
           return [];
         }
         const isThreadListExpanded = expandedThreadListsByProject.has(project.projectKey);
-        const hasOverflowingThreads = projectThreads.length > THREAD_PREVIEW_LIMIT;
-        const previewThreads =
-          isThreadListExpanded || !hasOverflowingThreads
-            ? projectThreads
-            : projectThreads.slice(0, THREAD_PREVIEW_LIMIT);
-        const renderedThreads = pinnedCollapsedThread ? [pinnedCollapsedThread] : previewThreads;
+        const activeThread = routeThreadKey
+          ? projectThreads.find(
+              (thread) =>
+                scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
+            )
+          : null;
+        const renderedThreads = pinnedCollapsedThread
+          ? [pinnedCollapsedThread]
+          : getVisibleThreadsForProject({
+              activeThreadId: activeThread?.id,
+              isThreadListExpanded,
+              previewLimit: THREAD_PREVIEW_LIMIT,
+              threads: projectThreads,
+            }).visibleThreads;
         return renderedThreads.map((thread) =>
           scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
         );
@@ -3147,6 +3204,18 @@ export default function Sidebar() {
       sortedProjects,
       threadsByProjectKey,
     ],
+  );
+  const traversalSidebarThreadKeys = useMemo(
+    () =>
+      sortedProjects.flatMap((project) =>
+        sortThreads(
+          (threadsByProjectKey.get(project.projectKey) ?? []).filter(
+            (thread) => thread.archivedAt === null,
+          ),
+          sidebarThreadSortOrder,
+        ).map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
+      ),
+    [sidebarThreadSortOrder, sortedProjects, threadsByProjectKey],
   );
   const threadJumpCommandByKey = useMemo(() => {
     const mapping = new Map<string, NonNullable<ReturnType<typeof threadJumpCommandForIndex>>>();
@@ -3198,7 +3267,7 @@ export default function Sidebar() {
   const visibleThreadJumpLabelByKey = showThreadJumpHints
     ? threadJumpLabelByKey
     : EMPTY_THREAD_JUMP_LABELS;
-  const orderedSidebarThreadKeys = visibleSidebarThreadKeys;
+  const orderedSidebarThreadKeys = traversalSidebarThreadKeys;
   const prewarmedSidebarThreadKeys = useMemo(
     () => getSidebarThreadIdsToPrewarm(visibleSidebarThreadKeys),
     [visibleSidebarThreadKeys],
