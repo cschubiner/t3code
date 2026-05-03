@@ -75,6 +75,9 @@ import {
   type ProjectionSnapshotQueryShape,
 } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
+import { SnippetRepository, type SnippetRepositoryShape } from "./persistence/Services/Snippets.ts";
+import { CodexImport, type CodexImportShape } from "./codexImport/Services/CodexImport.ts";
+import { CodexImportError } from "@t3tools/contracts";
 import {
   ProviderRegistry,
   type ProviderRegistryShape,
@@ -341,6 +344,8 @@ const buildAppUnderTest = (options?: {
     serverRuntimeStartup?: Partial<ServerRuntimeStartupShape>;
     serverEnvironment?: Partial<ServerEnvironmentShape>;
     repositoryIdentityResolver?: Partial<RepositoryIdentityResolverShape>;
+    snippetRepository?: Partial<SnippetRepositoryShape>;
+    codexImport?: Partial<CodexImportShape>;
   };
 }) =>
   Effect.gen(function* () {
@@ -645,6 +650,33 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provideMerge(authTestLayer),
       Layer.provide(workspaceAndProjectServicesLayer),
+      Layer.provide(
+        Layer.mock(SnippetRepository)({
+          listAll: () => Effect.succeed([]),
+          upsertByExactText: ({ text, updatedAt }) =>
+            Effect.succeed({
+              snippet: {
+                id: "snippet-test" as never,
+                text,
+                createdAt: updatedAt,
+                updatedAt,
+              },
+              deduped: false,
+            }),
+          deleteById: () => Effect.void,
+          ...options?.layers?.snippetRepository,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(CodexImport)({
+          listSessions: () => Effect.succeed([]),
+          peekSession: () =>
+            Effect.fail(new CodexImportError({ message: "not available in tests" })),
+          importSessions: () =>
+            Effect.fail(new CodexImportError({ message: "not available in tests" })),
+          ...options?.layers?.codexImport,
+        }),
+      ),
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provide(layerConfig),
     );

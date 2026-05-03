@@ -14,6 +14,8 @@ import {
   modelPickerJumpCommandForIndex,
   modelPickerJumpIndexFromCommand,
   isOpenFavoriteEditorShortcut,
+  isSidebarHistoryNextShortcut,
+  isSidebarHistoryPreviousShortcut,
   isTerminalClearShortcut,
   isTerminalCloseShortcut,
   isTerminalNewShortcut,
@@ -111,15 +113,60 @@ const DEFAULT_BINDINGS = compile([
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
   {
+    shortcut: modShortcut("f"),
+    command: "thread.search",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
+    shortcut: modShortcut("f", { shiftKey: true }),
+    command: "threads.search",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
+    shortcut: modShortcut("a", { shiftKey: true }),
+    command: "threads.searchAll",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
+    shortcut: modShortcut("k", { shiftKey: true }),
+    command: "projects.search",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
     shortcut: modShortcut("m", { shiftKey: true }),
     command: "modelPicker.toggle",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
   { shortcut: modShortcut("o", { shiftKey: true }), command: "chat.new" },
   { shortcut: modShortcut("n", { shiftKey: true }), command: "chat.newLocal" },
+  {
+    shortcut: modShortcut("w", { shiftKey: true }),
+    command: "chat.envMode.toggle",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
+    shortcut: modShortcut("s", { shiftKey: true }),
+    command: "snippets.open",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
+    shortcut: modShortcut("l", { shiftKey: true }),
+    command: "skills.open",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
   { shortcut: modShortcut("o"), command: "editor.openFavorite" },
   { shortcut: modShortcut("[", { shiftKey: true }), command: "thread.previous" },
   { shortcut: modShortcut("]", { shiftKey: true }), command: "thread.next" },
+  {
+    shortcut: modShortcut("["),
+    command: "sidebar.history.previous",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
+    shortcut: modShortcut("]"),
+    command: "sidebar.history.next",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
   { shortcut: modShortcut("1"), command: "thread.jump.1" },
   { shortcut: modShortcut("2"), command: "thread.jump.2" },
   { shortcut: modShortcut("3"), command: "thread.jump.3" },
@@ -461,6 +508,65 @@ describe("chat/editor shortcuts", () => {
     );
   });
 
+  it("matches sidebar.history.previous shortcut outside terminal focus", () => {
+    assert.isTrue(
+      isSidebarHistoryPreviousShortcut(event({ key: "[", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+    );
+    assert.isTrue(
+      isSidebarHistoryPreviousShortcut(event({ key: "[", ctrlKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+    );
+    assert.isFalse(
+      isSidebarHistoryPreviousShortcut(event({ key: "[", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+    );
+  });
+
+  it("matches sidebar.history.next shortcut outside terminal focus", () => {
+    assert.isTrue(
+      isSidebarHistoryNextShortcut(event({ key: "]", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+    );
+    assert.isTrue(
+      isSidebarHistoryNextShortcut(event({ key: "]", ctrlKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+    );
+    assert.isFalse(
+      isSidebarHistoryNextShortcut(event({ key: "]", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+    );
+  });
+
+  it("does not match sidebar.history shortcuts when shift held (cmd+shift+[ stays as thread.previous)", () => {
+    assert.isFalse(
+      isSidebarHistoryPreviousShortcut(
+        event({ key: "[", metaKey: true, shiftKey: true }),
+        DEFAULT_BINDINGS,
+        { platform: "MacIntel", context: { terminalFocus: false } },
+      ),
+    );
+    assert.isFalse(
+      isSidebarHistoryNextShortcut(
+        event({ key: "]", metaKey: true, shiftKey: true }),
+        DEFAULT_BINDINGS,
+        { platform: "MacIntel", context: { terminalFocus: false } },
+      ),
+    );
+  });
+
   it("matches commandPalette.toggle shortcut outside terminal focus", () => {
     assert.strictEqual(
       resolveShortcutCommand(event({ key: "k", metaKey: true }), DEFAULT_BINDINGS, {
@@ -475,6 +581,91 @@ describe("chat/editor shortcuts", () => {
         context: { terminalFocus: true },
       }),
       "commandPalette.toggle",
+    );
+  });
+
+  it("matches direct search shortcuts outside terminal focus", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "f", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "thread.search",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "f", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "threads.search",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "a", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "threads.searchAll",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "k", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "projects.search",
+    );
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "f", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+    );
+  });
+
+  it("matches composer environment toggle outside terminal focus", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "w", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "chat.envMode.toggle",
+    );
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "w", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+    );
+  });
+
+  it("matches snippets shortcut outside terminal focus", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "s", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "snippets.open",
+    );
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "s", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+    );
+  });
+
+  it("matches skills picker shortcut outside terminal focus", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "l", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "skills.open",
+    );
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "l", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
     );
   });
 

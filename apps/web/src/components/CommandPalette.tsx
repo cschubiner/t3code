@@ -143,6 +143,8 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   const open = useCommandPaletteStore((store) => store.open);
   const setOpen = useCommandPaletteStore((store) => store.setOpen);
   const toggleOpen = useCommandPaletteStore((store) => store.toggleOpen);
+  const openProjectSearch = useCommandPaletteStore((store) => store.openProjectSearch);
+  const openThreadSearch = useCommandPaletteStore((store) => store.openThreadSearch);
   const keybindings = useServerKeybindings();
   const composerHandleRef = useRef<ChatComposerHandle | null>(null);
   const routeTarget = useParams({
@@ -165,16 +167,34 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           terminalOpen,
         },
       });
-      if (command !== "commandPalette.toggle") {
+      if (
+        command !== "commandPalette.toggle" &&
+        command !== "projects.search" &&
+        command !== "thread.search" &&
+        command !== "threads.search" &&
+        command !== "threads.searchAll"
+      ) {
         return;
       }
       event.preventDefault();
       event.stopPropagation();
+      if (command === "projects.search") {
+        openProjectSearch();
+        return;
+      }
+      if (
+        command === "thread.search" ||
+        command === "threads.search" ||
+        command === "threads.searchAll"
+      ) {
+        openThreadSearch();
+        return;
+      }
       toggleOpen();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [keybindings, terminalOpen, toggleOpen]);
+  }, [keybindings, openProjectSearch, openThreadSearch, terminalOpen, toggleOpen]);
 
   return (
     <ComposerHandleContext.Provider value={composerHandleRef}>
@@ -631,6 +651,25 @@ function OpenCommandPaletteDialog() {
     clearOpenIntent();
     openAddProjectFlow();
   }, [clearOpenIntent, openAddProjectFlow, openIntent]);
+
+  useEffect(() => {
+    if (openIntent?.kind === "project-search") {
+      clearOpenIntent();
+      pushPaletteView({
+        addonIcon: <FolderIcon className={ADDON_ICON_CLASS} />,
+        groups: [{ value: "projects", label: "Projects", items: projectSearchItems }],
+      });
+      return;
+    }
+
+    if (openIntent?.kind === "thread-search") {
+      clearOpenIntent();
+      pushPaletteView({
+        addonIcon: <MessageSquareIcon className={ADDON_ICON_CLASS} />,
+        groups: [{ value: "threads", label: "Threads", items: allThreadItems }],
+      });
+    }
+  }, [allThreadItems, clearOpenIntent, openIntent, projectSearchItems]);
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 

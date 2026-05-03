@@ -190,6 +190,12 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
 
       assert.equal(defaultsByCommand.get("thread.previous"), "mod+shift+[");
       assert.equal(defaultsByCommand.get("thread.next"), "mod+shift+]");
+      assert.equal(defaultsByCommand.get("thread.search"), "mod+f");
+      assert.equal(defaultsByCommand.get("threads.search"), "mod+shift+f");
+      assert.equal(defaultsByCommand.get("projects.search"), "mod+shift+k");
+      assert.equal(defaultsByCommand.get("chat.envMode.toggle"), "mod+shift+w");
+      assert.equal(defaultsByCommand.get("snippets.open"), "mod+shift+s");
+      assert.equal(defaultsByCommand.get("skills.open"), "mod+shift+l");
       assert.equal(defaultsByCommand.get("thread.jump.1"), "mod+1");
       assert.equal(defaultsByCommand.get("thread.jump.9"), "mod+9");
       assert.equal(defaultsByCommand.get("modelPicker.toggle"), "mod+shift+m");

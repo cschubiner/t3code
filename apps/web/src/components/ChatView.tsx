@@ -35,7 +35,7 @@ import {
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
 import { Debouncer } from "@tanstack/react-pacer";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useShallow } from "zustand/react/shallow";
 import { useGitStatus } from "~/lib/gitStatusState";
@@ -104,7 +104,7 @@ import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronUpIcon, SearchIcon, XIcon } from "lucide-react";
 import { cn, randomUUID } from "~/lib/utils";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
@@ -117,6 +117,7 @@ import {
 import { newCommandId, newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
 import { useSettings } from "../hooks/useSettings";
+import { useThreadActions } from "../hooks/useThreadActions";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
@@ -139,9 +140,22 @@ import {
 } from "../lib/terminalContext";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
+import { QueuedFollowUpsPanel } from "./QueuedFollowUpsPanel";
+import { useQueuedTurnStore, type QueuedTurnDraft } from "../queuedTurnStore";
+import { SnippetPickerDialog } from "./SnippetPickerDialog";
+import { SkillPickerDialog, formatSkillReferenceBlock } from "./SkillPickerDialog";
+import { snippetListQueryOptions, snippetQueryKeys } from "../lib/snippetReactQuery";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ensureLocalApi } from "../localApi";
+import type { Snippet, SnippetId } from "@t3tools/contracts";
+import { ImportFromCodexDialog } from "./ImportFromCodexDialog";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
+import {
+  buildThreadMessageSearchMatches,
+  type ThreadMessageSearchMatch,
+} from "./threadMessageSearch.logic";
 import { ChatHeader } from "./chat/ChatHeader";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
@@ -314,6 +328,105 @@ function formatOutgoingPrompt(params: {
   const promptEffort = resolvePromptInjectedEffort(caps, params.effort);
   return applyClaudePromptEffortPrefix(params.text, promptEffort);
 }
+
+function isComposerFormTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement && target.closest('[data-chat-composer-form="true"]') !== null
+  );
+}
+
+function ThreadMessageSearchBar({
+  inputRef,
+  query,
+  matches,
+  activeIndex,
+  activeMatch,
+  onQueryChange,
+  onNext,
+  onPrevious,
+  onClose,
+}: {
+  inputRef: RefObject<HTMLInputElement | null>;
+  query: string;
+  matches: ReadonlyArray<ThreadMessageSearchMatch>;
+  activeIndex: number;
+  activeMatch: ThreadMessageSearchMatch | null;
+  onQueryChange: (query: string) => void;
+  onNext: () => void;
+  onPrevious: () => void;
+  onClose: () => void;
+}) {
+  const hasQuery = query.trim().length > 0;
+  const statusLabel = !hasQuery
+    ? "Search messages"
+    : matches.length === 0
+      ? "No matches"
+      : `${Math.min(activeIndex + 1, matches.length)} / ${matches.length}`;
+
+  return (
+    <div className="absolute right-4 top-3 z-40 w-[min(28rem,calc(100%-2rem))] rounded-lg border border-border bg-popover p-2 text-popover-foreground shadow-lg">
+      <div className="flex min-w-0 items-center gap-2">
+        <SearchIcon className="size-4 shrink-0 text-muted-foreground" />
+        <input
+          ref={inputRef}
+          type="search"
+          value={query}
+          onChange={(event) => onQueryChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              onClose();
+              return;
+            }
+            if (event.key === "Enter") {
+              event.preventDefault();
+              if (event.shiftKey) {
+                onPrevious();
+              } else {
+                onNext();
+              }
+            }
+          }}
+          placeholder="Search messages"
+          className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+        />
+        <span className="shrink-0 text-muted-foreground text-xs tabular-nums">{statusLabel}</span>
+        <button
+          type="button"
+          aria-label="Previous match"
+          disabled={matches.length === 0}
+          onClick={onPrevious}
+          className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground disabled:cursor-default disabled:opacity-40"
+        >
+          <ChevronUpIcon className="size-4" />
+        </button>
+        <button
+          type="button"
+          aria-label="Next match"
+          disabled={matches.length === 0}
+          onClick={onNext}
+          className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground disabled:cursor-default disabled:opacity-40"
+        >
+          <ChevronDownIcon className="size-4" />
+        </button>
+        <button
+          type="button"
+          aria-label="Close message search"
+          onClick={onClose}
+          className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+        >
+          <XIcon className="size-4" />
+        </button>
+      </div>
+      {activeMatch && (
+        <div className="mt-1 truncate pl-6 text-muted-foreground text-xs">
+          {activeMatch.role === "user" ? "You" : "Assistant"}: {activeMatch.preview}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
 
@@ -668,6 +781,10 @@ export default function ChatView(props: ChatViewProps) {
   const composerRef = useComposerHandleContext() ?? localComposerRef;
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
+  const [threadSearchOpen, setThreadSearchOpen] = useState(false);
+  const [threadSearchQuery, setThreadSearchQuery] = useState("");
+  const [threadSearchActiveIndex, setThreadSearchActiveIndex] = useState(0);
+  const threadSearchInputRef = useRef<HTMLInputElement | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
   optimisticUserMessagesRef.current = optimisticUserMessages;
@@ -801,6 +918,61 @@ export default function ChatView(props: ChatViewProps) {
     [activeThread],
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
+
+  // ---- Queued follow-ups (client-side steering queue) ----
+  const EMPTY_QUEUED_ITEMS = useMemo(() => [] as readonly QueuedTurnDraft[], []);
+  const queuedItems = useQueuedTurnStore((store) =>
+    activeThreadKey
+      ? (store.threadsByThreadKey[activeThreadKey]?.items ?? EMPTY_QUEUED_ITEMS)
+      : EMPTY_QUEUED_ITEMS,
+  );
+  const enqueueQueuedTurn = useQueuedTurnStore((store) => store.enqueue);
+  const enqueueQueuedTurnFront = useQueuedTurnStore((store) => store.enqueueFront);
+  const removeQueuedTurnById = useQueuedTurnStore((store) => store.removeById);
+  const replaceQueuedTurnText = useQueuedTurnStore((store) => store.replaceText);
+  const clearQueuedTurnsForThread = useQueuedTurnStore((store) => store.clearThread);
+
+  // Queue auto-dispatch bookkeeping:
+  //   - queueAutoDispatchInFlightRef: true between seeding the composer and
+  //     the next render observing isSendBusy=true. Blocks re-entry.
+  //   - queuePendingCommitRef: the id of a queued item that we've seeded
+  //     into the composer + called onSend for, but haven't yet seen
+  //     `isSendBusy` flip true for. When we DO see that flip, we commit by
+  //     removing this item from the queue. If onSend early-returned and the
+  //     flip never came, the item is still in the queue — safe no-op.
+  const queueAutoDispatchInFlightRef = useRef(false);
+  const queuePendingCommitRef = useRef<string | null>(null);
+
+  // ---- Snippet picker (cmd+shift+s / ctrl+shift+s, cmd+; / ctrl+;) ----
+  const [snippetPickerOpen, setSnippetPickerOpen] = useState(false);
+  const [snippetPickerFocusRequest, setSnippetPickerFocusRequest] = useState(0);
+  const [deletingSnippetId, setDeletingSnippetId] = useState<SnippetId | null>(null);
+  // ---- Codex import (cmd+shift+I / ctrl+shift+I) ----
+  const [codexImportDialogOpen, setCodexImportDialogOpen] = useState(false);
+  // ---- Skill picker (cmd+shift+l / ctrl+shift+l) ----
+  const [skillPickerOpen, setSkillPickerOpen] = useState(false);
+  const [skillPickerFocusRequest, setSkillPickerFocusRequest] = useState(0);
+  const [branchSelectorFocusRequest, setBranchSelectorFocusRequest] = useState(0);
+  const snippetQueryClient = useQueryClient();
+  const snippetListQuery = useQuery(snippetListQueryOptions());
+  const snippets = snippetListQuery.data?.snippets ?? [];
+  const createSnippetMutation = useMutation({
+    mutationFn: (text: string) => ensureLocalApi().snippets.create({ text }),
+    onSuccess: () => {
+      void snippetQueryClient.invalidateQueries({ queryKey: snippetQueryKeys.all });
+    },
+  });
+  const deleteSnippetMutation = useMutation({
+    mutationFn: (snippetId: SnippetId) => ensureLocalApi().snippets.delete({ snippetId }),
+    onMutate: (snippetId) => {
+      setDeletingSnippetId(snippetId);
+    },
+    onSettled: () => {
+      setDeletingSnippetId(null);
+      void snippetQueryClient.invalidateQueries({ queryKey: snippetQueryKeys.all });
+    },
+  });
+
   const existingOpenTerminalThreadKeys = useMemo(() => {
     const existingThreadKeys = new Set<string>([...serverThreadKeys, ...draftThreadKeys]);
     return openTerminalThreadKeys.filter((nextThreadKey) => existingThreadKeys.has(nextThreadKey));
@@ -1361,6 +1533,16 @@ export default function ChatView(props: ChatViewProps) {
       deriveTimelineEntries(timelineMessages, activeThread?.proposedPlans ?? [], workLogEntries),
     [activeThread?.proposedPlans, timelineMessages, workLogEntries],
   );
+  const threadSearchMatches = useMemo(
+    () => buildThreadMessageSearchMatches(timelineEntries, threadSearchQuery),
+    [threadSearchQuery, timelineEntries],
+  );
+  const activeThreadSearchMatch =
+    threadSearchOpen && threadSearchMatches.length > 0
+      ? (threadSearchMatches[Math.min(threadSearchActiveIndex, threadSearchMatches.length - 1)] ??
+        null)
+      : null;
+  const activeSearchMessageId = activeThreadSearchMatch?.messageId ?? null;
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
   const turnDiffSummaryByAssistantMessageId = useMemo(() => {
@@ -1431,6 +1613,7 @@ export default function ChatView(props: ChatViewProps) {
     : null;
   const gitStatusQuery = useGitStatus({ environmentId, cwd: gitCwd });
   const keybindings = useServerKeybindings();
+  const { confirmAndDeleteThread } = useThreadActions();
   const availableEditors = useServerAvailableEditors();
   // Prefer an instance-id match so a custom Codex instance (e.g.
   // `codex_personal`) surfaces its own status/message in the banner rather
@@ -2025,6 +2208,9 @@ export default function ChatView(props: ChatViewProps) {
 
   useEffect(() => {
     setPullRequestDialogState(null);
+    setThreadSearchOpen(false);
+    setThreadSearchQuery("");
+    setThreadSearchActiveIndex(0);
     isAtEndRef.current = true;
     showScrollDebouncer.current.cancel();
     setShowScrollToBottom(false);
@@ -2037,6 +2223,49 @@ export default function ChatView(props: ChatViewProps) {
     }
     planSidebarDismissedForTurnRef.current = null;
   }, [activeThread?.id]);
+
+  useEffect(() => {
+    if (!threadSearchOpen) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      threadSearchInputRef.current?.focus({ preventScroll: true });
+      threadSearchInputRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [threadSearchOpen]);
+
+  useEffect(() => {
+    if (threadSearchMatches.length === 0) {
+      setThreadSearchActiveIndex(0);
+      return;
+    }
+    setThreadSearchActiveIndex((index) => Math.min(index, threadSearchMatches.length - 1));
+  }, [threadSearchMatches.length]);
+
+  useEffect(() => {
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (!activeThread || event.defaultPrevented || useCommandPaletteStore.getState().open) {
+        return;
+      }
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: {
+          terminalFocus: isTerminalFocused(),
+          terminalOpen: Boolean(terminalState.terminalOpen),
+          modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,
+        },
+      });
+      if (command !== "thread.search") {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      setThreadSearchOpen(true);
+    };
+
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [activeThread, composerRef, keybindings, terminalState.terminalOpen]);
 
   // Auto-open the plan sidebar when plan/todo steps arrive for the current turn.
   // Don't auto-open for plans carried over from a previous turn (the user can open manually).
@@ -2323,6 +2552,13 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
+      if (command === "chat.branchSelector.focus") {
+        event.preventDefault();
+        event.stopPropagation();
+        setBranchSelectorFocusRequest((value) => value + 1);
+        return;
+      }
+
       const scriptId = projectScriptIdFromCommand(command);
       if (!scriptId || !activeProject) return;
       const script = activeProject.scripts.find((entry) => entry.id === scriptId);
@@ -2398,10 +2634,55 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
 
-  const onSend = async (e?: { preventDefault: () => void }) => {
+  const handleDeleteSlashCommand = useCallback(() => {
+    if (!activeThreadRef) {
+      toastManager.add({
+        type: "warning",
+        title: "Only saved threads can be deleted",
+        description: "Create the thread first, then run /delete.",
+      });
+      return;
+    }
+
+    void confirmAndDeleteThread(activeThreadRef);
+  }, [activeThreadRef, confirmAndDeleteThread]);
+
+  type ComposerSubmissionDisposition = "default" | "steer" | "queue-front";
+  const onSend = async (
+    e?: { preventDefault: () => void },
+    disposition: ComposerSubmissionDisposition = "default",
+  ) => {
     e?.preventDefault();
     const api = readEnvironmentApi(environmentId);
-    if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
+    if (!api || !activeThread) return;
+    // --- Steering queue interception --------------------------------------
+    // If a turn is already in-flight AND the user didn't explicitly steer,
+    // push plain text onto the per-thread queue. With disposition === "steer"
+    // (cmd+enter), we skip the queue and fall straight through to dispatch,
+    // letting the user course-correct a running turn. sendInFlightRef is
+    // still honored in both cases to prevent double-submits within a single
+    // tick.
+    if (disposition !== "steer" && (isSendBusy || isConnecting) && !sendInFlightRef.current) {
+      if (activeThreadRef) {
+        const pending = (promptRef.current ?? "").trim();
+        const ctx = composerRef.current?.getSendContext();
+        const hasAttachmentsOrContext =
+          (ctx?.images?.length ?? 0) > 0 || (ctx?.terminalContexts?.length ?? 0) > 0;
+        if (pending.length > 0 && !hasAttachmentsOrContext) {
+          const enqueued =
+            disposition === "queue-front"
+              ? enqueueQueuedTurnFront(activeThreadRef, pending)
+              : enqueueQueuedTurn(activeThreadRef, pending);
+          if (enqueued) {
+            promptRef.current = "";
+            clearComposerDraftContent(composerDraftTarget);
+            composerRef.current?.resetCursorState();
+          }
+        }
+      }
+      return;
+    }
+    if (sendInFlightRef.current) return;
     if (activePendingProgress) {
       onAdvanceActivePendingUserInput();
       return;
@@ -2447,6 +2728,13 @@ export default function ChatView(props: ChatViewProps) {
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
     if (standaloneSlashCommand) {
+      if (standaloneSlashCommand === "delete") {
+        handleDeleteSlashCommand();
+        promptRef.current = "";
+        clearComposerDraftContent(composerDraftTarget);
+        composerRef.current?.resetCursorState();
+        return;
+      }
       handleInteractionModeChange(standaloneSlashCommand);
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
@@ -2692,6 +2980,195 @@ export default function ChatView(props: ChatViewProps) {
       resetLocalDispatch();
     }
   };
+
+  // ---- Global shortcut: cmd/ctrl + enter → steer during a running turn ----
+  //
+  // Plain Enter in the composer submits via the form, which routes through
+  // onSend() with disposition="default" → that path enqueues when busy.
+  // cmd+Enter (or ctrl+Enter off-mac) sends NOW to course-correct the running
+  // turn. cmd+shift+Enter keeps queue behavior but promotes the item to the
+  // front so it runs next.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.repeat) return;
+      if (event.key !== "Enter") return;
+      const modifierPressed = event.metaKey || event.ctrlKey;
+      if (!modifierPressed || event.altKey) return;
+      // Only fire when focus is inside the composer form so other Enter
+      // interactions (dialogs, buttons, etc.) aren't hijacked.
+      const target = event.target;
+      const inComposerForm =
+        target instanceof HTMLElement &&
+        target.closest('[data-chat-composer-form="true"]') !== null;
+      if (!inComposerForm) return;
+      // Only meaningful when a turn is actually running; if idle, normal
+      // Enter already dispatches.
+      if (!isSendBusy && !isConnecting) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void onSend(undefined, event.shiftKey ? "queue-front" : "steer");
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onSend closes over the current render's state; intentional
+  }, [isSendBusy, isConnecting]);
+
+  // ---- Global shortcut: open Codex import with cmd/ctrl + shift + i ----
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.repeat) return;
+      const usesMod = event.metaKey || event.ctrlKey;
+      if (!usesMod || !event.shiftKey || event.altKey) return;
+      const key = event.key.toLowerCase();
+      if (key !== "i") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setCodexImportDialogOpen(true);
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, []);
+
+  // ---- Global shortcuts: open snippets / Skills picker ----
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.repeat) return;
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: {
+          terminalFocus: isTerminalFocused(),
+          terminalOpen: Boolean(terminalState.terminalOpen),
+          modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,
+        },
+      });
+      if (command !== "skills.open" && command !== "snippets.open") return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (command === "snippets.open") {
+        setSnippetPickerFocusRequest((previous) => previous + 1);
+        setSnippetPickerOpen(true);
+        return;
+      }
+      setSkillPickerFocusRequest((previous) => previous + 1);
+      setSkillPickerOpen(true);
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [composerRef, keybindings, terminalState.terminalOpen]);
+
+  // ---- Global shortcut: open snippet picker with cmd/ctrl + ; ----
+  useEffect(() => {
+    const onWindowKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.repeat) return;
+      const isSemicolon = event.key === ";" || event.code === "Semicolon";
+      if (!isSemicolon) return;
+      const usesMod = event.metaKey || event.ctrlKey;
+      if (!usesMod || event.shiftKey || event.altKey) return;
+      // Don't hijack cmd+; when the user is inside a text input that has its
+      // own semicolon handling.
+      const target = event.target;
+      if (target instanceof HTMLInputElement && target.type === "password") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setSnippetPickerFocusRequest((previous) => previous + 1);
+      setSnippetPickerOpen(true);
+    };
+    // Capture phase so composer editors / modals can't `stopPropagation` the
+    // shortcut before it reaches us.
+    window.addEventListener("keydown", onWindowKeyDown, true);
+    return () => window.removeEventListener("keydown", onWindowKeyDown, true);
+  }, []);
+
+  // ---- Auto-dispatch next queued follow-up when the thread idles ----
+  //
+  // Two-phase commit:
+  //   1. Peek the head item, seed the composer, call onSend. Mark the item
+  //      id in queuePendingCommitRef but DON'T remove it from the queue yet.
+  //   2. Observe isSendBusy transition to true → dispatch is confirmed →
+  //      remove the pending item from the queue via `removeQueuedTurnById`.
+  //
+  // If onSend early-returns (e.g. api not ready, thread shell not loaded),
+  // isSendBusy stays false, we clear the pending commit marker on the next
+  // render, and the item remains at the head of the queue. Next idle cycle
+  // will retry it.
+  useEffect(() => {
+    if (!activeThreadRef || !activeThread) return;
+    if (queuedItems.length === 0) return;
+    if (isSendBusy || isConnecting || sendInFlightRef.current) return;
+    if (activePendingApproval || pendingUserInputs.length > 0 || activePendingProgress) return;
+    if (queueAutoDispatchInFlightRef.current) return;
+    if (queuePendingCommitRef.current !== null) return;
+    if (!readEnvironmentApi(environmentId)) return;
+
+    const head = queuedItems[0];
+    if (!head) return;
+
+    const currentPrompt = (promptRef.current ?? "").trim();
+    if (currentPrompt.length > 0) return;
+
+    queueAutoDispatchInFlightRef.current = true;
+    queuePendingCommitRef.current = head.id;
+    promptRef.current = head.text;
+    setComposerDraftPrompt(composerDraftTarget, head.text);
+    composerRef.current?.resetCursorState({ prompt: head.text });
+
+    const frameId = window.requestAnimationFrame(() => {
+      queueAutoDispatchInFlightRef.current = false;
+      void onSend();
+    });
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      queueAutoDispatchInFlightRef.current = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onSend is stable per render within this component scope
+  }, [
+    activeThread,
+    activeThreadRef,
+    environmentId,
+    queuedItems,
+    isSendBusy,
+    isConnecting,
+    activePendingApproval,
+    pendingUserInputs.length,
+    activePendingProgress,
+    composerDraftTarget,
+    setComposerDraftPrompt,
+  ]);
+
+  // Confirm-commit side of the two-phase queue dispatch: when we see
+  // `isSendBusy` flip true while a pending commit is outstanding, it means
+  // onSend actually started a dispatch for the seeded text. Remove the
+  // corresponding item from the queue. If the user or some other flow
+  // has already removed it (ID not in the queue anymore), that's fine —
+  // removeById is a no-op on missing IDs.
+  useEffect(() => {
+    const pendingId = queuePendingCommitRef.current;
+    if (!pendingId || !activeThreadRef) return;
+    if (!isSendBusy) return;
+    removeQueuedTurnById(activeThreadRef, pendingId);
+    queuePendingCommitRef.current = null;
+  }, [isSendBusy, activeThreadRef, removeQueuedTurnById]);
+
+  // Recovery: if the thread idles back down and a pending commit never got
+  // confirmed (onSend early-returned), clear the marker so the next cycle
+  // can retry. `queuedItems` still contains the item at head.
+  useEffect(() => {
+    if (
+      queuePendingCommitRef.current !== null &&
+      !isSendBusy &&
+      !isConnecting &&
+      !sendInFlightRef.current
+    ) {
+      // One extra render tick before clearing, so we don't race the commit
+      // effect above in the same render cycle.
+      const handle = setTimeout(() => {
+        if (!isSendBusy && !isConnecting && !sendInFlightRef.current) {
+          queuePendingCommitRef.current = null;
+        }
+      }, 250);
+      return () => clearTimeout(handle);
+    }
+    return undefined;
+  }, [isSendBusy, isConnecting]);
 
   const onInterrupt = async () => {
     const api = readEnvironmentApi(environmentId);
@@ -3231,6 +3708,55 @@ export default function ChatView(props: ChatViewProps) {
       setDraftThreadContext,
     ],
   );
+  const canToggleComposerEnvMode =
+    (isLocalDraftThread || canOverrideServerThreadEnvMode) &&
+    !envLocked &&
+    activeWorktreePath === null &&
+    activePendingApproval === null &&
+    pendingUserInputs.length === 0 &&
+    activePendingProgress === null;
+
+  useEffect(() => {
+    const handleComposerEnvModeShortcut = (event: globalThis.KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.repeat ||
+        !canToggleComposerEnvMode ||
+        useCommandPaletteStore.getState().open
+      ) {
+        return;
+      }
+      if (!isComposerFormTarget(event.target)) {
+        return;
+      }
+
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: {
+          terminalFocus: isTerminalFocused(),
+          terminalOpen: Boolean(terminalState.terminalOpen),
+          modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,
+        },
+      });
+      if (command !== "chat.envMode.toggle") {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      onEnvModeChange(envMode === "local" ? "worktree" : "local");
+    };
+
+    window.addEventListener("keydown", handleComposerEnvModeShortcut, true);
+    return () => window.removeEventListener("keydown", handleComposerEnvModeShortcut, true);
+  }, [
+    activePendingProgress,
+    canToggleComposerEnvMode,
+    composerRef,
+    envMode,
+    keybindings,
+    onEnvModeChange,
+    terminalState.terminalOpen,
+  ]);
 
   const onExpandTimelineImage = useCallback((preview: ExpandedImagePreview) => {
     setExpandedImage(preview);
@@ -3270,6 +3796,18 @@ export default function ChatView(props: ChatViewProps) {
     }
     void onRevertToTurnCountRef.current(targetTurnCount);
   }, []);
+  const goToNextThreadSearchMatch = useCallback(() => {
+    setThreadSearchActiveIndex((index) =>
+      threadSearchMatches.length === 0 ? 0 : (index + 1) % threadSearchMatches.length,
+    );
+  }, [threadSearchMatches.length]);
+  const goToPreviousThreadSearchMatch = useCallback(() => {
+    setThreadSearchActiveIndex((index) =>
+      threadSearchMatches.length === 0
+        ? 0
+        : (index - 1 + threadSearchMatches.length) % threadSearchMatches.length,
+    );
+  }, [threadSearchMatches.length]);
 
   // Empty state: no active thread
   if (!activeThread) {
@@ -3332,6 +3870,27 @@ export default function ChatView(props: ChatViewProps) {
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {/* Messages Wrapper */}
           <div className="relative flex min-h-0 flex-1 flex-col">
+            {threadSearchOpen && (
+              <ThreadMessageSearchBar
+                inputRef={threadSearchInputRef}
+                query={threadSearchQuery}
+                matches={threadSearchMatches}
+                activeIndex={threadSearchActiveIndex}
+                activeMatch={activeThreadSearchMatch}
+                onQueryChange={(query) => {
+                  setThreadSearchQuery(query);
+                  setThreadSearchActiveIndex(0);
+                }}
+                onNext={goToNextThreadSearchMatch}
+                onPrevious={goToPreviousThreadSearchMatch}
+                onClose={() => {
+                  setThreadSearchOpen(false);
+                  setThreadSearchQuery("");
+                  setThreadSearchActiveIndex(0);
+                  scheduleComposerFocus();
+                }}
+              />
+            )}
             {/* Messages — LegendList handles virtualization and scrolling internally */}
             <MessagesTimeline
               key={activeThread.id}
@@ -3356,6 +3915,7 @@ export default function ChatView(props: ChatViewProps) {
               timestampFormat={timestampFormat}
               workspaceRoot={activeWorkspaceRoot}
               onIsAtEndChange={onIsAtEndChange}
+              activeSearchMessageId={activeSearchMessageId}
             />
 
             {/* scroll to bottom pill — shown when user has scrolled away from the bottom */}
@@ -3382,6 +3942,80 @@ export default function ChatView(props: ChatViewProps) {
                 : "pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:pb-[calc(env(safe-area-inset-bottom)+1rem)]",
             )}
           >
+            <ImportFromCodexDialog
+              open={codexImportDialogOpen}
+              onOpenChange={setCodexImportDialogOpen}
+            />
+            <SkillPickerDialog
+              open={skillPickerOpen}
+              onOpenChange={setSkillPickerOpen}
+              cwd={gitCwd}
+              focusRequestId={skillPickerFocusRequest}
+              onSelectSkill={(skill) => {
+                const block = formatSkillReferenceBlock(skill);
+                const existing = (promptRef.current ?? "").trim();
+                const nextPrompt = existing.length === 0 ? block : `${existing}\n\n${block}`;
+                promptRef.current = nextPrompt;
+                setComposerDraftPrompt(composerDraftTarget, nextPrompt);
+                composerRef.current?.resetCursorState({ prompt: nextPrompt });
+                setSkillPickerOpen(false);
+              }}
+            />
+            <SnippetPickerDialog
+              open={snippetPickerOpen}
+              onOpenChange={setSnippetPickerOpen}
+              snippets={snippets}
+              focusRequestId={snippetPickerFocusRequest}
+              deletingSnippetId={deletingSnippetId}
+              onSelectSnippet={(snippet: Snippet) => {
+                // Append snippet text into the composer (don't overwrite any
+                // existing draft). The composer is the single source of truth
+                // for its visible content via composerDraftStore.setPrompt.
+                const existing = (promptRef.current ?? "").trim();
+                const nextPrompt =
+                  existing.length === 0 ? snippet.text : `${existing}\n\n${snippet.text}`;
+                promptRef.current = nextPrompt;
+                setComposerDraftPrompt(composerDraftTarget, nextPrompt);
+                composerRef.current?.resetCursorState({ prompt: nextPrompt });
+                setSnippetPickerOpen(false);
+              }}
+              onDeleteSnippet={(snippet: Snippet) => {
+                deleteSnippetMutation.mutate(snippet.id);
+              }}
+            />
+            {activeThreadRef && queuedItems.length > 0 ? (
+              <div className="mx-auto w-full min-w-0 max-w-208">
+                <QueuedFollowUpsPanel
+                  threadRef={activeThreadRef}
+                  queuedItems={queuedItems}
+                  canSendNow={!isSendBusy && !isConnecting && !sendInFlightRef.current}
+                  onSendNow={(draft) => {
+                    // Remove from queue first so the dispatcher effect does not
+                    // re-pop the same item on the next settle event.
+                    removeQueuedTurnById(activeThreadRef, draft.id);
+                    // Seed the composer (both promptRef and the persisted
+                    // draft store, so the visible editor reflects the
+                    // queued text), then trigger the existing send path.
+                    promptRef.current = draft.text;
+                    setComposerDraftPrompt(composerDraftTarget, draft.text);
+                    composerRef.current?.resetCursorState({ prompt: draft.text });
+                    window.requestAnimationFrame(() => {
+                      void onSend();
+                    });
+                  }}
+                  onDelete={(draft) => removeQueuedTurnById(activeThreadRef, draft.id)}
+                  onClearAll={() => clearQueuedTurnsForThread(activeThreadRef)}
+                  onReplaceText={(draft, nextText) =>
+                    replaceQueuedTurnText(activeThreadRef, draft.id, nextText)
+                  }
+                  onSaveAsSnippet={(draft) => {
+                    const text = draft.text.trim();
+                    if (text.length === 0) return;
+                    createSnippetMutation.mutate(text);
+                  }}
+                />
+              </div>
+            ) : null}
             <ChatComposer
               ref={composerRef}
               composerDraftTarget={composerDraftTarget}
@@ -3444,6 +4078,7 @@ export default function ChatView(props: ChatViewProps) {
               toggleInteractionMode={toggleInteractionMode}
               handleRuntimeModeChange={handleRuntimeModeChange}
               handleInteractionModeChange={handleInteractionModeChange}
+              onDeleteThreadRequest={handleDeleteSlashCommand}
               togglePlanSidebar={togglePlanSidebar}
               focusComposer={focusComposer}
               scheduleComposerFocus={scheduleComposerFocus}
@@ -3465,6 +4100,7 @@ export default function ChatView(props: ChatViewProps) {
                   : {})}
                 envLocked={envLocked}
                 onComposerFocusRequest={scheduleComposerFocus}
+                branchSelectorFocusRequestId={branchSelectorFocusRequest}
                 {...(canCheckoutPullRequestIntoThread
                   ? { onCheckoutPullRequestRequest: openPullRequestDialog }
                   : {})}

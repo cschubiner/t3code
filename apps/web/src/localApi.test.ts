@@ -96,6 +96,20 @@ const rpcClientMock = {
     ),
     subscribeThread: vi.fn(() => () => undefined),
   },
+  snippets: {
+    list: vi.fn(),
+    create: vi.fn(),
+    delete: vi.fn(),
+    subscribeUpdated: vi.fn(() => () => undefined),
+  },
+  codexImport: {
+    listSessions: vi.fn(),
+    peekSession: vi.fn(),
+    importSessions: vi.fn(),
+  },
+  skills: {
+    search: vi.fn(),
+  },
 };
 
 vi.mock("./environments/runtime", () => ({
@@ -182,6 +196,13 @@ function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridg
       mode: "local-only",
       endpointUrl: null,
       advertisedHost: null,
+    }),
+    getTailnetInfo: async () => ({
+      available: false,
+      connected: false,
+      hostname: null,
+      ipv4: null,
+      error: null,
     }),
     pickFolder: async () => null,
     confirm: async () => true,
@@ -546,6 +567,7 @@ describe("wsApi", () => {
       },
       sidebarProjectSortOrder: "manual" as const,
       sidebarThreadSortOrder: "created_at" as const,
+      sidebarViewMode: "grouped" as const,
       timestampFormat: "24-hour" as const,
     };
     const getClientSettings = vi.fn().mockResolvedValue({
@@ -606,6 +628,7 @@ describe("wsApi", () => {
       },
       sidebarProjectSortOrder: "manual" as const,
       sidebarThreadSortOrder: "created_at" as const,
+      sidebarViewMode: "grouped" as const,
       timestampFormat: "24-hour" as const,
     };
 

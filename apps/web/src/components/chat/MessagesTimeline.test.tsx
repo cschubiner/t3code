@@ -96,6 +96,7 @@ function buildProps() {
     timestampFormat: "locale" as const,
     workspaceRoot: undefined,
     onIsAtEndChange: () => {},
+    activeSearchMessageId: null,
   };
 }
 

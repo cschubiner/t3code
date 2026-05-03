@@ -1,0 +1,14 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "t3code-dev",
+      "runtimeExecutable": "/Users/canal/.bun/bin/bun",
+      "runtimeArgs": ["run", "dev"],
+      "port": 3773,
+      "env": {
+        "PATH": "/Users/canal/.nvm/versions/node/v24.13.1/bin:/Users/canal/.bun/bin:/usr/local/bin:/usr/bin:/bin"
+      }
+    }
+  ]
+}

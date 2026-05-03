@@ -36,6 +36,24 @@ import {
 } from "./git.ts";
 import { KeybindingsConfigError } from "./keybindings.ts";
 import {
+  SnippetCreateInput,
+  SnippetCreateResult,
+  SnippetDeleteInput,
+  SnippetLibraryError,
+  SnippetLibraryUpdatedPayload,
+  SnippetListResult,
+} from "./snippets.ts";
+import {
+  CodexImportError,
+  CodexImportImportSessionsInput,
+  CodexImportImportSessionsResult,
+  CodexImportListSessionsInput,
+  CodexImportPeekSessionInput,
+  CodexImportPeekSessionResult,
+  CodexImportSessionSummary,
+} from "./codexImport.ts";
+import { SkillSearchError, SkillSearchInput, SkillSearchResult } from "./skills.ts";
+import {
   ClientOrchestrationCommand,
   ORCHESTRATION_WS_METHODS,
   OrchestrationDispatchCommandError,
@@ -125,12 +143,26 @@ export const WS_METHODS = {
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
 
+  // Snippet library
+  snippetsList: "snippets.list",
+  snippetsCreate: "snippets.create",
+  snippetsDelete: "snippets.delete",
+
+  // Codex transcript import (read-only MVP; import action is stubbed for now)
+  codexImportListSessions: "codexImport.listSessions",
+  codexImportPeekSession: "codexImport.peekSession",
+  codexImportImportSessions: "codexImport.importSessions",
+
+  // Filesystem-based skill discovery (.codex/skills, .claude/skills, etc.)
+  skillsSearch: "skills.search",
+
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
   subscribeTerminalEvents: "subscribeTerminalEvents",
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
+  subscribeSnippetsUpdated: "subscribeSnippetsUpdated",
 } as const;
 
 export const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -374,6 +406,54 @@ export const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess,
   stream: true,
 });
 
+export const WsSnippetsListRpc = Rpc.make(WS_METHODS.snippetsList, {
+  payload: Schema.Struct({}),
+  success: SnippetListResult,
+  error: SnippetLibraryError,
+});
+
+export const WsSnippetsCreateRpc = Rpc.make(WS_METHODS.snippetsCreate, {
+  payload: SnippetCreateInput,
+  success: SnippetCreateResult,
+  error: SnippetLibraryError,
+});
+
+export const WsSnippetsDeleteRpc = Rpc.make(WS_METHODS.snippetsDelete, {
+  payload: SnippetDeleteInput,
+  success: Schema.Struct({}),
+  error: SnippetLibraryError,
+});
+
+export const WsSubscribeSnippetsUpdatedRpc = Rpc.make(WS_METHODS.subscribeSnippetsUpdated, {
+  payload: Schema.Struct({}),
+  success: SnippetLibraryUpdatedPayload,
+  stream: true,
+});
+
+export const WsCodexImportListSessionsRpc = Rpc.make(WS_METHODS.codexImportListSessions, {
+  payload: CodexImportListSessionsInput,
+  success: Schema.Array(CodexImportSessionSummary),
+  error: CodexImportError,
+});
+
+export const WsCodexImportPeekSessionRpc = Rpc.make(WS_METHODS.codexImportPeekSession, {
+  payload: CodexImportPeekSessionInput,
+  success: CodexImportPeekSessionResult,
+  error: CodexImportError,
+});
+
+export const WsCodexImportImportSessionsRpc = Rpc.make(WS_METHODS.codexImportImportSessions, {
+  payload: CodexImportImportSessionsInput,
+  success: CodexImportImportSessionsResult,
+  error: CodexImportError,
+});
+
+export const WsSkillsSearchRpc = Rpc.make(WS_METHODS.skillsSearch, {
+  payload: SkillSearchInput,
+  success: SkillSearchResult,
+  error: SkillSearchError,
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
@@ -413,4 +493,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationReplayEventsRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationSubscribeThreadRpc,
+  WsSnippetsListRpc,
+  WsSnippetsCreateRpc,
+  WsSnippetsDeleteRpc,
+  WsSubscribeSnippetsUpdatedRpc,
+  WsCodexImportListSessionsRpc,
+  WsCodexImportPeekSessionRpc,
+  WsCodexImportImportSessionsRpc,
+  WsSkillsSearchRpc,
 );

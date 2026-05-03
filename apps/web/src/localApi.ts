@@ -118,6 +118,19 @@ export function createLocalApi(rpcClient: WsRpcClient): LocalApi {
       updateSettings: rpcClient.server.updateSettings,
       discoverSourceControl: rpcClient.server.discoverSourceControl,
     },
+    snippets: {
+      list: rpcClient.snippets.list,
+      create: rpcClient.snippets.create,
+      delete: rpcClient.snippets.delete,
+    },
+    codexImport: {
+      listSessions: rpcClient.codexImport.listSessions,
+      peekSession: rpcClient.codexImport.peekSession,
+      importSessions: rpcClient.codexImport.importSessions,
+    },
+    skills: {
+      search: rpcClient.skills.search,
+    },
   };
 }
 

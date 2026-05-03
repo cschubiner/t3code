@@ -57,6 +57,7 @@ interface BranchToolbarBranchSelectorProps {
   onActiveThreadBranchOverrideChange?: (refName: string | null) => void;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
+  focusRequestId?: number;
 }
 
 function toBranchActionErrorMessage(error: unknown): string {
@@ -89,6 +90,7 @@ export function BranchToolbarBranchSelector({
   onActiveThreadBranchOverrideChange,
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
+  focusRequestId = 0,
 }: BranchToolbarBranchSelectorProps) {
   // ---------------------------------------------------------------------------
   // Thread / project state (pushed down from parent to colocate with mutation)
@@ -431,6 +433,11 @@ export function BranchToolbarBranchSelector({
     },
     [branchCwd, environmentId, queryClient],
   );
+
+  useEffect(() => {
+    if (focusRequestId <= 0) return;
+    handleOpenChange(true);
+  }, [focusRequestId, handleOpenChange]);
 
   const branchListScrollElementRef = useRef<HTMLDivElement | null>(null);
   const maybeFetchNextBranchPage = useCallback(() => {

@@ -76,6 +76,8 @@ import {
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch.ts";
 import { resolveDesktopAppBranding } from "./appBranding.ts";
 import { bindFirstRevealTrigger, type RevealSubscription } from "./windowReveal.ts";
+import { readTailnetInfo } from "./tailnetInfo.ts";
+import { fixPath } from "./fixPath.ts";
 
 syncShellEnvironment();
 
@@ -102,6 +104,7 @@ const SET_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:set-saved-environment-secr
 const REMOVE_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:remove-saved-environment-secret";
 const GET_SERVER_EXPOSURE_STATE_CHANNEL = "desktop:get-server-exposure-state";
 const SET_SERVER_EXPOSURE_MODE_CHANNEL = "desktop:set-server-exposure-mode";
+const GET_TAILNET_INFO_CHANNEL = "desktop:get-tailnet-info";
 const BASE_DIR = process.env.T3CODE_HOME?.trim() || Path.join(OS.homedir(), ".t3");
 const STATE_DIR = Path.join(BASE_DIR, "userdata");
 const DESKTOP_SETTINGS_PATH = Path.join(STATE_DIR, "desktop-settings.json");
@@ -792,7 +795,10 @@ function handleFatalStartupError(stage: string, error: unknown): void {
   console.error(`[desktop] fatal startup error (${stage})`, error);
   if (!isQuitting) {
     isQuitting = true;
-    dialog.showErrorBox("T3 Code failed to start", `Stage: ${stage}\n${message}${detail}`);
+    dialog.showErrorBox(
+      `${desktopAppBranding.baseName} failed to start`,
+      `Stage: ${stage}\n${message}${detail}`,
+    );
   }
   stopBackend();
   restoreStdIoCapture?.();
@@ -897,7 +903,7 @@ async function checkForUpdatesFromMenu(): Promise<void> {
     void dialog.showMessageBox({
       type: "info",
       title: "You're up to date!",
-      message: `T3 Code ${updateState.currentVersion} is currently the newest version available.`,
+      message: `${desktopAppBranding.baseName} ${updateState.currentVersion} is currently the newest version available.`,
       buttons: ["OK"],
     });
   } else if (updateState.status === "error") {
@@ -1650,6 +1656,9 @@ function registerIpcHandlers(): void {
   ipcMain.removeHandler(GET_SERVER_EXPOSURE_STATE_CHANNEL);
   ipcMain.handle(GET_SERVER_EXPOSURE_STATE_CHANNEL, async () => getDesktopServerExposureState());
 
+  ipcMain.removeHandler(GET_TAILNET_INFO_CHANNEL);
+  ipcMain.handle(GET_TAILNET_INFO_CHANNEL, async () => readTailnetInfo());
+
   ipcMain.removeHandler(SET_SERVER_EXPOSURE_MODE_CHANNEL);
   ipcMain.handle(SET_SERVER_EXPOSURE_MODE_CHANNEL, async (_event, rawMode: unknown) => {
     if (rawMode !== "local-only" && rawMode !== "network-accessible") {
@@ -2036,6 +2045,8 @@ configureAppIdentity();
 
 async function bootstrap(): Promise<void> {
   writeDesktopLogHeader("bootstrap start");
+  fixPath();
+  writeDesktopLogHeader(`bootstrap PATH fixed path=${process.env.PATH ?? ""}`);
   const configuredBackendPort = resolveConfiguredDesktopBackendPort(process.env.T3CODE_PORT);
   if (isDevelopment && configuredBackendPort === undefined) {
     throw new Error("T3CODE_PORT is required in desktop development.");

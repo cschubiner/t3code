@@ -457,6 +457,7 @@ export interface ChatComposerProps {
   toggleInteractionMode: () => void;
   handleRuntimeModeChange: (mode: RuntimeMode) => void;
   handleInteractionModeChange: (mode: ProviderInteractionMode) => void;
+  onDeleteThreadRequest: () => void;
   togglePlanSidebar: () => void;
 
   focusComposer: () => void;
@@ -530,6 +531,7 @@ export const ChatComposer = memo(
       toggleInteractionMode,
       handleRuntimeModeChange,
       handleInteractionModeChange,
+      onDeleteThreadRequest,
       togglePlanSidebar,
       focusComposer,
       scheduleComposerFocus,
@@ -857,6 +859,13 @@ export const ChatComposer = memo(
             command: "default",
             label: "/default",
             description: "Switch this thread back to normal build mode",
+          },
+          {
+            id: "slash:delete",
+            type: "slash-command",
+            command: "delete",
+            label: "/delete",
+            description: "Delete this thread",
           },
         ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
         const providerSlashCommandItems = (selectedProviderStatus?.slashCommands ?? []).map(
@@ -1476,6 +1485,17 @@ export const ChatComposer = memo(
             }
             return;
           }
+          if (item.command === "delete") {
+            const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+              expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+              focusEditorAfterReplace: false,
+            });
+            if (applied) {
+              setComposerHighlightedItemId(null);
+              onDeleteThreadRequest();
+            }
+            return;
+          }
           void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
           const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
             expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
@@ -1522,7 +1542,12 @@ export const ChatComposer = memo(
           return;
         }
       },
-      [applyPromptReplacement, handleInteractionModeChange, resolveActiveComposerTrigger],
+      [
+        applyPromptReplacement,
+        handleInteractionModeChange,
+        onDeleteThreadRequest,
+        resolveActiveComposerTrigger,
+      ],
     );
 
     const onComposerMenuItemHighlighted = useCallback(

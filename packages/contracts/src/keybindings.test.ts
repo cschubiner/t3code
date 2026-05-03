@@ -47,11 +47,53 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedCommandPalette.command, "commandPalette.toggle");
 
+    const parsedThreadSearch = yield* decode(KeybindingRule, {
+      key: "mod+f",
+      command: "thread.search",
+    });
+    assert.strictEqual(parsedThreadSearch.command, "thread.search");
+
+    const parsedThreadsSearch = yield* decode(KeybindingRule, {
+      key: "mod+shift+f",
+      command: "threads.search",
+    });
+    assert.strictEqual(parsedThreadsSearch.command, "threads.search");
+
+    const parsedThreadsSearchAll = yield* decode(KeybindingRule, {
+      key: "mod+shift+a",
+      command: "threads.searchAll",
+    });
+    assert.strictEqual(parsedThreadsSearchAll.command, "threads.searchAll");
+
+    const parsedProjectsSearch = yield* decode(KeybindingRule, {
+      key: "mod+shift+k",
+      command: "projects.search",
+    });
+    assert.strictEqual(parsedProjectsSearch.command, "projects.search");
+
     const parsedLocal = yield* decode(KeybindingRule, {
       key: "mod+shift+n",
       command: "chat.newLocal",
     });
     assert.strictEqual(parsedLocal.command, "chat.newLocal");
+
+    const parsedEnvModeToggle = yield* decode(KeybindingRule, {
+      key: "mod+shift+w",
+      command: "chat.envMode.toggle",
+    });
+    assert.strictEqual(parsedEnvModeToggle.command, "chat.envMode.toggle");
+
+    const parsedSnippetsOpen = yield* decode(KeybindingRule, {
+      key: "mod+shift+s",
+      command: "snippets.open",
+    });
+    assert.strictEqual(parsedSnippetsOpen.command, "snippets.open");
+
+    const parsedSkillsOpen = yield* decode(KeybindingRule, {
+      key: "mod+shift+l",
+      command: "skills.open",
+    });
+    assert.strictEqual(parsedSkillsOpen.command, "skills.open");
 
     const parsedModelPickerToggle = yield* decode(KeybindingRule, {
       key: "mod+shift+m",

@@ -49,6 +49,7 @@ interface BranchToolbarProps {
   envLocked: boolean;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
+  branchSelectorFocusRequestId?: number;
   availableEnvironments?: readonly EnvironmentOption[];
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
 }
@@ -184,6 +185,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   envLocked,
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
+  branchSelectorFocusRequestId,
   availableEnvironments,
   onEnvironmentChange,
 }: BranchToolbarProps) {
@@ -271,6 +273,7 @@ export const BranchToolbar = memo(function BranchToolbar({
         {...(onActiveThreadBranchOverrideChange ? { onActiveThreadBranchOverrideChange } : {})}
         {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
         {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
+        focusRequestId={branchSelectorFocusRequestId ?? 0}
       />
     </div>
   );
